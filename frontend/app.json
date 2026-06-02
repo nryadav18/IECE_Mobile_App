@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "IECE",
+    "slug": "iece",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/IECE_Logo.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/IECE_Logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff",
+        "foregroundImage": "./assets/IECE_Logo.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/IECE_Logo.png"
+    },
+    "plugins": [
+      "@react-native-community/datetimepicker",
+      "expo-video"
+    ]
+  }
+}
