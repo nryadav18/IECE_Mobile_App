@@ -3,9 +3,10 @@ const User = require('../models/User');
 
 exports.getSchools = async (req, res) => {
   try {
-    const { state } = req.query;
+    const { state, chairmanId } = req.query;
     let query = {};
     if (state) query.state = state;
+    if (chairmanId) query.chairmanId = chairmanId;
     const schools = await School.find(query).populate('chairmanId', 'name email');
     res.status(200).json({ success: true, count: schools.length, data: schools });
   } catch (error) {

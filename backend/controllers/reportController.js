@@ -1,6 +1,6 @@
 const VisitReport = require('../models/VisitReport');
-const Notification = require('../models/Notification');
 const User = require('../models/User');
+const { sendPushNotification } = require('../utils/pushNotification');
 
 const REPORT_FIELDS = [
   'trainerId',
@@ -11,25 +11,29 @@ const REPORT_FIELDS = [
 ];
 
 const notifyChairmanForApproval = async (report, senderId) => {
-  const chairman = await User.findOne({ role: 'chairman', schoolId: report.schoolId });
+  const School = require('../models/School');
+  const school = await School.findById(report.schoolId);
+  if (!school || !school.chairmanId) return;
+
+  const chairman = await User.findById(school.chairmanId);
   if (!chairman) return;
 
-  await Notification.create({
-    recipientId: chairman._id,
-    senderId,
-    title: 'New Visit Report Pending Approval',
-    message: 'A new visit report requires your approval.',
-    type: 'report_approval',
-    relatedId: report._id,
-  });
+  const title = 'New Visit Report Pending Approval';
+  const message = 'A new visit report requires your approval.';
+
+  if (chairman.expoPushToken) {
+    await sendPushNotification(chairman.expoPushToken, title, message, { type: 'report_approval', relatedId: report._id.toString() });
+  }
 };
 
 exports.getReports = async (req, res) => {
   try {
     let query = {};
     if (req.user.role === 'chairman') {
-      // Chairman sees reports for their school
-      query.schoolId = req.user.schoolId;
+      const School = require('../models/School');
+      const schools = await School.find({ chairmanId: req.user.id });
+      const schoolIds = schools.map(s => s._id);
+      query.schoolId = { $in: schoolIds };
     } else if (req.user.role === 'team_leader') {
       query.teamLeaderId = req.user.id;
     } else if (req.user.role === 'creator_admin') {
@@ -43,7 +47,8 @@ exports.getReports = async (req, res) => {
         select: 'name chairmanId',
         populate: { path: 'chairmanId', select: 'name' }
       })
-      .populate('trainerId', 'name');
+      .populate('trainerId', 'name')
+      .sort('-dateOfInspection -createdAt');
       
     res.status(200).json({ success: true, count: reports.length, data: reports });
   } catch (error) {
@@ -69,14 +74,14 @@ exports.createReport = async (req, res) => {
 
 exports.updateReportStatus = async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, rejectionRemark } = req.body;
     if (!['approved', 'rejected'].includes(status)) {
       return res.status(400).json({ success: false, error: 'Invalid status' });
     }
 
     const report = await VisitReport.findByIdAndUpdate(
       req.params.id,
-      { status },
+      { status, rejectionRemark },
       { new: true, runValidators: true }
     );
 
@@ -85,27 +90,26 @@ exports.updateReportStatus = async (req, res) => {
     }
 
     // Send notification back to TL
-    await Notification.create({
-      recipientId: report.teamLeaderId,
-      senderId: req.user.id,
-      title: `Visit Report ${status.charAt(0).toUpperCase() + status.slice(1)}`,
-      message: `Your visit report has been ${status} by the chairman.`,
-      type: 'report_status_update',
-      relatedId: report._id
-    });
+    let msg = `Your visit report has been ${status} by the chairman.`;
+    if (status === 'rejected' && rejectionRemark) {
+      msg += ` Remark: "${rejectionRemark}"`;
+    }
+    const tlTitle = `Visit Report ${status.charAt(0).toUpperCase() + status.slice(1)}`;
+
+    const tl = await User.findById(report.teamLeaderId);
+    if (tl && tl.expoPushToken) {
+      await sendPushNotification(tl.expoPushToken, tlTitle, msg, { type: 'report_status_update', relatedId: report._id.toString() });
+    }
 
     // If approved, notify admins
     if (status === 'approved') {
       const admins = await User.find({ role: 'creator_admin' });
+      const adminTitle = 'New Visit Report Approved';
+      const adminMsg = `A visit report was approved by the chairman and is now visible.`;
       for (const admin of admins) {
-        await Notification.create({
-          recipientId: admin._id,
-          senderId: req.user.id,
-          title: 'New Visit Report Approved',
-          message: `A visit report was approved by the chairman and is now visible.`,
-          type: 'general',
-          relatedId: report._id
-        });
+        if (admin.expoPushToken) {
+          await sendPushNotification(admin.expoPushToken, adminTitle, adminMsg, { type: 'general', relatedId: report._id.toString() });
+        }
       }
     }
 
@@ -122,7 +126,12 @@ exports.updateReport = async (req, res) => {
       return res.status(404).json({ success: false, error: 'Report not found' });
     }
 
-    if (report.teamLeaderId.toString() !== req.user.id) {
+    const isTL = report.teamLeaderId.toString() === req.user.id;
+    const School = require('../models/School');
+    const school = await School.findById(report.schoolId);
+    const isChairman = req.user.role === 'chairman' && school && school.chairmanId.toString() === req.user.id;
+
+    if (!isTL && !isChairman) {
       return res.status(403).json({ success: false, error: 'Not authorized to update this report' });
     }
 
@@ -133,12 +142,46 @@ exports.updateReport = async (req, res) => {
       }
     });
 
-    if (previousStatus === 'approved' || previousStatus === 'rejected') {
-      report.status = 'pending';
-      await report.save();
-      await notifyChairmanForApproval(report, req.user.id);
-    } else {
-      await report.save();
+    if (req.body.status !== undefined && ['pending', 'approved', 'rejected'].includes(req.body.status)) {
+      report.status = req.body.status;
+    }
+
+    if (req.body.rejectionRemark !== undefined) {
+      report.rejectionRemark = req.body.rejectionRemark;
+    }
+
+    await report.save();
+
+    if (req.body.status && req.body.status !== previousStatus) {
+      // Send notification back to TL
+      let msg = `Your visit report has been ${req.body.status} by the chairman.`;
+      if (req.body.status === 'rejected' && req.body.rejectionRemark) {
+        msg += ` Remark: "${req.body.rejectionRemark}"`;
+      }
+      const tlTitle = `Visit Report ${req.body.status.charAt(0).toUpperCase() + req.body.status.slice(1)}`;
+
+      const tl = await User.findById(report.teamLeaderId);
+      if (tl && tl.expoPushToken) {
+        await sendPushNotification(tl.expoPushToken, tlTitle, msg, { type: 'report_status_update', relatedId: report._id.toString() });
+      }
+
+      // If approved, notify admins
+      if (req.body.status === 'approved') {
+        const admins = await User.find({ role: 'creator_admin' });
+        const adminTitle = 'New Visit Report Approved';
+        const adminMsg = `A visit report was approved by the chairman and is now visible.`;
+        for (const admin of admins) {
+          if (admin.expoPushToken) {
+            await sendPushNotification(admin.expoPushToken, adminTitle, adminMsg, { type: 'general', relatedId: report._id.toString() });
+          }
+        }
+      }
+    } else if (previousStatus === 'approved' || previousStatus === 'rejected') {
+      if (isTL) {
+        report.status = 'pending';
+        await report.save();
+        await notifyChairmanForApproval(report, req.user.id);
+      }
     }
 
     res.status(200).json({ success: true, data: report });
@@ -158,7 +201,6 @@ exports.deleteReport = async (req, res) => {
       return res.status(403).json({ success: false, error: 'Not authorized to delete this report' });
     }
 
-    await Notification.deleteMany({ relatedId: report._id });
     await report.deleteOne();
 
     res.status(200).json({ success: true, data: {} });

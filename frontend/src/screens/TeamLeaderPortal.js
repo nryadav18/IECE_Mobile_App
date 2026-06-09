@@ -13,10 +13,12 @@ import CustomAlert from '../components/CustomAlert';
 import ScreenLoader from '../components/ScreenLoader';
 import CustomDropdown from '../components/CustomDropdown';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import CreateEventForm from '../components/CreateEventForm';
-import EditEventModal from '../components/EditEventModal';
+import CreateActivityForm from '../components/CreateActivityForm';
+import EditActivityModal from '../components/EditActivityModal';
 import EditReportModal from '../components/EditReportModal';
 import { Image } from 'react-native';
+import { Calendar } from 'react-native-calendars';
+import { useAlert } from '../context/AlertContext';
 
 const VisitSchema = Yup.object().shape({
   personMet: Yup.string().required('Met person name is required'),
@@ -29,13 +31,16 @@ export default function TeamLeaderPortal({ navigation }) {
   const { theme } = useContext(ThemeContext);
   const { user } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
+  const { showAlert: showGlobalAlert } = useAlert();
 
   const [reports, setReports] = useState([]);
   const [trainers, setTrainers] = useState([]);
-  const [myEvents, setMyEvents] = useState([]);
+  const [myActivities, setMyActivities] = useState([]);
+  const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [faceStatus, setFaceStatus] = useState('none'); // 'none' | 'pending' | 'approved'
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('Reports');
-  const [eventToEdit, setEventToEdit] = useState(null);
+  const [activityToEdit, setActivityToEdit] = useState(null);
   const [reportToEdit, setReportToEdit] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dateOfInspection, setDateOfInspection] = useState(new Date());
@@ -43,33 +48,42 @@ export default function TeamLeaderPortal({ navigation }) {
   // Track focus states
   const [focusFields, setFocusFields] = useState({});
   const [refreshing, setRefreshing] = useState(false);
-  const [unreadNotifications, setUnreadNotifications] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
-      fetchUnreadNotifications();
+      fetchFaceStatusAndAttendance();
     }, [])
   );
 
-  const fetchUnreadNotifications = async () => {
+  const fetchFaceStatusAndAttendance = async () => {
     try {
-      const res = await api.get('/notifications');
-      setUnreadNotifications(res.data.count || 0);
-    } catch (err) {}
+      const [meRes, attendanceRes] = await Promise.all([
+        api.get('/auth/me'),
+        api.get('/attendance/my-attendance')
+      ]);
+      setFaceStatus(meRes.data.data?.facialRegistrationStatusV2 || meRes.data.data?.facialRegistrationStatus || 'none');
+      setAttendanceRecords(attendanceRes.data.data || []);
+    } catch (err) {
+      console.log('Error fetching face/attendance status', err);
+    }
   };
 
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
 
   const fetchData = async () => {
     try {
-      const [reportsRes, trainersRes, eventsRes] = await Promise.all([
+      const [reportsRes, trainersRes, activitiesRes, attendanceRes, meRes] = await Promise.all([
         api.get('/reports'),
         api.get(`/admin/users?role=trainer&teamLeaderId=${user._id || user.id}&limit=100`),
-        api.get(`/events?uploaderId=${user._id || user.id}`)
+        api.get(`/activities?uploaderId=${user._id || user.id}`),
+        api.get('/attendance/my-attendance'),
+        api.get('/auth/me')
       ]);
       setReports(reportsRes.data.data);
       setTrainers(trainersRes.data.data);
-      setMyEvents(eventsRes.data.data);
+      setMyActivities(activitiesRes.data.data);
+      setAttendanceRecords(attendanceRes.data.data || []);
+      setFaceStatus(meRes.data.data?.facialRegistrationStatusV2 || meRes.data.data?.facialRegistrationStatus || 'none');
     } catch (err) {
       console.error(err);
     } finally {
@@ -148,16 +162,16 @@ export default function TeamLeaderPortal({ navigation }) {
     ]);
   };
 
-  const deleteEvent = (id) => {
-    showAlert('Confirm', 'Are you sure you want to permanently delete this event?', 'warning', [
+  const deleteActivity = (id) => {
+    showAlert('Confirm', 'Are you sure you want to permanently delete this activity?', 'warning', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
           try {
-            await api.delete(`/events/${id}`);
-            showAlert('Success', 'Event deleted permanently.', 'success');
+            await api.delete(`/activities/${id}`);
+            showAlert('Success', 'Activity deleted permanently.', 'success');
             fetchData();
           } catch (err) {
-            showAlert('Error', 'Failed to delete event.', 'error');
+            showAlert('Error', 'Failed to delete activity.', 'error');
           }
       }}
     ]);
@@ -166,7 +180,7 @@ export default function TeamLeaderPortal({ navigation }) {
   return (
     <View style={{ flex: 1 }}>
       {/* Fixed Header */}
-      <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
+      <View style={{ backgroundColor: theme.colors.background, paddingTop: insets.top }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 4 }}>
           <View style={[styles.header, { borderBottomColor: theme.colors.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 16 }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -177,17 +191,27 @@ export default function TeamLeaderPortal({ navigation }) {
               >
                 <Ionicons name="arrow-back-outline" size={20} color={theme.colors.textPrimary} />
               </TouchableOpacity>
-              <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0 }]}>Team Leader Portal</Text>
+              <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0 }]}>Team Leader</Text>
             </View>
-
-              <TouchableOpacity onPress={() => navigation.navigate('Notifications')} style={[styles.headerIconBtn, { position: 'relative' }]}>
-                <Ionicons name="notifications-outline" size={24} color={theme.colors.textPrimary} />
-                {unreadNotifications > 0 && (
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>{unreadNotifications > 99 ? '99+' : unreadNotifications}</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
+            <TouchableOpacity 
+              onPress={() => navigation.navigate('UserProfile', { userId: 'me' })} 
+              style={{ 
+                width: 36, 
+                height: 36, 
+                borderRadius: 18, 
+                backgroundColor: '#FF3B30', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                elevation: 2,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 1 },
+                shadowOpacity: 0.2,
+                shadowRadius: 1.41
+              }}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="person" size={18} color="#FFFFFF" />
+            </TouchableOpacity>
           </View>
           
           {/* Tabs - Pill Style */}
@@ -195,8 +219,10 @@ export default function TeamLeaderPortal({ navigation }) {
             {[
               { key: 'Reports', label: 'Log Visit', icon: 'document-text-outline' },
               { key: 'MyReports', label: 'My Reports', icon: 'folder-open-outline' },
-              { key: 'Events', label: 'Publish Event', icon: 'add-circle-outline' },
-              { key: 'ManageEvents', label: 'Manage Events', icon: 'calendar-outline' },
+              { key: 'MyTeam', label: 'My Team', icon: 'people-outline' },
+              { key: 'Attendance', label: 'Attendance', icon: 'calendar-outline' },
+              { key: 'Events', label: 'Publish Activity', icon: 'add-circle-outline' },
+              { key: 'ManageEvents', label: 'Manage Activities', icon: 'list-outline' },
             ].map((tab) => {
               const isActive = activeTab === tab.key;
               return (
@@ -464,18 +490,140 @@ export default function TeamLeaderPortal({ navigation }) {
         )}
       </View>
 
+      <View style={{ display: activeTab === 'MyTeam' ? 'flex' : 'none' }}>
+        {trainers.length === 0 ? (
+           <View style={{ alignItems: 'center', marginTop: 40 }}>
+             <Ionicons name="people-outline" size={48} color={theme.colors.border} />
+             <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>No trainers allocated.</Text>
+           </View>
+        ) : (
+           trainers.map(trainer => (
+             <View key={trainer._id} style={[styles.reportCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16 }]}>
+               <View style={{ flex: 1 }}>
+                 <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{trainer.name}</Text>
+                 <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{trainer.email}</Text>
+                 <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>School: {trainer.schoolId?.name || 'N/A'}</Text>
+               </View>
+               <TouchableOpacity 
+                 style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, justifyContent: 'center' }}
+                 onPress={() => navigation.navigate('UserProfile', { userId: trainer._id })}
+               >
+                 <Text style={{ color: '#fff', fontWeight: 'bold' }}>View Profile</Text>
+               </TouchableOpacity>
+             </View>
+           ))
+        )}
+      </View>
+
+      <View style={{ display: activeTab === 'Attendance' ? 'flex' : 'none', marginTop: 16 }}>
+        {/* Dynamic Buttons based on status */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
+          {faceStatus !== 'approved' ? (
+            /* Single Button Layout */
+            <>
+              {faceStatus === 'none' && (
+                <TouchableOpacity
+                  style={[styles.actionBtn, { flex: 1, borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '10' }]}
+                  onPress={() => navigation.navigate('FaceRegistration')}
+                >
+                  <Ionicons name="scan-outline" size={20} color={theme.colors.primary} />
+                  <Text style={{ color: theme.colors.primary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Register Face</Text>
+                </TouchableOpacity>
+              )}
+              {faceStatus === 'pending' && (
+                <View style={[styles.actionBtn, { flex: 1, borderColor: '#F59E0B', backgroundColor: '#FEF3C7' }]}>
+                  <Ionicons name="hourglass-outline" size={20} color="#D97706" />
+                  <Text style={{ color: '#D97706', fontSize: 13, marginLeft: 6, fontWeight: '700' }}>Pending Approval</Text>
+                </View>
+              )}
+            </>
+          ) : (
+            /* Side-by-Side Login/Logout */
+            <View style={{ flexDirection: 'row', gap: 10, flex: 1 }}>
+              <TouchableOpacity
+                style={[styles.actionBtn, { flex: 1, borderColor: '#4CAF50', backgroundColor: '#4CAF5010' }]}
+                onPress={() => navigation.navigate('Attendance', { intent: 'login' })}
+              >
+                <Ionicons name="log-in-outline" size={20} color="#4CAF50" />
+                <Text style={{ color: '#4CAF50', fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Login</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.actionBtn, { flex: 1, borderColor: '#F44336', backgroundColor: '#F4433610' }]}
+                onPress={() => navigation.navigate('Attendance', { intent: 'logout' })}
+              >
+                <Ionicons name="log-out-outline" size={20} color="#F44336" />
+                <Text style={{ color: '#F44336', fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Logout</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        {faceStatus === 'pending' && (
+          <View style={{ backgroundColor: '#FEF3C7', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#F59E0B' }}>
+            <Ionicons name="hourglass-outline" size={16} color="#D97706" style={{ marginRight: 8 }} />
+            <Text style={{ color: '#92400E', fontSize: 12, fontWeight: '600', flex: 1 }}>Your facial registration is pending admin approval. You will be able to mark attendance once approved.</Text>
+          </View>
+        )}
+        
+        <View style={{ backgroundColor: theme.colors.surface, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border }}>
+          <Calendar
+            current={new Date().toISOString().split('T')[0]}
+            markedDates={{
+              ...attendanceRecords.reduce((acc, record) => {
+                const dateString = new Date(record.date).toISOString().split('T')[0];
+                let color = '#E0E0E0';
+                if (record.status === 'Present') color = '#4CAF50';
+                if (record.status === 'Absent') color = '#F44336';
+                if (record.status === 'Leave') color = '#FFC107';
+                acc[dateString] = {
+                  customStyles: {
+                    container: { backgroundColor: color, borderRadius: 8 },
+                    text: { color: 'white', fontWeight: 'bold' }
+                  }
+                };
+                return acc;
+              }, {}),
+              [new Date().toISOString().split('T')[0]]: {
+                ...(attendanceRecords.find(r => new Date(r.date).toISOString().split('T')[0] === new Date().toISOString().split('T')[0]) ? {} : {
+                  customStyles: {
+                    container: { backgroundColor: '#E0E0E0', borderRadius: 8, borderWidth: 2, borderColor: theme.colors.primary },
+                    text: { color: theme.colors.textPrimary, fontWeight: 'bold' }
+                  }
+                })
+              }
+            }}
+            markingType={'custom'}
+            theme={{
+              calendarBackground: theme.colors.surface,
+              textSectionTitleColor: theme.colors.textSecondary,
+              dayTextColor: theme.colors.textPrimary,
+              monthTextColor: theme.colors.primary,
+              arrowColor: theme.colors.primary,
+              todayTextColor: theme.colors.primary,
+            }}
+          />
+        </View>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginTop: 20 }}>
+          <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#4CAF50', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Present</Text></View>
+          <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#F44336', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Absent</Text></View>
+          <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#FFC107', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Leave</Text></View>
+          <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#E0E0E0', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Blank</Text></View>
+        </View>
+      </View>
+
       <View style={{ display: activeTab === 'Events' ? 'flex' : 'none' }}>
-        <CreateEventForm onEventCreated={fetchData} />
+        <CreateActivityForm onActivityCreated={fetchData} />
       </View>
 
       <View style={{ display: activeTab === 'ManageEvents' ? 'flex' : 'none', marginTop: 16 }}>
-        {myEvents.length === 0 ? (
+        {myActivities.length === 0 ? (
            <View style={{ alignItems: 'center', marginTop: 40 }}>
              <Ionicons name="calendar-outline" size={48} color={theme.colors.border} />
-             <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>No events published yet.</Text>
+             <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>No activities published yet.</Text>
            </View>
         ) : (
-           myEvents.map(evt => (
+           myActivities.map(evt => (
              <View key={evt._id} style={[styles.eventCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                <View style={{ flexDirection: 'row', marginBottom: 16 }}>
                  {evt.mediaUrls && evt.mediaUrls.length > 0 ? (
@@ -487,17 +635,17 @@ export default function TeamLeaderPortal({ navigation }) {
                  )}
                  <View style={{ flex: 1, justifyContent: 'center' }}>
                    <Text style={[styles.eventTitle, { color: theme.colors.textPrimary }]} numberOfLines={2}>{evt.name}</Text>
-                   <Text style={[styles.eventDate, { color: theme.colors.textSecondary }]}>{new Date(evt.eventDate).toLocaleDateString()}</Text>
+                   <Text style={[styles.eventDate, { color: theme.colors.textSecondary }]}>{new Date(evt.activityDate).toLocaleDateString()}</Text>
                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>{evt.organizers?.length || 0} Organizers</Text>
                  </View>
                </View>
                
                <View style={styles.eventActions}>
-                 <TouchableOpacity style={[styles.actionBtn, { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '10' }]} onPress={() => setEventToEdit(evt)}>
+                 <TouchableOpacity style={[styles.actionBtn, { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '10' }]} onPress={() => setActivityToEdit(evt)}>
                    <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
-                   <Text style={{ color: theme.colors.primary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Edit Event</Text>
+                   <Text style={{ color: theme.colors.primary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Edit Activity</Text>
                  </TouchableOpacity>
-                 <TouchableOpacity style={[styles.actionBtn, { borderColor: '#FF4444', backgroundColor: '#FF444410' }]} onPress={() => deleteEvent(evt._id)}>
+                 <TouchableOpacity style={[styles.actionBtn, { borderColor: '#FF4444', backgroundColor: '#FF444410' }]} onPress={() => deleteActivity(evt._id)}>
                    <Ionicons name="trash-outline" size={18} color="#FF4444" />
                    <Text style={{ color: '#FF4444', fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Delete</Text>
                  </TouchableOpacity>
@@ -517,12 +665,13 @@ export default function TeamLeaderPortal({ navigation }) {
       buttons={alertConfig.buttons}
       onDismiss={() => setAlertConfig({ ...alertConfig, visible: false })}
     />
-    {eventToEdit && (
-      <EditEventModal 
-        visible={!!eventToEdit}
-        event={eventToEdit}
-        onClose={() => setEventToEdit(null)}
-        onEventUpdated={fetchData}
+    {activityToEdit && (
+      <EditActivityModal 
+        visible={!!activityToEdit}
+        activity={activityToEdit}
+        onClose={() => setActivityToEdit(null)}
+        onSuccess={fetchData}
+        onError={(msg) => showAlert('Error', msg, 'error')}
       />
     )}
     {reportToEdit && (

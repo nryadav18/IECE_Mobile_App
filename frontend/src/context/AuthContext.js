@@ -1,7 +1,10 @@
 import React, { createContext, useState, useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
-import api from '../services/api';
+import * as Notifications from 'expo-notifications';
+import api, { setLogoutCallback } from '../services/api';
+import { registerForPushNotifications } from '../services/notifications';
+import { handleNotificationResponse } from '../services/navigation';
 
 export const AuthContext = createContext();
 
@@ -11,8 +14,14 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const timerRef = useRef(null);
+  const notificationListener = useRef(null);
+  const responseListener = useRef(null);
 
   useEffect(() => {
+    setLogoutCallback(() => {
+      logout();
+    });
+
     loadUser();
     
     // Setup inactivity listener based on AppState
@@ -24,9 +33,20 @@ export const AuthProvider = ({ children }) => {
       }
     });
 
+    // Listen for incoming notifications while app is foregrounded
+    notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+      console.log('Foreground notification received:', notification);
+    });
+
+    // Route the user to the relevant screen when they tap a notification
+    responseListener.current = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse);
+
     return () => {
       subscription.remove();
       clearInactivityTimer();
+      // SDK 53+: call .remove() on the subscription. removeNotificationSubscription is deprecated.
+      notificationListener.current?.remove();
+      responseListener.current?.remove();
     };
   }, []);
 
@@ -48,6 +68,8 @@ export const AuthProvider = ({ children }) => {
       if (token) {
         const response = await api.get('/auth/me');
         setUser(response.data.data);
+        // Register push token for already-logged-in user on app launch
+        await registerForPushNotifications();
       }
     } catch (error) {
       await AsyncStorage.removeItem('token');
@@ -62,11 +84,18 @@ export const AuthProvider = ({ children }) => {
     if (response.data.success) {
       await AsyncStorage.setItem('token', response.data.token);
       setUser(response.data.user);
+      // Register push token immediately after login
+      await registerForPushNotifications();
     }
     return response.data;
   };
 
   const logout = async () => {
+    try {
+      await api.put('/auth/push-token', { expoPushToken: null });
+    } catch (err) {
+      console.log('Failed to clear push token on backend:', err.message);
+    }
     await AsyncStorage.removeItem('token');
     setUser(null);
   };

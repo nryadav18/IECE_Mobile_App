@@ -9,13 +9,18 @@ import DashboardScreen from '../screens/DashboardScreen';
 import TrainerPortal from '../screens/TrainerPortal';
 import ChairmanPortal from '../screens/ChairmanPortal';
 import TeamLeaderPortal from '../screens/TeamLeaderPortal';
-import CreatorLoginScreen from '../screens/CreatorLoginScreen';
 import CreatorAdminPortal from '../screens/CreatorAdminPortal';
 import ManageAssetsScreen from '../screens/ManageAssetsScreen';
 import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
-import EventDetailsScreen from '../screens/EventDetailsScreen';
-import NotificationsScreen from '../screens/NotificationsScreen';
+import ActivityDetailsScreen from '../screens/ActivityDetailsScreen';
+import UserProfileScreen from '../screens/UserProfileScreen';
+
+import ManageScreen from '../screens/ManageScreen';
 import ScreenLoader from '../components/ScreenLoader';
+
+import FaceRegistrationScreen from '../screens/Trainer/FaceRegistrationScreen';
+import AttendanceScreen from '../screens/Trainer/AttendanceScreen';
+import PendingRegistrationsScreen from '../screens/Admin/PendingRegistrationsScreen';
 
 const Stack = createStackNavigator();
 
@@ -30,23 +35,38 @@ const AppNavigator = () => {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {user ? (
         <>
+          <Stack.Screen name="Home" component={DashboardScreen} />
           <Stack.Screen name="Dashboard" component={DashboardScreen} />
-          <Stack.Screen name="EventDetails" component={EventDetailsScreen} />
-          <Stack.Screen name="Notifications" component={NotificationsScreen} />
-          {user.role === 'trainer' && <Stack.Screen name="TrainerPortal" component={TrainerPortal} />}
+          <Stack.Screen name="ActivityDetails" component={ActivityDetailsScreen} />
+          <Stack.Screen name="UserProfile" component={UserProfileScreen} />
+
+          {user.role === 'trainer' && (
+            <>
+              <Stack.Screen name="TrainerPortal" component={TrainerPortal} />
+              <Stack.Screen name="FaceRegistration" component={FaceRegistrationScreen} />
+              <Stack.Screen name="Attendance" component={AttendanceScreen} />
+            </>
+          )}
           {user.role === 'chairman' && <Stack.Screen name="ChairmanPortal" component={ChairmanPortal} />}
-          {user.role === 'team_leader' && <Stack.Screen name="TeamLeaderPortal" component={TeamLeaderPortal} />}
+          {user.role === 'team_leader' && (
+            <>
+              <Stack.Screen name="TeamLeaderPortal" component={TeamLeaderPortal} />
+              <Stack.Screen name="FaceRegistration" component={FaceRegistrationScreen} />
+              <Stack.Screen name="Attendance" component={AttendanceScreen} />
+            </>
+          )}
           {user.role === 'creator_admin' && (
             <>
               <Stack.Screen name="CreatorAdminPortal" component={CreatorAdminPortal} />
               <Stack.Screen name="ManageAssets" component={ManageAssetsScreen} />
+              <Stack.Screen name="ManageScreen" component={ManageScreen} />
+              <Stack.Screen name="PendingRegistrations" component={PendingRegistrationsScreen} />
             </>
           )}
         </>
       ) : (
         <>
           <Stack.Screen name="Login" component={LoginScreen} />
-          <Stack.Screen name="CreatorLogin" component={CreatorLoginScreen} />
           <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
         </>
       )}

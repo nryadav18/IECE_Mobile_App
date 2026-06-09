@@ -33,6 +33,9 @@ const visitReportSchema = new mongoose.Schema({
     enum: ['pending', 'approved', 'rejected'],
     default: 'pending'
   },
+  rejectionRemark: {
+    type: String
+  },
   timestamp: {
     type: Date,
     default: Date.now

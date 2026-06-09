@@ -14,7 +14,21 @@ const protect = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id);
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return res.status(401).json({ success: false, error: 'Not authorized to access this route' });
+    }
+
+    // Check if the token's version matches the user's current token version in DB
+    const currentVersion = user.tokenVersion || 0;
+    const tokenVersion = decoded.tokenVersion || 0;
+
+    if (tokenVersion !== currentVersion) {
+      return res.status(401).json({ success: false, error: 'Session expired. Logged in on another device.' });
+    }
+
+    req.user = user;
     next();
   } catch (error) {
     return res.status(401).json({ success: false, error: 'Not authorized to access this route' });

@@ -1,5 +1,6 @@
 import React from 'react';
 import { LogBox } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { NavigationContainer } from '@react-navigation/native';
 import { AuthProvider } from './src/context/AuthContext';
 import { ThemeProvider } from './src/context/ThemeContext';
@@ -7,6 +8,7 @@ import AppNavigator from './src/navigation/AppNavigator';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AlertProvider } from './src/context/AlertContext';
+import { navigationRef, handleNotificationResponse } from './src/services/navigation';
 
 LogBox.ignoreLogs([
   "SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead.",
@@ -20,7 +22,13 @@ export default function App() {
         <ThemeProvider>
           <AlertProvider>
             <AuthProvider>
-              <NavigationContainer>
+              <NavigationContainer
+                ref={navigationRef}
+                onReady={() => {
+                  // Handle a notification that cold-started the app from a tap.
+                  Notifications.getLastNotificationResponseAsync().then(handleNotificationResponse);
+                }}
+              >
                 <AppNavigator />
               </NavigationContainer>
             </AuthProvider>

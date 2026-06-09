@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { AuthContext } from '../context/AuthContext';
 import { ThemeContext } from '../context/ThemeContext';
+import { useAlert } from '../context/AlertContext';
 import { MotiView } from 'moti';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,23 +26,38 @@ export default function CreatorLoginScreen({ navigation }) {
   const [password, setPassword] = useState('');
   const [secureTextEntry, setSecureTextEntry] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   
   const { login } = useContext(AuthContext);
   const { theme } = useContext(ThemeContext);
+  const { showAlert } = useAlert();
   const insets = useSafeAreaInsets();
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      setError('Please fill all fields');
+    const trimmedEmail = email.trim();
+    const trimmedPassword = password.trim();
+
+    if (!trimmedEmail) {
+      showAlert('Required Field', 'Please enter your admin email.', 'warning');
       return;
     }
+    if (!trimmedPassword) {
+      showAlert('Required Field', 'Please enter your passcode.', 'warning');
+      return;
+    }
+
+    // Strict email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      showAlert('Invalid Email', 'Please enter a valid email address.', 'warning');
+      return;
+    }
+
     setLoading(true);
-    setError('');
     try {
-      await login(email, password);
+      await login(trimmedEmail, trimmedPassword);
     } catch (err) {
-      setError(err.response?.data?.error || 'Login failed. Please check your credentials.');
+      const errMsg = err.response?.data?.error || 'Login failed. Please check your credentials.';
+      showAlert('Login Failed', errMsg, 'error');
     } finally {
       setLoading(false);
     }
@@ -56,7 +72,7 @@ export default function CreatorLoginScreen({ navigation }) {
         <View style={[styles.inner, { paddingTop: insets.top, paddingBottom: insets.bottom + 40 }]}>
           
           <TouchableOpacity 
-            style={styles.backBtn}
+            style={[styles.backBtn, { top: insets.top + 10 }]}
             onPress={() => navigation.goBack()}
           >
             <Ionicons name="arrow-back-outline" size={24} color={theme.colors.textPrimary} />
@@ -80,11 +96,7 @@ export default function CreatorLoginScreen({ navigation }) {
             transition={{ type: 'timing', duration: 400, delay: 200 }}
             style={[styles.loginForm, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
           >
-            {error ? (
-              <View style={[styles.errorContainer, { borderColor: theme.colors.primary + '30', backgroundColor: theme.colors.primary + '10' }]}>
-                <Text style={[styles.errorText, { color: theme.colors.primary }]}>{error}</Text>
-              </View>
-            ) : null}
+
             
             <View style={styles.inputContainer}>
               <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>Admin Email</Text>
@@ -159,7 +171,6 @@ const styles = StyleSheet.create({
   },
   backBtn: {
     position: 'absolute',
-    top: 50,
     left: 20,
     flexDirection: 'row',
     alignItems: 'center',

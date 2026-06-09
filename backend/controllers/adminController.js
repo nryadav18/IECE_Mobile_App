@@ -6,7 +6,10 @@ const School = require('../models/School');
 // @access  Private/CreatorAdmin
 exports.getTeamLeaders = async (req, res) => {
   try {
-    const teamLeaders = await User.find({ role: 'team_leader' }).select('-password');
+    const teamLeaders = await User.find({ role: 'team_leader' })
+      .select('-password')
+      .populate('schoolId', 'name state associationYear classCoverage')
+      .sort('-createdAt');
     res.status(200).json({ success: true, data: teamLeaders });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Server Error' });
@@ -18,7 +21,7 @@ exports.getTeamLeaders = async (req, res) => {
 // @access  Private/CreatorAdmin
 exports.getSchools = async (req, res) => {
   try {
-    const schools = await School.find();
+    const schools = await School.find().sort('-createdAt');
     res.status(200).json({ success: true, data: schools });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Server Error' });
@@ -141,6 +144,7 @@ exports.getUsersPaginated = async (req, res) => {
       .select('-password')
       .populate('schoolId')
       .populate('teamLeaderId', 'name email')
+      .sort('-createdAt')
       .skip(skip)
       .limit(parseInt(limit, 10))
       .lean(); // to attach virtuals or modify data
@@ -223,8 +227,8 @@ exports.deleteUser = async (req, res) => {
     }
 
     if (user.role === 'chairman') {
-      const school = await School.findOne({ chairmanId: user._id });
-      if (school) {
+      const schools = await School.find({ chairmanId: user._id });
+      for (const school of schools) {
         // Unlink trainers and team leaders assigned to this School instead of blocking
         await User.updateMany({ schoolId: school._id }, { $set: { schoolId: null } });
         await School.findByIdAndDelete(school._id);
@@ -238,3 +242,68 @@ exports.deleteUser = async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 };
+
+// @desc    Get pending facial registrations
+// @route   GET /api/admin/pending-face-registrations
+// @access  Private/CreatorAdmin
+exports.getPendingFacialRegistrations = async (req, res) => {
+  try {
+    const users = await User.find({ 
+      $or: [
+        { facialRegistrationStatus: 'pending' },
+        { facialRegistrationStatusV2: 'pending' }
+      ]
+    })
+      .select('-password -faceEmbedding')
+      .populate('schoolId', 'name state location');
+      
+    res.status(200).json({ success: true, data: users });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// @desc    Approve facial registration
+// @route   PUT /api/admin/approve-face-registration/:id
+// @access  Private/CreatorAdmin
+exports.approveFacialRegistration = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    user.facialRegistrationStatus = 'approved';
+    user.facialRegistrationStatusV2 = 'approved';
+    await user.save();
+
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// @desc    Delete facial registration
+// @route   DELETE /api/admin/face-registration/:id
+// @access  Private/CreatorAdmin
+exports.deleteFacialRegistration = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    user.facialRegistrationStatus = 'none';
+    user.facialRegistrationStatusV2 = 'none';
+    user.faceEmbedding = [];
+    user.faceEmbeddingV2 = [];
+    user.registrationLocation = null;
+    user.registrationPhotoUrl = null;
+    await user.save();
+
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+

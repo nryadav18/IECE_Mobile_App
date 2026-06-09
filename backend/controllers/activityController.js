@@ -1,108 +1,177 @@
 const Activity = require('../models/Activity');
+const User = require('../models/User');
+const { sendPushNotification } = require('../utils/pushNotification');
 
-// @desc    Get all activities (with optional filtering)
-// @route   GET /api/activities
-// @access  Private
-exports.getActivities = async (req, res) => {
-  try {
-    const { schoolId, trainerId, status } = req.query;
-    let query = {};
-    if (schoolId) query.schoolId = schoolId;
-    if (trainerId) query.trainerId = trainerId;
-    if (status) query.status = status;
+const notifyAdminForActivityApproval = async (activity, senderId) => {
+  const admins = await User.find({ role: 'creator_admin' });
+  const title = 'New Activity Pending Approval';
+  const message = `A new activity (${activity.name}) requires your approval.`;
 
-    const activities = await Activity.find(query)
-      .populate('schoolId', 'name state')
-      .populate('trainerId', 'name email');
-      
-    res.status(200).json({ success: true, count: activities.length, data: activities });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+  for (const admin of admins) {
+    if (admin.expoPushToken) {
+      await sendPushNotification(admin.expoPushToken, title, message, { type: 'activity_approval', relatedId: activity._id.toString() });
+    }
   }
 };
 
-// @desc    Assign an activity to a trainer
-// @route   POST /api/activities
-// @access  Private/CreatorAdmin/TeamLeader
+exports.getActivities = async (req, res) => {
+  try {
+    let query = {};
+    if (req.user.role === 'chairman') {
+      const School = require('../models/School');
+      const schools = await School.find({ chairmanId: req.user.id });
+      const schoolIds = schools.map(s => s._id);
+      query.schoolId = { $in: schoolIds };
+    } else {
+      if (req.query.schoolId) query.schoolId = req.query.schoolId;
+      if (req.query.uploaderId) query.uploaderId = req.query.uploaderId;
+    }
+    
+    // Support filtering by status
+    if (req.query.status) {
+      query.status = req.query.status;
+    }
+
+    const activities = await Activity.find(query)
+      .populate('schoolId', 'name chairmanId')
+      .populate('uploaderId', 'name email role')
+      .populate('organizers', 'name email role')
+      .sort('-activityDate -createdAt');
+      
+    res.status(200).json({ success: true, count: activities.length, data: activities });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+};
+
+exports.getActivityById = async (req, res) => {
+  try {
+    const activity = await Activity.findById(req.params.id)
+      .populate('schoolId', 'name chairmanId')
+      .populate('uploaderId', 'name email role')
+      .populate('organizers', 'name email role');
+    if (!activity) {
+      return res.status(404).json({ success: false, error: 'Activity not found' });
+    }
+    res.status(200).json({ success: true, data: activity });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+};
+
 exports.createActivity = async (req, res) => {
   try {
-    const { name, schoolId, trainerId } = req.body;
-    const activity = await Activity.create({ name, schoolId, trainerId });
+    req.body.uploaderId = req.user.id;
+    req.body.status = 'pending';
+    
+    const activity = await Activity.create(req.body);
+
+    // Send notification to the IECE admins
+    await notifyAdminForActivityApproval(activity, req.user.id);
+
     res.status(201).json({ success: true, data: activity });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
 };
 
-// @desc    Trainer submits an activity
-// @route   PUT /api/activities/:id/submit
-// @access  Private/Trainer
-exports.submitActivity = async (req, res) => {
+exports.updateActivity = async (req, res) => {
   try {
-    const activity = await Activity.findById(req.params.id);
-    if (!activity) return res.status(404).json({ success: false, error: 'Activity not found' });
-    
-    // In a real app we check req.user._id === activity.trainerId.toString()
-    activity.proofPhotoUrl = req.body.proofPhotoUrl || activity.proofPhotoUrl;
-    activity.status = 'Submitted';
-    activity.approvalHistory.push({ action: 'Submitted', userId: req.user ? req.user._id : null });
-    
-    await activity.save();
+    let activity = await Activity.findById(req.params.id);
+    if (!activity) {
+      return res.status(404).json({ success: false, error: 'Activity not found' });
+    }
+
+    // Check permission: owner or creator_admin
+    if (activity.uploaderId.toString() !== req.user.id && req.user.role !== 'creator_admin') {
+      return res.status(403).json({ success: false, error: 'Not authorized to update this activity' });
+    }
+
+    const previousStatus = activity.status;
+
+    // Update fields
+    const allowedFields = ['name', 'description', 'schoolId', 'organizers', 'mediaUrls', 'activityDate'];
+    allowedFields.forEach((field) => {
+      if (req.body[field] !== undefined) {
+        activity[field] = req.body[field];
+      }
+    });
+
+    if (previousStatus === 'approved' || previousStatus === 'rejected') {
+      activity.status = 'pending';
+      await activity.save();
+      await notifyAdminForActivityApproval(activity, req.user.id);
+    } else {
+      await activity.save();
+    }
+
     res.status(200).json({ success: true, data: activity });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
 };
 
-// @desc    School approves an activity
-// @route   PUT /api/activities/:id/approve-school
-// @access  Private/Chairman
-exports.approveSchoolActivity = async (req, res) => {
+exports.updateActivityStatus = async (req, res) => {
   try {
-    const activity = await Activity.findById(req.params.id);
-    if (!activity) return res.status(404).json({ success: false, error: 'Activity not found' });
-    
-    activity.status = 'Approved by School';
-    activity.approvalHistory.push({ action: 'Approved by School', userId: req.user ? req.user._id : null });
-    
-    await activity.save();
+    const { status, rejectionRemark } = req.body;
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ success: false, error: 'Invalid status' });
+    }
+
+    const activity = await Activity.findByIdAndUpdate(
+      req.params.id,
+      { status, rejectionRemark },
+      { new: true, runValidators: true }
+    );
+
+    if (!activity) {
+      return res.status(404).json({ success: false, error: 'Activity not found' });
+    }
+
+    // Send notification back to uploader
+    let msg = `Your activity (${activity.name}) has been ${status} by IECE Admin.`;
+    if (status === 'rejected' && rejectionRemark) {
+      msg += ` Remark: "${rejectionRemark}"`;
+    }
+    const uploaderTitle = `Activity ${status.charAt(0).toUpperCase() + status.slice(1)}`;
+
+    const uploader = await User.findById(activity.uploaderId);
+    if (uploader && uploader.expoPushToken) {
+      await sendPushNotification(uploader.expoPushToken, uploaderTitle, msg, { type: 'activity_status_update', relatedId: activity._id.toString() });
+    }
+
+    // If approved, notify the school's chairman so they are aware
+    if (status === 'approved') {
+      const School = require('../models/School');
+      const school = await School.findById(activity.schoolId);
+      if (school && school.chairmanId) {
+        const chairman = await User.findById(school.chairmanId);
+        if (chairman && chairman.expoPushToken) {
+           await sendPushNotification(chairman.expoPushToken, 'New Activity Approved', `An activity (${activity.name}) at your school was approved by IECE Admin.`, { type: 'general', relatedId: activity._id.toString() });
+        }
+      }
+    }
+
     res.status(200).json({ success: true, data: activity });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
 };
 
-// @desc    Admin confirms an activity
-// @route   PUT /api/activities/:id/confirm-admin
-// @access  Private/CreatorAdmin/TeamLeader
-exports.confirmAdminActivity = async (req, res) => {
+exports.deleteActivity = async (req, res) => {
   try {
     const activity = await Activity.findById(req.params.id);
-    if (!activity) return res.status(404).json({ success: false, error: 'Activity not found' });
-    
-    activity.status = 'Completed Successfully';
-    activity.approvalHistory.push({ action: 'Confirmed by Admin', userId: req.user ? req.user._id : null });
-    
-    await activity.save();
-    res.status(200).json({ success: true, data: activity });
-  } catch (error) {
-    res.status(400).json({ success: false, error: error.message });
-  }
-};
+    if (!activity) {
+      return res.status(404).json({ success: false, error: 'Activity not found' });
+    }
 
-// @desc    Send back an activity
-// @route   PUT /api/activities/:id/send-back
-// @access  Private/Chairman/CreatorAdmin/TeamLeader
-exports.sendBackActivity = async (req, res) => {
-  try {
-    const activity = await Activity.findById(req.params.id);
-    if (!activity) return res.status(404).json({ success: false, error: 'Activity not found' });
-    
-    activity.status = 'Sent Back';
-    activity.approvalHistory.push({ action: 'Sent Back', userId: req.user ? req.user._id : null });
-    
-    await activity.save();
-    res.status(200).json({ success: true, data: activity });
+    // Check permission: owner or creator_admin
+    if (activity.uploaderId.toString() !== req.user.id && req.user.role !== 'creator_admin') {
+      return res.status(403).json({ success: false, error: 'Not authorized to delete this activity' });
+    }
+
+    await activity.deleteOne();
+    res.status(200).json({ success: true, data: {} });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }

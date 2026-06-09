@@ -29,8 +29,8 @@ const schoolRoutes = require('./routes/schoolRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const activityRoutes = require('./routes/activityRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
-const eventRoutes = require('./routes/eventRoutes');
-const notificationRoutes = require('./routes/notificationRoutes');
+const attendanceRoutes = require('./routes/attendanceRoutes');
+const profileRoutes = require('./routes/profileRoutes');
 
 // Mount routers
 app.use('/api/auth', authRoutes);
@@ -40,8 +40,8 @@ app.use('/api/schools', schoolRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/activities', activityRoutes);
 app.use('/api/upload', uploadRoutes);
-app.use('/api/events', eventRoutes);
-app.use('/api/notifications', notificationRoutes);
+app.use('/api/attendance', attendanceRoutes);
+app.use('/api/profile', profileRoutes);
 
 const PORT = process.env.PORT || 5000;
 

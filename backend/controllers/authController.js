@@ -3,9 +3,11 @@ const jwt = require('jsonwebtoken');
 
 // Get token from model, create cookie and send response
 const sendTokenResponse = (user, statusCode, res) => {
-  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
-    expiresIn: '30d'
-  });
+  const token = jwt.sign(
+    { id: user._id, role: user.role, tokenVersion: user.tokenVersion || 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: '30d' }
+  );
 
   res.status(statusCode).json({
     success: true,
@@ -54,6 +56,10 @@ exports.login = async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
+    // Increment tokenVersion to invalidate existing tokens on other devices
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    await user.save({ validateBeforeSave: false });
+
     sendTokenResponse(user, 200, res);
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
@@ -81,6 +87,25 @@ exports.updateMe = async (req, res) => {
     });
 
     res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+};
+
+exports.savePushToken = async (req, res) => {
+  try {
+    const { expoPushToken } = req.body;
+
+    if (expoPushToken) {
+      // Clear this push token from any other users to guarantee uniqueness
+      await User.updateMany(
+        { expoPushToken, _id: { $ne: req.user.id } },
+        { $set: { expoPushToken: null } }
+      );
+    }
+
+    await User.findByIdAndUpdate(req.user.id, { expoPushToken: expoPushToken || null });
+    res.status(200).json({ success: true, message: 'Push token updated' });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
@@ -151,6 +176,9 @@ exports.resetPassword = async (req, res) => {
     user.password = password;
     user.resetPasswordOtp = undefined;
     user.resetPasswordExpire = undefined;
+
+    // Increment tokenVersion on password reset to force logout on all other devices
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
 
     sendTokenResponse(user, 200, res);

@@ -5,6 +5,12 @@ const api = axios.create({
   baseURL: process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api',
 });
 
+let logoutCallback = null;
+
+export const setLogoutCallback = (callback) => {
+  logoutCallback = callback;
+};
+
 // Request interceptor to add the auth token to headers
 api.interceptors.request.use(
   async (config) => {
@@ -22,8 +28,10 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      // Could emit an event here to trigger logout
       console.log('Unauthorized, token may be invalid or expired');
+      if (logoutCallback) {
+        logoutCallback();
+      }
     }
     return Promise.reject(error);
   }

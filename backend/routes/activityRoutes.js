@@ -1,25 +1,26 @@
 const express = require('express');
-const {
-  getActivities,
-  createActivity,
-  submitActivity,
-  approveSchoolActivity,
-  confirmAdminActivity,
-  sendBackActivity
+const { 
+  getActivities, 
+  getActivityById, 
+  createActivity, 
+  updateActivity, 
+  deleteActivity,
+  updateActivityStatus 
 } = require('../controllers/activityController');
+const { protect, authorize } = require('../middleware/auth');
 
-// If you have authentication middleware (like protect and authorize), they should be added here.
-// Example: const { protect, authorize } = require('../middleware/auth');
-// For now, setting up basic routes.
 const router = express.Router();
 
 router.route('/')
-  .get(getActivities)
-  .post(createActivity);
+  .get(protect, getActivities)
+  .post(protect, authorize('trainer', 'team_leader', 'creator_admin'), createActivity);
 
-router.put('/:id/submit', submitActivity);
-router.put('/:id/approve-school', approveSchoolActivity);
-router.put('/:id/confirm-admin', confirmAdminActivity);
-router.put('/:id/send-back', sendBackActivity);
+router.route('/:id')
+  .get(protect, getActivityById)
+  .put(protect, authorize('trainer', 'team_leader', 'creator_admin'), updateActivity)
+  .delete(protect, authorize('trainer', 'team_leader', 'creator_admin'), deleteActivity);
+
+router.route('/:id/status')
+  .put(protect, authorize('chairman'), updateActivityStatus);
 
 module.exports = router;

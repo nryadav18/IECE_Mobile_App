@@ -103,13 +103,14 @@ const CustomAlert = ({ visible, title, message, buttons, type = 'info', onDismis
       lineHeight: 22,
     },
     buttonContainer: {
-      flexDirection: 'row',
+      flexDirection: buttons && buttons.length > 2 ? 'column' : 'row',
       justifyContent: 'center',
       width: '100%',
       gap: 12,
     },
     button: {
-      flex: 1,
+      flex: buttons && buttons.length > 2 ? undefined : 1,
+      width: buttons && buttons.length > 2 ? '100%' : undefined,
       paddingVertical: 14,
       borderRadius: 12,
       justifyContent: 'center',

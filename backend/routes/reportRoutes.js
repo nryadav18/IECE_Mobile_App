@@ -18,7 +18,7 @@ router.route('/:id/status')
   .put(protect, authorize('chairman'), updateReportStatus);
 
 router.route('/:id')
-  .put(protect, authorize('team_leader'), updateReport)
+  .put(protect, authorize('team_leader', 'chairman'), updateReport)
   .delete(protect, authorize('team_leader'), deleteReport);
 
 module.exports = router;

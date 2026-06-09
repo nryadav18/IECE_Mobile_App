@@ -6,26 +6,55 @@
     "orientation": "portrait",
     "icon": "./assets/IECE_Logo.png",
     "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/IECE_Logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "y",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#ffffff",
         "foregroundImage": "./assets/IECE_Logo.png"
-      }
+      },
+      "package": "com.iece_accts.iece",
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE"
+      ]
     },
     "web": {
       "favicon": "./assets/IECE_Logo.png"
     },
     "plugins": [
       "@react-native-community/datetimepicker",
-      "expo-video"
-    ]
+      "expo-video",
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/IECE_Logo.png",
+          "color": "#4F46E5",
+          "defaultChannel": "default",
+          "sounds": []
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/IECE_Logo.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "198a05aa-302b-41b9-994c-757229aa0f88"
+      }
+    }
   }
 }

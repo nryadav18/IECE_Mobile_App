@@ -12,14 +12,25 @@ export const AlertProvider = ({ children }) => {
     buttons: [],
   });
 
-  const showAlert = useCallback(({ title, message, type = 'info', buttons = [] }) => {
-    setAlertState({
-      visible: true,
-      title,
-      message,
-      type,
-      buttons,
-    });
+  const showAlert = useCallback((configOrTitle, message, type = 'info', buttons = []) => {
+    if (typeof configOrTitle === 'object' && configOrTitle !== null) {
+      const { title, message: msg, type: t = 'info', buttons: btns = [] } = configOrTitle;
+      setAlertState({
+        visible: true,
+        title,
+        message: msg,
+        type: t,
+        buttons: btns,
+      });
+    } else {
+      setAlertState({
+        visible: true,
+        title: configOrTitle,
+        message,
+        type,
+        buttons,
+      });
+    }
   }, []);
 
   const hideAlert = useCallback(() => {

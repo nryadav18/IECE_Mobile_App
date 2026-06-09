@@ -7,7 +7,7 @@ exports.getMedia = async (req, res) => {
     if (req.user.role !== 'chairman') {
       query.status = 'approved';
     }
-    const media = await Media.find(query).populate('uploaderId', 'name');
+    const media = await Media.find(query).populate('uploaderId', 'name').sort('-createdAt');
     res.status(200).json({ success: true, count: media.length, data: media });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });

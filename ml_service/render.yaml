@@ -1,0 +1,48 @@
+# render.yaml — Render Blueprint for IECE ML Service
+# Docs: https://render.com/docs/blueprint-spec
+#
+# How to use:
+#   1. Push this project to a GitHub / GitLab repo.
+#   2. In Render Dashboard → New → Blueprint → connect your repo.
+#   3. Render will detect this file and auto-create the service below.
+#
+# Alternatively, create a "Web Service" manually with the settings that
+# match the fields below.
+
+services:
+  - type: web
+    name: iece-ml-service
+    runtime: python
+    region: singapore           # closest to India — change to 'oregon' if needed
+
+    # ── Root directory ──────────────────────────────────────────────────────
+    # Render will cd into this folder before running build / start commands.
+    rootDir: ml_service
+
+    # ── Build ───────────────────────────────────────────────────────────────
+    buildCommand: pip install -r requirements_v2.txt
+
+    # ── Start ───────────────────────────────────────────────────────────────
+    # $PORT is injected by Render automatically.
+    startCommand: uvicorn main_v2:app --host 0.0.0.0 --port $PORT
+
+    # ── Plan ────────────────────────────────────────────────────────────────
+    # 'starter' = 512 MB RAM, 0.5 CPU  →  use for low-traffic / dev
+    # 'standard' = 2 GB RAM, 1 CPU     →  recommended for face recognition
+    # Change plan in Render dashboard after first deploy.
+    plan: starter
+
+    # ── Health check ────────────────────────────────────────────────────────
+    # Render pings this path every 30 s. Must respond 200 within 10 s.
+    healthCheckPath: /
+
+    # ── Environment variables ────────────────────────────────────────────────
+    # Add any secrets (e.g. API keys) here or via the Render dashboard.
+    # PORT is set automatically by Render — do NOT add it here.
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      # InsightFace caches model weights here. On free plan this resets
+      # on every deploy. On paid plan, attach a Render Disk to persist it.
+      - key: INSIGHTFACE_HOME
+        value: /opt/render/.insightface

@@ -7,7 +7,10 @@ const {
   createTrainer,
   getUsersPaginated,
   updateUser,
-  deleteUser
+  deleteUser,
+  getPendingFacialRegistrations,
+  approveFacialRegistration,
+  deleteFacialRegistration
 } = require('../controllers/adminController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -29,5 +32,9 @@ router.post('/trainer', authorize('creator_admin'), createTrainer);
 
 router.put('/user/:id', authorize('creator_admin'), updateUser);
 router.delete('/user/:id', authorize('creator_admin'), deleteUser);
+
+router.get('/pending-face-registrations', authorize('creator_admin'), getPendingFacialRegistrations);
+router.put('/approve-face-registration/:id', authorize('creator_admin'), approveFacialRegistration);
+router.delete('/face-registration/:id', authorize('creator_admin'), deleteFacialRegistration);
 
 module.exports = router;

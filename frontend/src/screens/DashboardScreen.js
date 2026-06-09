@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Dimensions, ActivityIndicator, Image, Touchable
 import Carousel from 'react-native-reanimated-carousel';
 import { ThemeContext } from '../context/ThemeContext';
 import { AuthContext } from '../context/AuthContext';
+import { useAlert } from '../context/AlertContext';
 import api from '../services/api';
 import { MotiView } from 'moti';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,12 +14,11 @@ const width = Dimensions.get('window').width;
 
 export default function DashboardScreen({ navigation }) {
   const [media, setMedia] = useState([]);
-  const [events, setEvents] = useState([]);
+  const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
   const { theme, isDarkMode, toggleTheme } = useContext(ThemeContext);
   const { user, logout } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
-
   const [refreshing, setRefreshing] = useState(false);
 
   useFocusEffect(
@@ -32,16 +32,19 @@ export default function DashboardScreen({ navigation }) {
     fetchMedia().finally(() => setRefreshing(false));
   }, []);
 
+  const { showAlert } = useAlert();
+
   const fetchMedia = async () => {
     try {
-      const [mediaRes, eventsRes] = await Promise.all([
+      const [mediaRes, activitiesRes] = await Promise.all([
         api.get('/media'),
-        api.get('/events')
+        api.get('/activities?status=approved')
       ]);
       setMedia(mediaRes.data.data);
-      setEvents(eventsRes.data.data);
+      setActivities(activitiesRes.data.data);
     } catch (error) {
       console.log('Error fetching dashboard data:', error);
+      showAlert('Error', 'Failed to retrieve latest activities and media details. Please refresh to try again.', 'error');
     } finally {
       setLoading(false);
     }
@@ -149,24 +152,24 @@ export default function DashboardScreen({ navigation }) {
           </MotiView>
 
           <View style={styles.eventsSection}>
-            <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>Recent Events</Text>
-            {events.length > 0 ? (
+            <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>Recent Activities</Text>
+            {activities.length > 0 ? (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 10 }}>
-                {events.map((event, index) => {
-                  const thumbnail = event.mediaUrls && event.mediaUrls.length > 0 ? event.mediaUrls[0] : null;
+                {activities.map((activity, index) => {
+                  const thumbnail = activity.mediaUrls && activity.mediaUrls.length > 0 ? activity.mediaUrls[0] : null;
                   // Handle auto-generated video thumbnails by replacing .mp4 with .jpg (Cloudinary feature)
                   const thumbUrl = thumbnail && thumbnail.endsWith('.mp4') ? thumbnail.replace('.mp4', '.jpg') : thumbnail;
                   
                   return (
                     <MotiView 
-                      key={event._id}
+                      key={activity._id}
                       from={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
                       transition={{ type: 'timing', duration: 400, delay: index * 100 }}
                     >
                       <TouchableOpacity 
                         style={[styles.eventCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
-                        onPress={() => navigation.navigate('EventDetails', { eventId: event._id })}
+                        onPress={() => navigation.navigate('ActivityDetails', { activityId: activity._id })}
                         activeOpacity={0.8}
                       >
                         {thumbUrl ? (
@@ -177,11 +180,11 @@ export default function DashboardScreen({ navigation }) {
                           </View>
                         )}
                         <View style={styles.eventInfo}>
-                          <Text style={[styles.eventName, { color: theme.colors.textPrimary }]} numberOfLines={1}>{event.name}</Text>
-                          <Text style={[styles.eventSchool, { color: theme.colors.textSecondary }]} numberOfLines={1}>{event.schoolId?.name}</Text>
+                          <Text style={[styles.eventName, { color: theme.colors.textPrimary }]} numberOfLines={1}>{activity.name}</Text>
+                          <Text style={[styles.eventSchool, { color: theme.colors.textSecondary }]} numberOfLines={1}>{activity.schoolId?.name}</Text>
                           <View style={styles.eventMetaRow}>
                             <Ionicons name="calendar-outline" size={12} color={theme.colors.textSecondary} />
-                            <Text style={[styles.eventDate, { color: theme.colors.textSecondary }]}>{new Date(event.eventDate).toLocaleDateString()}</Text>
+                            <Text style={[styles.eventDate, { color: theme.colors.textSecondary }]}>{new Date(activity.activityDate).toLocaleDateString()}</Text>
                           </View>
                         </View>
                       </TouchableOpacity>
@@ -190,7 +193,7 @@ export default function DashboardScreen({ navigation }) {
                 })}
               </ScrollView>
             ) : (
-              <Text style={[styles.noEventsText, { color: theme.colors.textSecondary }]}>No recent events to show.</Text>
+              <Text style={[styles.noEventsText, { color: theme.colors.textSecondary }]}>No recent activities to show.</Text>
             )}
           </View>
 

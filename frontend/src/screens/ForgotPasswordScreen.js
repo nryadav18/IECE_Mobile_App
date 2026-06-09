@@ -11,8 +11,8 @@ import {
   TouchableWithoutFeedback,
   Keyboard
 } from 'react-native';
-import CustomAlert from '../components/CustomAlert';
 import { ThemeContext } from '../context/ThemeContext';
+import { useAlert } from '../context/AlertContext';
 import { MotiView, AnimatePresence } from 'moti';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,63 +29,79 @@ export default function ForgotPasswordScreen({ navigation }) {
   const [password, setPassword] = useState('');
   
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const [secureTextEntry, setSecureTextEntry] = useState(true);
   
-  const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
-
-  const showAlert = (title, message, type = 'info', buttons = []) => {
-    setAlertConfig({ visible: true, title, message, type, buttons });
-  };
+  const { showAlert } = useAlert();
 
   const handleSendOtp = async () => {
-    if (!email) {
-      setError('Please enter your email address');
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      showAlert('Required Field', 'Please enter your email address.', 'warning');
       return;
     }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      showAlert('Invalid Email', 'Please enter a valid email address.', 'warning');
+      return;
+    }
+
     setLoading(true);
-    setError('');
     try {
-      await api.post('/auth/forgotpassword', { email });
+      await api.post('/auth/forgotpassword', { email: trimmedEmail });
       setStep(2);
+      showAlert('OTP Sent', 'An OTP has been sent to your email address.', 'success');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to send OTP. Ensure email is correct.');
+      const errMsg = err.response?.data?.error || 'Failed to send OTP. Ensure email is correct.';
+      showAlert('Error', errMsg, 'error');
     } finally {
       setLoading(false);
     }
   };
 
   const handleVerifyOtp = async () => {
-    if (!otp) {
-      setError('Please enter the OTP');
+    const trimmedOtp = otp.trim();
+    if (!trimmedOtp) {
+      showAlert('Required Field', 'Please enter the OTP.', 'warning');
       return;
     }
+    if (trimmedOtp.length !== 6 || isNaN(Number(trimmedOtp))) {
+      showAlert('Invalid OTP', 'The OTP must be a 6-digit number.', 'warning');
+      return;
+    }
+
     setLoading(true);
-    setError('');
     try {
-      await api.post('/auth/verifyotp', { email, otp });
+      await api.post('/auth/verifyotp', { email: email.trim(), otp: trimmedOtp });
       setStep(3);
+      showAlert('OTP Verified', 'OTP verified successfully. You can now set your new password.', 'success');
     } catch (err) {
-      setError(err.response?.data?.error || 'Invalid or expired OTP');
+      const errMsg = err.response?.data?.error || 'Invalid or expired OTP';
+      showAlert('Verification Failed', errMsg, 'error');
     } finally {
       setLoading(false);
     }
   };
 
   const handleResetPassword = async () => {
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+    const trimmedPassword = password.trim();
+    if (!trimmedPassword) {
+      showAlert('Required Field', 'Please enter your new password.', 'warning');
       return;
     }
+    if (trimmedPassword.length < 6) {
+      showAlert('Validation Error', 'Password must be at least 6 characters long.', 'warning');
+      return;
+    }
+
     setLoading(true);
-    setError('');
     try {
-      await api.put('/auth/resetpassword', { email, otp, password });
+      await api.put('/auth/resetpassword', { email: email.trim(), otp: otp.trim(), password: trimmedPassword });
       showAlert('Success', 'Password has been reset successfully!', 'success', [
         { text: 'Login', type: 'primary', onPress: () => navigation.navigate('Login') }
       ]);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to reset password');
+      const errMsg = err.response?.data?.error || 'Failed to reset password';
+      showAlert('Error', errMsg, 'error');
     } finally {
       setLoading(false);
     }
@@ -100,7 +116,7 @@ export default function ForgotPasswordScreen({ navigation }) {
         <View style={[styles.inner, { paddingTop: insets.top, paddingBottom: insets.bottom + 40 }]}>
           
           <TouchableOpacity 
-            style={styles.backBtn}
+            style={[styles.backBtn, { top: insets.top + 10 }]}
             onPress={() => {
               if (step > 1) setStep(step - 1);
               else navigation.goBack();
@@ -124,11 +140,7 @@ export default function ForgotPasswordScreen({ navigation }) {
           </MotiView>
 
           <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-            {error ? (
-              <View style={[styles.errorContainer, { borderColor: theme.colors.primary + '30', backgroundColor: theme.colors.primary + '10' }]}>
-                <Text style={[styles.errorText, { color: theme.colors.primary }]}>{error}</Text>
-              </View>
-            ) : null}
+
 
             <AnimatePresence exitBeforeEnter>
               {/* Step 1: Email */}
@@ -196,14 +208,7 @@ export default function ForgotPasswordScreen({ navigation }) {
           </View>
         </View>
       </TouchableWithoutFeedback>
-      <CustomAlert 
-        visible={alertConfig.visible}
-        title={alertConfig.title}
-        message={alertConfig.message}
-        type={alertConfig.type}
-        buttons={alertConfig.buttons}
-        onDismiss={() => setAlertConfig({ ...alertConfig, visible: false })}
-      />
+
     </KeyboardAvoidingView>
   );
 }
@@ -211,7 +216,7 @@ export default function ForgotPasswordScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   inner: { flex: 1, paddingHorizontal: 24, justifyContent: 'center' },
-  backBtn: { position: 'absolute', top: 50, left: 20, flexDirection: 'row', alignItems: 'center' },
+  backBtn: { position: 'absolute', left: 20, flexDirection: 'row', alignItems: 'center' },
   backText: { fontSize: 14, fontWeight: '600', marginLeft: 8 },
   headerContainer: { alignItems: 'center', marginBottom: 40 },
   title: { fontSize: 28, fontWeight: '800', letterSpacing: 1 },

@@ -1,0 +1,31 @@
+# requirements_v2.txt — Render deployment requirements for ml_service
+#
+# KEY DIFFERENCES from requirements.txt:
+#  • torch / torchvision — CPU-only wheels via PyTorch's own index.
+#    The standard pip wheels bundle CUDA (~2 GB). The CPU-only wheels
+#    are ~200 MB and fit comfortably inside Render's build cache limits.
+#  • deepface removed — it is NOT used in main_v2.py and pulls in
+#    heavy TF/Keras dependencies unnecessarily.
+#  • tf-keras removed — same reason.
+#  • Pinned versions everywhere for reproducible Render builds.
+
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+
+# ── Computer vision ───────────────────────────────────────────────────────────
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
+Pillow==10.3.0
+
+# ── Face recognition (InsightFace + ONNX CPU runtime) ────────────────────────
+insightface==0.7.3
+onnxruntime==1.18.0       # CPU-only — do NOT use onnxruntime-gpu on Render
+
+# ── Anti-spoofing (MiniFASNet runs on PyTorch CPU) ───────────────────────────
+# Install CPU-only torch to keep image size small (~200 MB vs ~2 GB for CUDA).
+# The extra-index-url line MUST come before the torch lines.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.3.0+cpu
+torchvision==0.18.0+cpu

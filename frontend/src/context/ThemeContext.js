@@ -14,7 +14,7 @@ const lightTheme = {
     textSecondary: '#696969',
     error: '#E23744',
     success: '#27AE60',
-    border: '#E8E8E8',
+    border: '#E8E8E8', // Grey border
     cardBackground: '#FFFFFF',
     placeholder: '#A0A0A0',
     activeTab: '#E23744',
@@ -46,7 +46,7 @@ const darkTheme = {
     textSecondary: '#A0A0A0',
     error: '#FF4B5C',
     success: '#2ECC71',
-    border: '#2A2A2A',
+    border: '#f4f2f273', // White border
     cardBackground: '#1C1C1C',
     placeholder: '#555555',
     activeTab: '#FF4B5C',

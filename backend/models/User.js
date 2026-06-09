@@ -44,6 +44,32 @@ const userSchema = new mongoose.Schema({
     type: [String],
     default: []
   },
+  facialRegistrationStatus: {
+    type: String,
+    enum: ['none', 'pending', 'approved'],
+    default: 'none'
+  },
+  faceEmbedding: {
+    type: [Number],
+    default: []
+  },
+  facialRegistrationStatusV2: {
+    type: String,
+    enum: ['none', 'pending', 'approved'],
+    default: 'none'
+  },
+  faceEmbeddingV2: {
+    type: [Number],
+    default: []
+  },
+  registrationLocation: {
+    lat: { type: Number },
+    lng: { type: Number }
+  },
+  registrationPhotoUrl: {
+    type: String,
+    default: null
+  },
   resetPasswordOtp: {
     type: String,
     select: false
@@ -51,6 +77,14 @@ const userSchema = new mongoose.Schema({
   resetPasswordExpire: {
     type: Date,
     select: false
+  },
+  tokenVersion: {
+    type: Number,
+    default: 0
+  },
+  expoPushToken: {
+    type: String,
+    default: null
   }
 }, {
   timestamps: true

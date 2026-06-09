@@ -5,38 +5,39 @@ const activitySchema = new mongoose.Schema({
     type: String,
     required: [true, 'Please add an activity name']
   },
+  description: {
+    type: String,
+    required: [true, 'Please add an activity description']
+  },
   schoolId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'School',
     required: true
   },
-  trainerId: {
+  uploaderId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
   },
-  proofPhotoUrl: {
-    type: String,
-    default: null
+  organizers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  mediaUrls: [{
+    type: String
+  }],
+  activityDate: {
+    type: Date,
+    required: [true, 'Please add an activity date']
   },
   status: {
     type: String,
-    enum: ['Pending', 'Submitted', 'Approved by School', 'Completed Successfully', 'Sent Back'],
-    default: 'Pending'
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
   },
-  approvalHistory: [
-    {
-      action: String,
-      userId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-      },
-      timestamp: {
-        type: Date,
-        default: Date.now
-      }
-    }
-  ]
+  rejectionRemark: {
+    type: String
+  }
 }, {
   timestamps: true
 });
