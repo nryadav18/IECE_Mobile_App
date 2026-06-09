@@ -36,7 +36,7 @@ exports.registerFace = async (req, res) => {
     
     let mlResponse;
     try {
-      mlResponse = await axios.post('http://localhost:8000/extract', formData, {
+      mlResponse = await axios.post('${process.env.ML_SERVICE_API}/extract', formData, {
         headers: {
           ...formData.getHeaders()
         }
@@ -126,7 +126,7 @@ exports.verifyFace = async (req, res) => {
     
     let mlResponse;
     try {
-      mlResponse = await axios.post('http://localhost:8000/verify', formData, {
+      mlResponse = await axios.post('${process.env.ML_SERVICE_API}/verify', formData, {
         headers: {
           ...formData.getHeaders()
         }
@@ -208,7 +208,7 @@ exports.registerFaceV2 = async (req, res) => {
     
     let mlResponse;
     try {
-      mlResponse = await axios.post('http://localhost:8000/extract-v2', formData, {
+      mlResponse = await axios.post('${process.env.ML_SERVICE_API}/extract-v2', formData, {
         headers: {
           ...formData.getHeaders()
         }
@@ -298,7 +298,7 @@ exports.verifyFaceV2 = async (req, res) => {
     
     let mlResponse;
     try {
-      mlResponse = await axios.post('http://localhost:8000/verify-v2', formData, {
+      mlResponse = await axios.post('${process.env.ML_SERVICE_API}/verify-v2', formData, {
         headers: {
           ...formData.getHeaders()
         }
