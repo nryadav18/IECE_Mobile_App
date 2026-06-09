@@ -1,0 +1,30 @@
+# requirements_v3.txt — Python 3.11 compatible, Render-ready
+#
+# Root cause of v2 failure:
+#   Render defaulted to Python 3.14.  Pillow 10.3.0 has no 3.14 wheel
+#   and its legacy setup.py fails to compile → "KeyError: '__version__'"
+#
+# Fix applied here:
+#   • A .python-version file alongside this one pins the runtime to 3.11.9
+#   • All packages below have pre-built wheels for Python 3.11 on Linux/amd64
+#     so nothing needs to be compiled from source (fast, reliable builds).
+
+# ── Web framework ──────────────────────────────────────────────────────────
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.12
+
+# ── Computer vision ────────────────────────────────────────────────────────
+opencv-python-headless==4.10.0.84
+numpy==1.26.4          # insightface is not yet compatible with numpy 2.x
+Pillow==10.4.0         # 10.4.0 has a cp311 wheel → no compilation needed
+
+# ── Face recognition (InsightFace + ONNX CPU) ──────────────────────────────
+insightface==0.7.3
+onnxruntime==1.19.2    # CPU-only build — never use onnxruntime-gpu on Render
+
+# ── Anti-spoofing — CPU-only PyTorch ──────────────────────────────────────
+# This extra-index-url line MUST appear before the torch/torchvision lines.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.3.1+cpu
+torchvision==0.18.1+cpu
