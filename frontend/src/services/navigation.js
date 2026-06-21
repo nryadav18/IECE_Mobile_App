@@ -26,10 +26,19 @@ export function handleNotificationResponse(response) {
   const data = response.notification?.request?.content?.data || {};
   const { type, relatedId } = data;
 
-  // The welcome notification has no related entity — just open the dashboard.
-  if (type === 'welcome') {
-    navigate('Home');
-    return;
+  // Type-only notifications (no related entity) route to a sensible screen.
+  switch (type) {
+    case 'welcome':
+    case 'face_approved':
+    case 'face_removed':
+      navigate('Home');
+      return;
+    case 'face_registration_pending':
+      // Admins tap through to the approval queue.
+      navigate('PendingRegistrations');
+      return;
+    default:
+      break;
   }
 
   if (!relatedId) return;

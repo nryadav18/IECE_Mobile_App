@@ -36,11 +36,26 @@ export const AuthProvider = ({ children }) => {
 
     // Listen for incoming notifications while app is foregrounded
     notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+      const data = notification?.request?.content?.data || {};
+      // Single-session enforcement: the account was signed in on another device.
+      if (data.type === 'force_logout') {
+        console.log('Received force_logout — signing out this device.');
+        logout();
+        return;
+      }
       console.log('Foreground notification received:', notification);
     });
 
-    // Route the user to the relevant screen when they tap a notification
-    responseListener.current = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse);
+    // Route the user to the relevant screen when they tap a notification.
+    // A force_logout that arrived while backgrounded is handled on tap too.
+    responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+      const data = response?.notification?.request?.content?.data || {};
+      if (data.type === 'force_logout') {
+        logout();
+        return;
+      }
+      handleNotificationResponse(response);
+    });
 
     return () => {
       subscription.remove();

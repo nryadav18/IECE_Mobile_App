@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const School = require('../models/School');
+const { notifyUser, notifyUserById } = require('../utils/pushNotification');
 
 // @desc    Get all Team Leaders
 // @route   GET /api/admin/team-leaders
@@ -119,6 +120,16 @@ exports.createTrainer = async (req, res) => {
     });
 
     res.status(201).json({ success: true, data: user });
+
+    // Notify the assigned team leader that a new trainer joined their team.
+    if (teamLeaderId) {
+      notifyUserById(
+        teamLeaderId,
+        '👥 New Trainer Assigned',
+        `${name} has been added to your team.`,
+        { type: 'general' }
+      ).catch(err => console.error('Trainer-assigned notification error:', err.message));
+    }
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -278,6 +289,14 @@ exports.approveFacialRegistration = async (req, res) => {
     await user.save();
 
     res.status(200).json({ success: true, data: user });
+
+    // Notify the trainer/team-leader that they can now mark attendance.
+    notifyUser(
+      user,
+      '✅ Facial Registration Approved',
+      'Your facial registration has been approved. You can now mark your attendance.',
+      { type: 'face_approved' }
+    ).catch(err => console.error('Face-approved notification error:', err.message));
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -302,6 +321,14 @@ exports.deleteFacialRegistration = async (req, res) => {
     await user.save();
 
     res.status(200).json({ success: true, data: user });
+
+    // Let the user know they need to register their face again.
+    notifyUser(
+      user,
+      'Facial Registration Removed',
+      'Your facial registration was removed. Please register your face again to mark attendance.',
+      { type: 'face_removed' }
+    ).catch(err => console.error('Face-removed notification error:', err.message));
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

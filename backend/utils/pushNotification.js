@@ -94,4 +94,44 @@ const sendWelcomeNotification = async (user) => {
   );
 };
 
-module.exports = { sendPushNotification, sendWelcomeNotification };
+// Lazy require to avoid any load-order coupling (User does not require this file).
+const getUserModel = () => require('../models/User');
+
+/**
+ * Notify a single user (Mongoose doc) if they have a registered push token.
+ */
+const notifyUser = async (user, title, body, data = {}) => {
+  if (user && user.expoPushToken) {
+    return sendPushNotification(user.expoPushToken, title, body, data);
+  }
+  return { successCount: 0, failureCount: 0, errors: [] };
+};
+
+/**
+ * Notify a user by id (fetches the token).
+ */
+const notifyUserById = async (userId, title, body, data = {}) => {
+  if (!userId) return { successCount: 0, failureCount: 0, errors: [] };
+  const User = getUserModel();
+  const user = await User.findById(userId).select('expoPushToken');
+  return notifyUser(user, title, body, data);
+};
+
+/**
+ * Notify every user holding a given role (e.g. all creator_admins) in one send.
+ */
+const notifyRole = async (role, title, body, data = {}) => {
+  const User = getUserModel();
+  const users = await User.find({ role, expoPushToken: { $ne: null } }).select('expoPushToken');
+  const tokens = users.map(u => u.expoPushToken).filter(Boolean);
+  if (tokens.length === 0) return { successCount: 0, failureCount: 0, errors: [] };
+  return sendPushNotification(tokens, title, body, data);
+};
+
+module.exports = {
+  sendPushNotification,
+  sendWelcomeNotification,
+  notifyUser,
+  notifyUserById,
+  notifyRole,
+};

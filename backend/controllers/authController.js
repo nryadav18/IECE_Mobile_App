@@ -98,6 +98,11 @@ exports.savePushToken = async (req, res) => {
   try {
     const { expoPushToken, welcome } = req.body;
 
+    // Capture the token currently on file BEFORE we overwrite it — this is the
+    // previously-logged-in device, which we may need to force-logout.
+    const existing = await User.findById(req.user.id).select('expoPushToken');
+    const previousToken = existing?.expoPushToken || null;
+
     if (expoPushToken) {
       // Clear this push token from any other users to guarantee uniqueness
       await User.updateMany(
@@ -126,6 +131,21 @@ exports.savePushToken = async (req, res) => {
       sendWelcomeNotification(user).catch(err =>
         console.error('Welcome notification error:', err.message)
       );
+
+      // Single-session enforcement: a DIFFERENT device just logged into this
+      // account, so immediately push a force-logout to the previous device.
+      // (tokenVersion already invalidated its session server-side; this makes
+      // the logout instant while that device is foregrounded.) The token-diff
+      // guard avoids logging out the same device when it simply re-logs in.
+      if (previousToken && previousToken !== expoPushToken) {
+        console.log(`[force-logout] notifying previous device for user=${req.user.id}`);
+        sendPushNotification(
+          previousToken,
+          'Signed out',
+          'Your account was just signed in on another device.',
+          { type: 'force_logout' }
+        ).catch(err => console.error('Force-logout push error:', err.message));
+      }
     }
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });

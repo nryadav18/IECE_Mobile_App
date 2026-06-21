@@ -3,6 +3,7 @@ const Attendance = require('../models/Attendance');
 const axios = require('axios');
 const FormData = require('form-data');
 const cloudinary = require('cloudinary').v2;
+const { notifyRole } = require('../utils/pushNotification');
 
 // Distance calculator using Haversine formula
 function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
@@ -73,6 +74,14 @@ exports.registerFace = async (req, res) => {
          status: user.facialRegistrationStatus
       }
     });
+
+    // Notify admins that a new facial registration needs approval.
+    notifyRole(
+      'creator_admin',
+      '🧑‍💼 New Facial Registration',
+      `${user.name} submitted a facial registration for your approval.`,
+      { type: 'face_registration_pending' }
+    ).catch(err => console.error('Face-registration notification error:', err.message));
 
   } catch (error) {
     console.error(error);
@@ -245,6 +254,14 @@ exports.registerFaceV2 = async (req, res) => {
          status: user.facialRegistrationStatusV2
       }
     });
+
+    // Notify admins that a new facial registration needs approval.
+    notifyRole(
+      'creator_admin',
+      '🧑‍💼 New Facial Registration',
+      `${user.name} submitted a facial registration for your approval.`,
+      { type: 'face_registration_pending' }
+    ).catch(err => console.error('Face-registration notification error:', err.message));
 
   } catch (error) {
     console.error(error);
