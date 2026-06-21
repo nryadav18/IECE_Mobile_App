@@ -49,20 +49,21 @@ const sendPushNotification = async (to, title, body, data = {}) => {
   try {
     const response = await getMessaging().sendEachForMulticast(message);
 
+    const errors = [];
     response.responses.forEach((res, i) => {
       if (res.success) {
         console.log(`Push delivered to ${tokens[i]} (id: ${res.messageId})`);
       } else {
-        console.error(
-          `Push failed for ${tokens[i]}: ${res.error?.code} - ${res.error?.message}`
-        );
+        const detail = { code: res.error?.code, message: res.error?.message };
+        errors.push(detail);
+        console.error(`Push failed for ${tokens[i]}: ${detail.code} - ${detail.message}`);
       }
     });
 
-    return { successCount: response.successCount, failureCount: response.failureCount };
+    return { successCount: response.successCount, failureCount: response.failureCount, errors };
   } catch (err) {
     console.error('Push notification error:', err.message);
-    return { successCount: 0, failureCount: 0 };
+    return { successCount: 0, failureCount: 0, errors: [{ code: 'exception', message: err.message }] };
   }
 };
 

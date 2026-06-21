@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
-const { sendWelcomeNotification } = require('../utils/pushNotification');
+const { sendWelcomeNotification, sendPushNotification } = require('../utils/pushNotification');
+const { isFirebaseAvailable } = require('../utils/firebase');
 
 // Get token from model, create cookie and send response
 const sendTokenResponse = (user, statusCode, res) => {
@@ -111,6 +112,11 @@ exports.savePushToken = async (req, res) => {
       { new: true }
     );
 
+    // Visibility: confirms the registration request actually reached this server.
+    console.log(
+      `[push-token] user=${req.user.id} token=${expoPushToken ? expoPushToken.slice(0, 14) + '…' : 'null'} welcome=${!!welcome}`
+    );
+
     // Respond first so the client isn't blocked on the push round-trip.
     res.status(200).json({ success: true, message: 'Push token updated' });
 
@@ -123,6 +129,47 @@ exports.savePushToken = async (req, res) => {
     }
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
+  }
+};
+
+// Diagnostic endpoint: sends a test push to the logged-in user's stored token
+// and returns the full result (plus diagnostics) directly in the HTTP response,
+// so delivery can be verified without reading server logs.
+exports.testPush = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+
+    const diagnostics = {
+      firebaseAvailable: isFirebaseAvailable(),
+      hasToken: !!user.expoPushToken,
+      tokenPreview: user.expoPushToken ? user.expoPushToken.slice(0, 14) + '…' : null,
+    };
+
+    if (!diagnostics.firebaseAvailable) {
+      return res.status(200).json({
+        success: false,
+        reason: 'Firebase Admin is not initialized on the server (missing/invalid service account key).',
+        diagnostics,
+      });
+    }
+    if (!user.expoPushToken) {
+      return res.status(200).json({
+        success: false,
+        reason: 'No push token stored for this user. Open the app on a physical device to register one.',
+        diagnostics,
+      });
+    }
+
+    const result = await sendPushNotification(
+      user.expoPushToken,
+      '🔔 IECE Test Notification',
+      'If you can see this, push notifications are working perfectly! 🎉',
+      { type: 'test' }
+    );
+
+    res.status(200).json({ success: result.successCount > 0, result, diagnostics });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
