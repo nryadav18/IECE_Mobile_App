@@ -27,7 +27,11 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response && error.response.status === 401) {
+    const status = error.response?.status;
+    const url = error.config?.url || '';
+    // Skip the push-token endpoint: the logout flow itself calls it, so a 401
+    // there would re-trigger logout and create an infinite loop.
+    if (status === 401 && !url.includes('/auth/push-token')) {
       console.log('Unauthorized, token may be invalid or expired');
       if (logoutCallback) {
         logoutCallback();

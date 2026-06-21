@@ -31,6 +31,12 @@ expo-env.d.ts
 **/.env
 **/package-lock.json
 **/google-services.json
+**/iece-firebase.json
+
+# Firebase service account key (secret server credential — never commit)
+**/secrets/
+**/*-firebase-adminsdk-*.json
+**/google-service-account.json
 **/IECE_Google_PlayStore_Details.txt
 **/create_admins.js
 **/create_creator_admins.js

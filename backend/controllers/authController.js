@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const { sendWelcomeNotification } = require('../utils/pushNotification');
 
 // Get token from model, create cookie and send response
 const sendTokenResponse = (user, statusCode, res) => {
@@ -94,7 +95,7 @@ exports.updateMe = async (req, res) => {
 
 exports.savePushToken = async (req, res) => {
   try {
-    const { expoPushToken } = req.body;
+    const { expoPushToken, welcome } = req.body;
 
     if (expoPushToken) {
       // Clear this push token from any other users to guarantee uniqueness
@@ -104,8 +105,22 @@ exports.savePushToken = async (req, res) => {
       );
     }
 
-    await User.findByIdAndUpdate(req.user.id, { expoPushToken: expoPushToken || null });
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { expoPushToken: expoPushToken || null },
+      { new: true }
+    );
+
+    // Respond first so the client isn't blocked on the push round-trip.
     res.status(200).json({ success: true, message: 'Push token updated' });
+
+    // Fire a personalized welcome only when this registration came from a
+    // fresh login (not an app-launch refresh or a logout token-clear).
+    if (welcome && expoPushToken) {
+      sendWelcomeNotification(user).catch(err =>
+        console.error('Welcome notification error:', err.message)
+      );
+    }
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }

@@ -16,6 +16,7 @@ export const AuthProvider = ({ children }) => {
   const timerRef = useRef(null);
   const notificationListener = useRef(null);
   const responseListener = useRef(null);
+  const isLoggingOut = useRef(false);
 
   useEffect(() => {
     setLogoutCallback(() => {
@@ -84,20 +85,33 @@ export const AuthProvider = ({ children }) => {
     if (response.data.success) {
       await AsyncStorage.setItem('token', response.data.token);
       setUser(response.data.user);
-      // Register push token immediately after login
-      await registerForPushNotifications();
+      // Register push token immediately after login and trigger the welcome push.
+      await registerForPushNotifications({ welcome: true });
     }
     return response.data;
   };
 
   const logout = async () => {
+    // Guard against re-entrancy: a failed request can trigger logout via the
+    // 401 interceptor while we're already logging out.
+    if (isLoggingOut.current) return;
+    isLoggingOut.current = true;
     try {
-      await api.put('/auth/push-token', { expoPushToken: null });
-    } catch (err) {
-      console.log('Failed to clear push token on backend:', err.message);
+      // Only clear the server-side push token if we still hold a token to
+      // authenticate the request — otherwise it just 401s for nothing.
+      const token = await AsyncStorage.getItem('token');
+      if (token) {
+        try {
+          await api.put('/auth/push-token', { expoPushToken: null });
+        } catch (err) {
+          console.log('Failed to clear push token on backend:', err.message);
+        }
+      }
+    } finally {
+      await AsyncStorage.removeItem('token');
+      setUser(null);
+      isLoggingOut.current = false;
     }
-    await AsyncStorage.removeItem('token');
-    setUser(null);
   };
 
   // Provide a method to manually reset inactivity timer on any user interaction if desired

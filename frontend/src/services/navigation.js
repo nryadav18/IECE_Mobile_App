@@ -26,6 +26,12 @@ export function handleNotificationResponse(response) {
   const data = response.notification?.request?.content?.data || {};
   const { type, relatedId } = data;
 
+  // The welcome notification has no related entity — just open the dashboard.
+  if (type === 'welcome') {
+    navigate('Home');
+    return;
+  }
+
   if (!relatedId) return;
 
   if (type === 'activity_approval' || type === 'activity_status_update') {

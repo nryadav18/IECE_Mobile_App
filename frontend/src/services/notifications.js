@@ -26,7 +26,7 @@ Notifications.setNotificationHandler({
  * SDK 53, so a development/production build is required — this function
  * skips gracefully when running inside Expo Go or on a simulator.
  */
-export const registerForPushNotifications = async () => {
+export const registerForPushNotifications = async ({ welcome = false } = {}) => {
   // Push tokens require a physical device.
   if (!Device.isDevice) {
     console.log('Push notifications require a physical device.');
@@ -64,23 +64,50 @@ export const registerForPushNotifications = async () => {
   }
 
   try {
-    const projectId =
-      Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
-
-    if (!projectId) {
-      console.log('No EAS projectId found; cannot get an Expo push token.');
+    // We deliver via Firebase Admin (FCM) directly, so we need the native FCM
+    // device token — not an Expo push token. On Android this is the FCM
+    // registration token (requires google-services.json + Firebase, which the
+    // build provides). On iOS it is the APNs token.
+    const devicePushToken = await getDeviceTokenWithRetry();
+    if (!devicePushToken) {
+      console.log('Could not obtain a device push token after retries.');
       return null;
     }
 
-    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-    const expoPushToken = tokenData.data;
+    // Save to backend. `welcome: true` (only on a fresh login) tells the
+    // server to fire a personalized welcome push to this token.
+    // The field stays named expoPushToken for backwards compatibility; it now
+    // carries the native FCM device token.
+    await api.put('/auth/push-token', { expoPushToken: devicePushToken, welcome });
 
-    // Save to backend
-    await api.put('/auth/push-token', { expoPushToken });
-
-    return expoPushToken;
+    return devicePushToken;
   } catch (err) {
     console.log('Failed to get/save push token:', err.message);
     return null;
   }
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Fetch the native FCM/APNs device token with retries. Obtaining the token can
+ * be transiently interrupted (e.g. a Fast Refresh / app reload mid-request, or
+ * brief network loss). Retrying with backoff recovers without losing the token.
+ */
+const getDeviceTokenWithRetry = async (attempts = 3) => {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const tokenData = await Notifications.getDevicePushTokenAsync();
+      return tokenData.data;
+    } catch (err) {
+      const isLast = i === attempts - 1;
+      console.log(
+        `Device push token attempt ${i + 1}/${attempts} failed: ${err.message}` +
+          (isLast ? '' : ' — retrying...')
+      );
+      if (isLast) return null;
+      await sleep(1500 * (i + 1)); // 1.5s, 3s backoff
+    }
+  }
+  return null;
 };
