@@ -23,6 +23,9 @@ expo-env.d.ts
 **/package-lock.json
 **/google-services.json
 **/IECE_Google_PlayStore_Details.txt
+**/create_admins.js
+**/create_creator_admins.js
+**/testCloudinary.js
 
 # Metro
 .metro-health-check*
