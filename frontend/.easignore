@@ -35,9 +35,8 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
-# Build directories
-android/build/
-android/app/build/
-android/.gradle/
-ios/build/
-ios/Pods/
+# Native folders — excluded so EAS regenerates them via prebuild (CNG)
+# with correct, machine-independent paths and auto-applied config plugins
+# (expo-notifications, googleServicesFile, etc.).
+android/
+ios/
