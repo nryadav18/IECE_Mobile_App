@@ -37,6 +37,14 @@
       "expo-video",
       "expo-font",
       [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/IECE_Logo.png",

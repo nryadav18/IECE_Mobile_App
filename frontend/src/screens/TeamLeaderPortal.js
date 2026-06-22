@@ -1,4 +1,4 @@
-import React, { useContext, useState, useCallback, useEffect } from 'react';
+import React, { useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, RefreshControl } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Formik } from 'formik';
@@ -16,9 +16,19 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import CreateActivityForm from '../components/CreateActivityForm';
 import EditActivityModal from '../components/EditActivityModal';
 import EditReportModal from '../components/EditReportModal';
+import SidebarMenu from '../components/SidebarMenu';
 import { Image } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
+
+const TAB_ITEMS = [
+  { key: 'Reports', label: 'Log Visit', icon: 'document-text-outline' },
+  { key: 'MyReports', label: 'My Reports', icon: 'folder-open-outline' },
+  { key: 'MyTeam', label: 'My Team', icon: 'people-outline' },
+  { key: 'Attendance', label: 'Attendance', icon: 'calendar-outline' },
+  { key: 'Events', label: 'Publish Activity', icon: 'add-circle-outline' },
+  { key: 'ManageEvents', label: 'Manage Activities', icon: 'list-outline' },
+];
 
 const VisitSchema = Yup.object().shape({
   personMet: Yup.string().required('Met person name is required'),
@@ -29,9 +39,10 @@ const VisitSchema = Yup.object().shape({
 
 export default function TeamLeaderPortal({ navigation }) {
   const { theme } = useContext(ThemeContext);
-  const { user } = useContext(AuthContext);
+  const { user, logout } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
   const { showAlert: showGlobalAlert } = useAlert();
+  const sidebarRef = useRef(null);
 
   const [reports, setReports] = useState([]);
   const [trainers, setTrainers] = useState([]);
@@ -117,6 +128,10 @@ export default function TeamLeaderPortal({ navigation }) {
     return <ScreenLoader message="Loading Team Leader Portal..." />;
   }
 
+  // During logout the user is cleared before the navigator swaps stacks; bail
+  // out of this render so we don't read properties off a null user.
+  if (!user) return null;
+
   const getInputStyle = (field) => {
     const isFocused = focusFields[field];
     return [
@@ -183,77 +198,24 @@ export default function TeamLeaderPortal({ navigation }) {
       <View style={{ backgroundColor: theme.colors.background, paddingTop: insets.top }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 4 }}>
           <View style={[styles.header, { borderBottomColor: theme.colors.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 16 }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <TouchableOpacity 
-                style={[styles.backBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface, marginRight: 12 }]}
-                onPress={() => navigation.goBack()}
-                activeOpacity={0.8}
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+              <TouchableOpacity
+                style={[styles.menuBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}
+                onPress={() => sidebarRef.current?.open()}
+                activeOpacity={0.7}
+                accessibilityLabel="Open menu"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Ionicons name="arrow-back-outline" size={20} color={theme.colors.textPrimary} />
+                <Ionicons name="menu" size={24} color={theme.colors.textPrimary} />
               </TouchableOpacity>
-              <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0 }]}>Team Leader</Text>
+              <View style={{ marginLeft: 14, flex: 1 }}>
+                <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0, fontSize: 20 }]} numberOfLines={1}>
+                  {TAB_ITEMS.find(t => t.key === activeTab)?.label || 'Team Leader'}
+                </Text>
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 1 }}>Team Leader Portal</Text>
+              </View>
             </View>
-            <TouchableOpacity 
-              onPress={() => navigation.navigate('UserProfile', { userId: 'me' })} 
-              style={{ 
-                width: 36, 
-                height: 36, 
-                borderRadius: 18, 
-                backgroundColor: '#FF3B30', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                elevation: 2,
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.2,
-                shadowRadius: 1.41
-              }}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="person" size={18} color="#FFFFFF" />
-            </TouchableOpacity>
           </View>
-          
-          {/* Tabs - Pill Style */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsContainer} contentContainerStyle={{ paddingVertical: 4 }}>
-            {[
-              { key: 'Reports', label: 'Log Visit', icon: 'document-text-outline' },
-              { key: 'MyReports', label: 'My Reports', icon: 'folder-open-outline' },
-              { key: 'MyTeam', label: 'My Team', icon: 'people-outline' },
-              { key: 'Attendance', label: 'Attendance', icon: 'calendar-outline' },
-              { key: 'Events', label: 'Publish Activity', icon: 'add-circle-outline' },
-              { key: 'ManageEvents', label: 'Manage Activities', icon: 'list-outline' },
-            ].map((tab) => {
-              const isActive = activeTab === tab.key;
-              return (
-                <TouchableOpacity
-                  key={tab.key}
-                  activeOpacity={0.8}
-                  style={[
-                    styles.pillTab,
-                    {
-                      backgroundColor: isActive ? theme.colors.primary : theme.colors.surface,
-                      borderColor: isActive ? theme.colors.primary : theme.colors.border,
-                    }
-                  ]}
-                  onPress={() => setActiveTab(tab.key)}
-                >
-                  <Ionicons
-                    name={isActive ? tab.icon.replace('-outline', '') || tab.icon : tab.icon}
-                    size={16}
-                    color={isActive ? '#FFFFFF' : theme.colors.textSecondary}
-                  />
-                  <Text style={[
-                    styles.pillTabText,
-                    { color: isActive ? '#FFFFFF' : theme.colors.textSecondary },
-                    isActive && { fontWeight: '700' }
-                  ]}>
-                    {tab.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
         </View>
       </View>
 
@@ -657,7 +619,21 @@ export default function TeamLeaderPortal({ navigation }) {
 
     </ScrollView>
 
-    <CustomAlert 
+    <SidebarMenu
+      ref={sidebarRef}
+      title="Team Leader"
+      subtitle={user?.name || 'Team Leader'}
+      tabs={TAB_ITEMS}
+      activeTab={activeTab}
+      onSelectTab={setActiveTab}
+      actions={[
+        { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
+        { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
+        { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
+      ]}
+    />
+
+    <CustomAlert
       visible={alertConfig.visible}
       title={alertConfig.title}
       message={alertConfig.message}
@@ -723,18 +699,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   title: { fontSize: 24, fontWeight: '700', letterSpacing: -0.5 },
-  tabsContainer: { flexDirection: 'row', marginBottom: 20 },
-  pillTab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    marginRight: 10,
-    borderRadius: 25,
-    borderWidth: 1.5,
-  },
-  pillTabText: { fontSize: 13, fontWeight: '600', marginLeft: 6 },
-  formCard: { 
+  menuBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  formCard: {
     padding: 16, 
     borderRadius: 16, 
     borderWidth: 1, 

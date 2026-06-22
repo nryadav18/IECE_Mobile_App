@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useContext, useCallback } from 'react';
+import React, { useEffect, useState, useContext, useCallback, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, RefreshControl, ScrollView, Image } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -12,8 +12,16 @@ import CustomAlert from '../components/CustomAlert';
 import CreateActivityForm from '../components/CreateActivityForm';
 import EditActivityModal from '../components/EditActivityModal';
 import ScreenLoader from '../components/ScreenLoader';
+import SidebarMenu from '../components/SidebarMenu';
 import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
+
+const TAB_ITEMS = [
+  { key: 'Progress', label: 'Progress', icon: 'ribbon-outline' },
+  { key: 'Attendance', label: 'Attendance', icon: 'calendar-outline' },
+  { key: 'PublishActivity', label: 'Publish Activity', icon: 'add-circle-outline' },
+  { key: 'ManageActivities', label: 'Manage Activities', icon: 'list-outline' },
+];
 
 export default function TrainerPortal({ navigation }) {
   const [school, setSchool] = useState(null);
@@ -26,9 +34,10 @@ export default function TrainerPortal({ navigation }) {
   const [faceStatus, setFaceStatus] = useState('none'); // 'none' | 'pending' | 'approved'
   
   const { theme } = useContext(ThemeContext);
-  const { user } = useContext(AuthContext);
+  const { user, logout } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
   const { showAlert: showGlobalAlert } = useAlert();
+  const sidebarRef = useRef(null);
 
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
 
@@ -131,6 +140,10 @@ export default function TrainerPortal({ navigation }) {
   if (loading) {
     return <ScreenLoader message="Loading Trainer Portal..." />;
   }
+
+  // During logout the user is cleared before the navigator swaps stacks; bail
+  // out of this render so we don't read properties off a null user.
+  if (!user) return null;
 
   const renderProgressTab = () => {
     const remainingCount = Math.max(0, 30 - approvedCount);
@@ -252,77 +265,25 @@ export default function TrainerPortal({ navigation }) {
     <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
       {/* Fixed Header */}
       <View style={{ paddingHorizontal: 20, paddingTop: 4 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <TouchableOpacity 
-              style={[styles.backBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface, marginBottom: 0, marginRight: 16 }]}
-              onPress={() => navigation.goBack()}
-              activeOpacity={0.8}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+            <TouchableOpacity
+              style={[styles.menuBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}
+              onPress={() => sidebarRef.current?.open()}
+              activeOpacity={0.7}
+              accessibilityLabel="Open menu"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Ionicons name="arrow-back-outline" size={20} color={theme.colors.textPrimary} />
+              <Ionicons name="menu" size={24} color={theme.colors.textPrimary} />
             </TouchableOpacity>
-
-            <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0 }]}>Trainer Portal</Text>
+            <View style={{ marginLeft: 14, flex: 1 }}>
+              <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0, fontSize: 20 }]} numberOfLines={1}>
+                {TAB_ITEMS.find(t => t.key === activeTab)?.label || 'Trainer Portal'}
+              </Text>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 1 }}>Trainer Portal</Text>
+            </View>
           </View>
-          <TouchableOpacity 
-            onPress={() => navigation.navigate('UserProfile', { userId: 'me' })} 
-            style={{ 
-              width: 36, 
-              height: 36, 
-              borderRadius: 18, 
-              backgroundColor: '#FF3B30', 
-              alignItems: 'center', 
-              justifyContent: 'center',
-              elevation: 2,
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: 0.2,
-              shadowRadius: 1.41
-            }}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="person" size={18} color="#FFFFFF" />
-          </TouchableOpacity>
         </View>
-
-        {/* Tabs - Pill Style */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsContainer} contentContainerStyle={{ paddingVertical: 4 }}>
-          {[
-            { key: 'Progress', label: 'Progress', icon: 'ribbon-outline' },
-            { key: 'Attendance', label: 'Attendance', icon: 'calendar-outline' },
-            { key: 'PublishActivity', label: 'Publish Activity', icon: 'add-circle-outline' },
-            { key: 'ManageActivities', label: 'Manage Activities', icon: 'list-outline' },
-          ].map((tab) => {
-            const isActive = activeTab === tab.key;
-            return (
-              <TouchableOpacity
-                key={tab.key}
-                activeOpacity={0.8}
-                style={[
-                  styles.pillTab,
-                  {
-                    backgroundColor: isActive ? theme.colors.primary : theme.colors.surface,
-                    borderColor: isActive ? theme.colors.primary : theme.colors.border,
-                  }
-                ]}
-                onPress={() => setActiveTab(tab.key)}
-              >
-                <Ionicons
-                  name={isActive ? tab.icon.replace('-outline', '') || tab.icon : tab.icon}
-                  size={16}
-                  color={isActive ? '#FFFFFF' : theme.colors.textSecondary}
-                />
-                <Text style={[
-                  styles.pillTabText,
-                  { color: isActive ? '#FFFFFF' : theme.colors.textSecondary },
-                  isActive && { fontWeight: '700' }
-                ]}>
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
       </View>
 
       {activeTab === 'Progress' && renderProgressTab()}
@@ -519,7 +480,21 @@ export default function TrainerPortal({ navigation }) {
         />
       )}
 
-      <EditActivityModal 
+      <SidebarMenu
+        ref={sidebarRef}
+        title="Trainer Portal"
+        subtitle={user?.name || 'Trainer'}
+        tabs={TAB_ITEMS}
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        actions={[
+          { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
+          { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
+          { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
+        ]}
+      />
+
+      <EditActivityModal
         visible={!!activityToEdit}
         activity={activityToEdit}
         onClose={() => setActivityToEdit(null)}
@@ -545,17 +520,7 @@ export default function TrainerPortal({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  tabsContainer: { flexDirection: 'row', marginBottom: 20 },
-  pillTab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    marginRight: 10,
-    borderRadius: 25,
-    borderWidth: 1.5,
-  },
-  pillTabText: { fontSize: 13, fontWeight: '600', marginLeft: 6 },
+  menuBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   backBtn: {
     width: 40,
     height: 40,

@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../components/Avatar';
 import CustomAlert from '../components/CustomAlert';
+import SidebarMenu from '../components/SidebarMenu';
 
 export default function ChairmanPortal({ navigation }) {
   const [school, setSchool] = useState(null);
@@ -18,8 +19,9 @@ export default function ChairmanPortal({ navigation }) {
   const [visitReports, setVisitReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const { theme } = useContext(ThemeContext);
-  const { user } = useContext(AuthContext);
+  const { user, logout } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
+  const sidebarRef = useRef(null);
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
   
   // Rejection & Edit states
@@ -284,6 +286,10 @@ export default function ChairmanPortal({ navigation }) {
     );
   }
 
+  // During logout the user is cleared before the navigator swaps stacks; bail
+  // out of this render so we don't read properties off a null user.
+  if (!user) return null;
+
 
 
   const renderRightActionsReport = (progress, dragX, item) => {
@@ -324,16 +330,20 @@ export default function ChairmanPortal({ navigation }) {
       {/* Fixed Header */}
       <View style={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <TouchableOpacity 
-              style={[styles.backBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface, marginRight: 12, marginBottom: 0 }]}
-              onPress={() => navigation.goBack()}
-              activeOpacity={0.8}
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+            <TouchableOpacity
+              style={[styles.menuBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}
+              onPress={() => sidebarRef.current?.open()}
+              activeOpacity={0.7}
+              accessibilityLabel="Open menu"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Ionicons name="arrow-back-outline" size={20} color={theme.colors.textPrimary} />
+              <Ionicons name="menu" size={24} color={theme.colors.textPrimary} />
             </TouchableOpacity>
-
-            <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0 }]}>Chairman Portal</Text>
+            <View style={{ marginLeft: 14, flex: 1 }}>
+              <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0, fontSize: 20 }]} numberOfLines={1}>Chairman Portal</Text>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 1 }}>{user?.name || 'Chairman'}</Text>
+            </View>
           </View>
         </View>
       </View>
@@ -597,7 +607,18 @@ export default function ChairmanPortal({ navigation }) {
         </View>
       </Modal>
 
-      <CustomAlert 
+      <SidebarMenu
+        ref={sidebarRef}
+        title="Chairman Portal"
+        subtitle={user?.name || 'Chairman'}
+        actions={[
+          { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
+          { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
+          { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
+        ]}
+      />
+
+      <CustomAlert
         visible={alertConfig.visible}
         title={alertConfig.title}
         message={alertConfig.message}
@@ -613,6 +634,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   bellBtn: { padding: 8, borderRadius: 12, backgroundColor: '#f0f0f0' },
+  menuBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   backBtn: {
     width: 40,
     height: 40,

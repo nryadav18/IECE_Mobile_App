@@ -21,6 +21,6 @@ router.route('/:id')
   .delete(protect, authorize('trainer', 'team_leader', 'creator_admin'), deleteActivity);
 
 router.route('/:id/status')
-  .put(protect, authorize('chairman'), updateActivityStatus);
+  .put(protect, authorize('chairman', 'creator_admin'), updateActivityStatus);
 
 module.exports = router;

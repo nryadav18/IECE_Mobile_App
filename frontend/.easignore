@@ -15,9 +15,8 @@ web-build/
 *.key
 *.mobileprovision
 
-# Env files
-.env
-**/.env
+# Env files — keep local secret overrides out, but DO upload .env so the EAS
+# build bakes in EXPO_PUBLIC_API_URL (a public, client-side value).
 .env*.local
 
 # Metro

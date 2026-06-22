@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useContext, useCallback } from 'react';
-import { 
+import React, { useState, useEffect, useContext, useCallback, useRef } from 'react';
+import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, RefreshControl, KeyboardAvoidingView, Platform, Image
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -20,6 +20,7 @@ import EditActivityModal from '../components/EditActivityModal';
 import ScreenLoader from '../components/ScreenLoader';
 import EditReportModal from '../components/EditReportModal';
 import IndiaMap from '../components/IndiaMap';
+import SidebarMenu from '../components/SidebarMenu';
 
 const TlSchema = Yup.object().shape({
   name: Yup.string().required('Required'),
@@ -97,12 +98,26 @@ const TrainerSchema = Yup.object().shape({
   teamLeaderId: Yup.string().required('Required'),
 });
 
+const TAB_ITEMS = [
+  { key: 'Monitoring', label: 'Monitoring', icon: 'pulse-outline' },
+  { key: 'Profiles', label: 'Profiles', icon: 'people-outline' },
+  { key: 'Trainer', label: 'Create Trainer', icon: 'person-add-outline' },
+  { key: 'Chairman', label: 'Create Chairman', icon: 'business-outline' },
+  { key: 'TeamLeader', label: 'Create Team Leader', icon: 'person-add-outline' },
+  { key: 'Reports', label: 'Reports', icon: 'document-text-outline' },
+  { key: 'Banners', label: 'Banners', icon: 'images-outline' },
+  { key: 'ManageEvents', label: 'Activities', icon: 'calendar-outline' },
+];
+
 export default function CreatorAdminPortal({ navigation }) {
   const { user, logout } = useContext(AuthContext);
   const { theme } = useContext(ThemeContext);
   const insets = useSafeAreaInsets();
   
   const [activeTab, setActiveTab] = useState('Monitoring');
+
+  // Sidebar (hamburger) drawer
+  const sidebarRef = useRef(null);
   const [profilesSearchQuery, setProfilesSearchQuery] = useState('');
   const [schools, setSchools] = useState([]);
   const [teamLeaders, setTeamLeaders] = useState([]);
@@ -249,6 +264,16 @@ export default function CreatorAdminPortal({ navigation }) {
     ]);
   };
 
+  const handleUpdateActivityStatus = async (id, status) => {
+    try {
+      await api.put(`/activities/${id}/status`, { status });
+      showAlert('Success', `Activity ${status} successfully.`, 'success');
+      fetchDropdownData();
+    } catch (err) {
+      showAlert('Error', err.response?.data?.error || 'Failed to update activity status.', 'error');
+    }
+  };
+
   const deleteActivity = (id) => {
     showAlert('Confirm', 'Are you sure you want to permanently delete this activity?', 'warning', [
       { text: 'Cancel', style: 'cancel' },
@@ -298,83 +323,33 @@ export default function CreatorAdminPortal({ navigation }) {
 
   // Chairman approval is now final, so no admin confirmation is needed.
 
+  // During logout the user is cleared before the navigator swaps stacks; bail
+  // out of this render so we don't read properties off a null user.
+  if (!user) return null;
+
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
         <View style={styles.headerTitleContainer}>
-          <Ionicons name="shield-checkmark" size={24} color={theme.colors.primary} />
-          <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>IECE Management</Text>
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TouchableOpacity onPress={() => navigation.navigate('ManageScreen')} style={[styles.logoutBtn, { backgroundColor: theme.colors.surface, marginRight: 10 }]}>
-            <Ionicons name="settings-outline" size={20} color={theme.colors.textPrimary} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={logout} style={[styles.logoutBtn, { backgroundColor: theme.colors.surface }]}>
-            <Ionicons name="log-out-outline" size={20} color={theme.colors.error || '#FF4444'} />
-          </TouchableOpacity>
-          
           <TouchableOpacity
-            style={[styles.actionBtn, { borderColor: theme.colors.border }]}
+            onPress={() => sidebarRef.current?.open()}
             activeOpacity={0.7}
-            onPress={() => navigation.navigate('PendingRegistrations')}
+            style={[styles.menuBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+            accessibilityLabel="Open menu"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <View style={[styles.iconBox, { backgroundColor: theme.colors.primary + '15' }]}>
-              <Ionicons name="scan-outline" size={24} color={theme.colors.primary} />
-            </View>
+            <Ionicons name="menu" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
+          <View style={{ marginLeft: 12 }}>
+            <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>
+              {TAB_ITEMS.find(t => t.key === activeTab)?.label || 'IECE Management'}
+            </Text>
+            <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>IECE Management</Text>
+          </View>
         </View>
-      </View>
-
-      {/* Scrollable Tabs - Pill Style */}
-      <View style={{ borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabsContainer}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 4 }}
-        >
-          {[
-            { key: 'Monitoring', label: 'Monitoring', icon: 'pulse-outline' },
-            { key: 'Profiles', label: 'Profiles', icon: 'people-outline' },
-            { key: 'Trainer', label: 'Create Trainer', icon: 'person-add-outline' },
-            { key: 'Chairman', label: 'Create Chairman', icon: 'business-outline' },
-            { key: 'TeamLeader', label: 'Create Team Leader', icon: 'person-add-outline' },
-            { key: 'Reports', label: 'Reports', icon: 'document-text-outline' },
-            { key: 'Banners', label: 'Banners', icon: 'images-outline' },
-            { key: 'ManageEvents', label: 'Activities', icon: 'calendar-outline' },
-          ].map((tab) => {
-            const isActive = activeTab === tab.key;
-            return (
-              <TouchableOpacity 
-                key={tab.key}
-                activeOpacity={0.8}
-                style={[
-                  styles.pillTab,
-                  {
-                    backgroundColor: isActive ? theme.colors.primary : theme.colors.surface,
-                    borderColor: isActive ? theme.colors.primary : theme.colors.border,
-                  }
-                ]} 
-                onPress={() => setActiveTab(tab.key)}
-              >
-                <Ionicons 
-                  name={isActive ? tab.icon.replace('-outline', '') || tab.icon : tab.icon} 
-                  size={16} 
-                  color={isActive ? '#FFFFFF' : theme.colors.textSecondary} 
-                />
-                <Text style={[
-                  styles.pillTabText,
-                  { color: isActive ? '#FFFFFF' : theme.colors.textSecondary },
-                  isActive && { fontWeight: '700' }
-                ]}>
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+        <Ionicons name="shield-checkmark" size={24} color={theme.colors.primary} />
       </View>
 
       {loadingData ? (
@@ -967,7 +942,22 @@ export default function CreatorAdminPortal({ navigation }) {
         </ScrollView>
       )}
 
-      <EditActivityModal 
+      {/* Sidebar Drawer */}
+      <SidebarMenu
+        ref={sidebarRef}
+        title="IECE Admin"
+        subtitle="Management Portal"
+        tabs={TAB_ITEMS}
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        actions={[
+          { label: 'Pending Registrations', icon: 'scan-outline', onPress: () => navigation.navigate('PendingRegistrations') },
+          { label: 'Settings', icon: 'settings-outline', onPress: () => navigation.navigate('ManageScreen') },
+          { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
+        ]}
+      />
+
+      <EditActivityModal
         visible={!!activityToEdit}
         activity={activityToEdit}
         onClose={() => setActivityToEdit(null)}
@@ -997,22 +987,13 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1
+    paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16, borderBottomWidth: 1
   },
   headerTitleContainer: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { fontSize: 20, fontWeight: 'bold', marginLeft: 8 },
+  headerTitle: { fontSize: 20, fontWeight: 'bold' },
+  headerSubtitle: { fontSize: 12, marginTop: 1 },
+  menuBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   logoutBtn: { padding: 8, borderRadius: 8 },
-  tabsContainer: { paddingTop: 10, paddingBottom: 10 },
-  pillTab: { 
-    flexDirection: 'row',
-    alignItems: 'center', 
-    paddingHorizontal: 18, 
-    paddingVertical: 10, 
-    marginRight: 10, 
-    borderRadius: 25,
-    borderWidth: 1.5,
-  },
-  pillTabText: { fontSize: 13, fontWeight: '600', marginLeft: 6 },
   scrollContent: { padding: 20, paddingBottom: 60, flexGrow: 1 },
   formCard: { padding: 20, borderRadius: 16, borderWidth: 1 },
   formTitle: { fontSize: 18, fontWeight: '700', marginBottom: 20 },
