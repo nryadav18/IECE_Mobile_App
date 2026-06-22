@@ -121,7 +121,7 @@ exports.updateActivityStatus = async (req, res) => {
     const activity = await Activity.findByIdAndUpdate(
       req.params.id,
       { status, rejectionRemark },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
 
     if (!activity) {

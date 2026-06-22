@@ -82,7 +82,7 @@ exports.updateReportStatus = async (req, res) => {
     const report = await VisitReport.findByIdAndUpdate(
       req.params.id,
       { status, rejectionRemark },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
 
     if (!report) {

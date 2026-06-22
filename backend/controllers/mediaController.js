@@ -37,7 +37,7 @@ exports.updateMediaStatus = async (req, res) => {
     const media = await Media.findByIdAndUpdate(
       req.params.id,
       { status },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
 
     if (!media) {

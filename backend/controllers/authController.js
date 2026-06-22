@@ -84,7 +84,7 @@ exports.updateMe = async (req, res) => {
     if (req.body.classesHandled) fieldsToUpdate.classesHandled = req.body.classesHandled;
 
     const user = await User.findByIdAndUpdate(req.user.id, fieldsToUpdate, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true
     });
 
@@ -114,7 +114,7 @@ exports.savePushToken = async (req, res) => {
     const user = await User.findByIdAndUpdate(
       req.user.id,
       { expoPushToken: expoPushToken || null },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     // Visibility: confirms the registration request actually reached this server.
