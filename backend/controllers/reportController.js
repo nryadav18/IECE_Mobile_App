@@ -108,7 +108,7 @@ exports.updateReportStatus = async (req, res) => {
       const adminMsg = `A visit report was approved by the chairman and is now visible.`;
       for (const admin of admins) {
         if (admin.expoPushToken) {
-          await sendPushNotification(admin.expoPushToken, adminTitle, adminMsg, { type: 'general', relatedId: report._id.toString() });
+          await sendPushNotification(admin.expoPushToken, adminTitle, adminMsg, { type: 'admin_report', relatedId: report._id.toString() });
         }
       }
     }
@@ -172,7 +172,7 @@ exports.updateReport = async (req, res) => {
         const adminMsg = `A visit report was approved by the chairman and is now visible.`;
         for (const admin of admins) {
           if (admin.expoPushToken) {
-            await sendPushNotification(admin.expoPushToken, adminTitle, adminMsg, { type: 'general', relatedId: report._id.toString() });
+            await sendPushNotification(admin.expoPushToken, adminTitle, adminMsg, { type: 'admin_report', relatedId: report._id.toString() });
           }
         }
       }

@@ -8,12 +8,16 @@ const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const connectDB = require('./config/db');
+const { startAttendanceReminderCron } = require('./utils/attendanceReminderCron');
 
 // Load env vars
 dotenv.config();
 
 // Connect to database
 connectDB();
+
+// Schedule the hourly (5–10 PM IST) "please check out" attendance reminders.
+startAttendanceReminderCron();
 
 const app = express();
 

@@ -8,44 +8,115 @@ import * as Notifications from 'expo-notifications';
  */
 export const navigationRef = createNavigationContainerRef();
 
+// A notification tap can arrive before navigation is ready or before the user's
+// role-specific stack has mounted (cold start / still authenticating). When that
+// happens we stash the payload and flush it once the app is ready (see
+// flushPendingNotification, called from AppNavigator after the user loads).
+let pendingData = null;
+
 export function navigate(name, params) {
-  if (navigationRef.isReady()) {
+  if (!navigationRef.isReady()) return false;
+  try {
     navigationRef.navigate(name, params);
+    return true;
+  } catch (e) {
+    // Target route not registered yet (e.g. authed stack not mounted).
+    return false;
+  }
+}
+
+/**
+ * Maps a push `data` payload to a concrete screen + params. The payload is set
+ * by the backend (see utils/pushNotification.js & controllers) and carries
+ * `type` and optionally `relatedId`. Notifications are role-targeted, so each
+ * type has a single sensible destination.
+ */
+function resolveTarget(data = {}) {
+  const { type, relatedId } = data;
+
+  switch (type) {
+    // An activity needs review (admin) or its status changed (uploader).
+    case 'activity_approval':
+    case 'activity_status_update':
+      return relatedId
+        ? { screen: 'ActivityDetails', params: { activityId: relatedId } }
+        : { screen: 'Home' };
+
+    // A team leader filed a visit report → chairman reviews it in their portal.
+    case 'report_approval':
+      return { screen: 'ChairmanPortal' };
+
+    // A report was approved/rejected → team leader sees it under "My Reports".
+    case 'report_status_update':
+      return { screen: 'TeamLeaderPortal', params: { initialTab: 'MyReports' } };
+
+    // An approved report is now visible to the admin → open their Reports tab.
+    case 'admin_report':
+      return { screen: 'CreatorAdminPortal', params: { initialTab: 'Reports' } };
+
+    // A trainer/TL submitted a face registration → admin approves it.
+    case 'face_registration_pending':
+      return { screen: 'PendingRegistrations' };
+
+    // "Please check out" reminder → open the user's Attendance tab so they can
+    // check out right away. The recipient's role rides along in the payload.
+    case 'checkout_reminder':
+      return {
+        screen: data.role === 'team_leader' ? 'TeamLeaderPortal' : 'TrainerPortal',
+        params: { initialTab: 'Attendance' },
+      };
+
+    // Status / informational notifications land on the dashboard.
+    case 'face_approved':
+    case 'face_removed':
+    case 'welcome':
+    case 'test':
+    case 'general':
+      return { screen: 'Home' };
+
+    default:
+      // Unknown type: bring the app to the dashboard rather than nowhere.
+      return { screen: 'Home' };
   }
 }
 
 /**
  * Routes the user to the relevant screen based on a tapped push notification.
- * Only the default tap action is handled. The push `data` payload is set by the
- * backend (see utils/pushNotification.js) and carries `type` and `relatedId`.
+ * Only the default tap action is handled.
  */
 export function handleNotificationResponse(response) {
   if (!response) return;
   if (response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return;
 
   const data = response.notification?.request?.content?.data || {};
-  const { type, relatedId } = data;
 
-  // Type-only notifications (no related entity) route to a sensible screen.
-  switch (type) {
-    case 'welcome':
-    case 'face_approved':
-    case 'face_removed':
-      navigate('Home');
-      return;
-    case 'face_registration_pending':
-      // Admins tap through to the approval queue.
-      navigate('PendingRegistrations');
-      return;
-    default:
-      break;
+  // `force_logout` is handled by AuthContext (it signs the device out); it must
+  // never drive navigation.
+  if (data.type === 'force_logout') return;
+
+  routeFromData(data);
+}
+
+function routeFromData(data) {
+  const target = resolveTarget(data);
+  if (!target) return;
+
+  const ok = navigate(target.screen, target.params);
+  if (!ok) {
+    // Not ready yet — remember it and flush once the app/stack is ready.
+    pendingData = data;
   }
+}
 
-  if (!relatedId) return;
+/**
+ * Re-attempt a deferred notification route. Call this once navigation is ready
+ * and the authenticated stack has mounted (i.e. after the user is loaded).
+ */
+export function flushPendingNotification() {
+  if (!pendingData) return;
+  if (!navigationRef.isReady()) return;
 
-  if (type === 'activity_approval' || type === 'activity_status_update') {
-    navigate('ActivityDetails', { activityId: relatedId });
-  }
-  // Report notifications have no dedicated detail screen yet, so tapping them
-  // simply brings the app to the foreground.
+  const target = resolveTarget(pendingData);
+  const ok = navigate(target.screen, target.params);
+  if (ok) pendingData = null;
 }

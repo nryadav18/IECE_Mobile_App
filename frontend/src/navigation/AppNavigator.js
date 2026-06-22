@@ -1,7 +1,8 @@
-import React, { useContext } from 'react';
+import React, { useContext, useEffect } from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
 import { AuthContext } from '../context/AuthContext';
 import { View, ActivityIndicator } from 'react-native';
+import { flushPendingNotification } from '../services/navigation';
 
 // Screens
 import LoginScreen from '../screens/LoginScreen';
@@ -26,6 +27,16 @@ const Stack = createStackNavigator();
 
 const AppNavigator = () => {
   const { user, loading } = useContext(AuthContext);
+
+  // Once the authenticated stack is mounted, flush any notification tap that
+  // arrived before navigation was ready (cold start / mid-authentication).
+  useEffect(() => {
+    if (user) {
+      // Defer to the next tick so the role-specific screens have registered.
+      const t = setTimeout(() => flushPendingNotification(), 0);
+      return () => clearTimeout(t);
+    }
+  }, [user]);
 
   if (loading) {
     return <ScreenLoader message="Authenticating..." />;

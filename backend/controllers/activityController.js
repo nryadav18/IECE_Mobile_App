@@ -147,7 +147,7 @@ exports.updateActivityStatus = async (req, res) => {
       if (school && school.chairmanId) {
         const chairman = await User.findById(school.chairmanId);
         if (chairman && chairman.expoPushToken) {
-           await sendPushNotification(chairman.expoPushToken, 'New Activity Approved', `An activity (${activity.name}) at your school was approved by IECE Admin.`, { type: 'general', relatedId: activity._id.toString() });
+           await sendPushNotification(chairman.expoPushToken, 'New Activity Approved', `An activity (${activity.name}) at your school was approved by IECE Admin.`, { type: 'activity_status_update', relatedId: activity._id.toString() });
         }
       }
     }

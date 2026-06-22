@@ -1,5 +1,5 @@
 import React, { useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, KeyboardAvoidingView, Platform } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Formik } from 'formik';
 import * as Yup from 'yup';
@@ -37,7 +37,7 @@ const VisitSchema = Yup.object().shape({
   schoolId: Yup.string().required('School is required'),
 });
 
-export default function TeamLeaderPortal({ navigation }) {
+export default function TeamLeaderPortal({ navigation, route }) {
   const { theme } = useContext(ThemeContext);
   const { user, logout } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
@@ -50,7 +50,15 @@ export default function TeamLeaderPortal({ navigation }) {
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [faceStatus, setFaceStatus] = useState('none'); // 'none' | 'pending' | 'approved'
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('Reports');
+  const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Reports');
+
+  // Honor an `initialTab` passed via navigation (e.g. from a tapped report
+  // notification) even if the portal is already mounted.
+  useEffect(() => {
+    if (route?.params?.initialTab) {
+      setActiveTab(route.params.initialTab);
+    }
+  }, [route?.params?.initialTab]);
   const [activityToEdit, setActivityToEdit] = useState(null);
   const [reportToEdit, setReportToEdit] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -193,7 +201,7 @@ export default function TeamLeaderPortal({ navigation }) {
   };
 
   return (
-    <View style={{ flex: 1 }}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       {/* Fixed Header */}
       <View style={{ backgroundColor: theme.colors.background, paddingTop: insets.top }}>
         <View style={{ paddingHorizontal: 20, paddingTop: 4 }}>
@@ -219,10 +227,12 @@ export default function TeamLeaderPortal({ navigation }) {
         </View>
       </View>
 
-      <ScrollView 
+      <ScrollView
         style={[styles.container, { backgroundColor: theme.colors.background }]}
         contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 40 }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
       refreshControl={
         <RefreshControl 
           refreshing={refreshing} 
@@ -664,7 +674,7 @@ export default function TeamLeaderPortal({ navigation }) {
         onError={(message) => showAlert('Error', message, 'error')}
       />
     )}
-  </View>
+  </KeyboardAvoidingView>
   );
 }
 

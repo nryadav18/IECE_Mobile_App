@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useContext, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Animated, Modal, TextInput, ScrollView, Image, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Animated, Modal, TextInput, ScrollView, Image, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
 import { ThemeContext } from '../context/ThemeContext';
 import { AuthContext } from '../context/AuthContext';
 import api from '../services/api';
@@ -443,7 +443,7 @@ export default function ChairmanPortal({ navigation }) {
         animationType="fade"
         onRequestClose={() => setRejectingItem(null)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={[styles.modalContainer, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
             <Text style={[styles.modalTitle, { color: theme.colors.textPrimary }]}>Add Rejection Remark</Text>
             <Text style={[styles.modalSubtitle, { color: theme.colors.textSecondary }]}>
@@ -470,15 +470,15 @@ export default function ChairmanPortal({ navigation }) {
               >
                 <Text style={[styles.modalBtnText, { color: theme.colors.textPrimary }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.modalBtn, styles.modalPrimaryBtn, { backgroundColor: theme.colors.error }]} 
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalPrimaryBtn, { backgroundColor: theme.colors.error }]}
                 onPress={submitRejection}
               >
                 <Text style={[styles.modalBtnText, { color: '#FFF' }]}>Reject</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Edit Report Modal */}
@@ -488,7 +488,7 @@ export default function ChairmanPortal({ navigation }) {
         animationType="fade"
         onRequestClose={() => setEditingReport(null)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={[styles.modalContainer, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, width: '90%', maxWidth: 450 }]}>
             <Text style={[styles.modalTitle, { color: theme.colors.textPrimary }]}>Edit & Approve Report</Text>
             <Text style={[styles.modalSubtitle, { color: theme.colors.textSecondary, marginBottom: 16 }]}>
@@ -526,15 +526,15 @@ export default function ChairmanPortal({ navigation }) {
               >
                 <Text style={[styles.modalBtnText, { color: theme.colors.textPrimary }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.modalBtn, styles.modalPrimaryBtn, { backgroundColor: theme.colors.primary }]} 
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalPrimaryBtn, { backgroundColor: theme.colors.primary }]}
                 onPress={submitEditAndApprove}
               >
                 <Text style={[styles.modalBtnText, { color: '#FFF' }]}>Save & Approve</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Image Slider Modal */}

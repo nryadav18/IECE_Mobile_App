@@ -1,5 +1,5 @@
-import React, { useState, useContext } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal, KeyboardAvoidingView, Platform, Dimensions, TextInput } from 'react-native';
+import React, { useState, useContext, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal, Keyboard, Platform, Dimensions, TextInput } from 'react-native';
 import { MotiView } from 'moti';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemeContext } from '../context/ThemeContext';
@@ -12,6 +12,18 @@ export default function CustomDropdown({ label, data, selectedValue, onSelect, p
   const insets = useSafeAreaInsets();
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => setKeyboardHeight(e.endCoordinates?.height || 0));
+    const hideSub = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const toggleDropdown = () => {
     setIsOpen(!isOpen);
@@ -46,11 +58,19 @@ export default function CustomDropdown({ label, data, selectedValue, onSelect, p
       </TouchableOpacity>
 
       <Modal visible={isOpen} transparent animationType="slide" onRequestClose={() => setIsOpen(false)}>
-        <KeyboardAvoidingView 
-          style={styles.modalOverlay} 
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
-          <View style={[styles.modalContainer, { backgroundColor: theme.colors.background }]}>
+        {/* Overlay padded by the keyboard height so the sheet always rests
+            directly above the keyboard. The sheet itself is a fixed-height box
+            with the search pinned at top and the list scrolling inside it. */}
+        <View style={[styles.modalOverlay, { paddingBottom: keyboardHeight }]}>
+          <View
+            style={[
+              styles.modalContainer,
+              {
+                backgroundColor: theme.colors.background,
+                height: Math.min(height * 0.6, height - keyboardHeight - insets.top - 20),
+              },
+            ]}
+          >
             <View style={[styles.modalHeader, { borderBottomColor: theme.colors.border }]}>
               <Text style={[styles.modalTitle, { color: theme.colors.textPrimary }]}>{label || 'Select Option'}</Text>
               <TouchableOpacity onPress={() => setIsOpen(false)} style={styles.closeBtn}>
@@ -72,10 +92,11 @@ export default function CustomDropdown({ label, data, selectedValue, onSelect, p
               </View>
             </View>
 
-            <ScrollView 
-              contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 40) }]}
+            <ScrollView
+              style={styles.list}
+              contentContainerStyle={styles.scrollContent}
               keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
+              showsVerticalScrollIndicator={true}
               bounces={false}
             >
               {(() => {
@@ -109,7 +130,7 @@ export default function CustomDropdown({ label, data, selectedValue, onSelect, p
               })()}
             </ScrollView>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
     </View>
   );
@@ -140,11 +161,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)', 
     justifyContent: 'flex-end' 
   },
-  modalContainer: { 
-    maxHeight: height * 0.85, 
-    borderTopLeftRadius: 24, 
-    borderTopRightRadius: 24, 
-    overflow: 'hidden' 
+  modalContainer: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    overflow: 'hidden'
+  },
+  list: {
+    flex: 1,
   },
   modalHeader: { 
     flexDirection: 'row', 
@@ -181,9 +204,10 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
   },
-  scrollContent: { 
-    paddingHorizontal: 20, 
+  scrollContent: {
+    paddingHorizontal: 20,
     paddingTop: 8,
+    paddingBottom: 16,
   },
   dropdownItem: {
     flexDirection: 'row',

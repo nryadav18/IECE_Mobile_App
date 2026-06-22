@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useContext, useCallback, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, RefreshControl, ScrollView, Image } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, RefreshControl, ScrollView, Image, KeyboardAvoidingView, Platform } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { ThemeContext } from '../context/ThemeContext';
 import { AuthContext } from '../context/AuthContext';
@@ -23,12 +23,12 @@ const TAB_ITEMS = [
   { key: 'ManageActivities', label: 'Manage Activities', icon: 'list-outline' },
 ];
 
-export default function TrainerPortal({ navigation }) {
+export default function TrainerPortal({ navigation, route }) {
   const [school, setSchool] = useState(null);
   const [myActivities, setMyActivities] = useState([]);
   const [approvedCount, setApprovedCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('Progress');
+  const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Progress');
   const [activityToEdit, setActivityToEdit] = useState(null);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [faceStatus, setFaceStatus] = useState('none'); // 'none' | 'pending' | 'approved'
@@ -38,6 +38,14 @@ export default function TrainerPortal({ navigation }) {
   const insets = useSafeAreaInsets();
   const { showAlert: showGlobalAlert } = useAlert();
   const sidebarRef = useRef(null);
+
+  // Honor an `initialTab` passed via navigation (e.g. from a tapped checkout
+  // reminder) even if the portal is already mounted.
+  useEffect(() => {
+    if (route?.params?.initialTab) {
+      setActiveTab(route.params.initialTab);
+    }
+  }, [route?.params?.initialTab]);
 
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
 
@@ -150,9 +158,12 @@ export default function TrainerPortal({ navigation }) {
     const progressPercent = Math.min(100, (approvedCount / 30) * 100);
 
     return (
-      <ScrollView 
+      <ScrollView
+        style={styles.flex1}
         contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />
         }
@@ -262,7 +273,7 @@ export default function TrainerPortal({ navigation }) {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
+    <KeyboardAvoidingView style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]} behavior="padding">
       {/* Fixed Header */}
       <View style={{ paddingHorizontal: 20, paddingTop: 4 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -289,7 +300,7 @@ export default function TrainerPortal({ navigation }) {
       {activeTab === 'Progress' && renderProgressTab()}
 
       {activeTab === 'Attendance' && (
-        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}>
+        <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }} keyboardShouldPersistTaps="handled">
           {/* Dynamic Buttons based on status */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
             {faceStatus !== 'approved' ? (
@@ -390,7 +401,7 @@ export default function TrainerPortal({ navigation }) {
       )}
 
       {activeTab === 'PublishActivity' && (
-        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}>
+        <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
           <CreateActivityForm onActivityCreated={() => {
             fetchData();
             setActiveTab('Progress');
@@ -402,8 +413,10 @@ export default function TrainerPortal({ navigation }) {
         <FlatList
           data={myActivities}
           keyExtractor={(item) => item._id}
+          style={styles.flex1}
           contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />
           }
@@ -514,12 +527,13 @@ export default function TrainerPortal({ navigation }) {
         buttons={alertConfig.buttons}
         onDismiss={() => setAlertConfig({ ...alertConfig, visible: false })}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  flex1: { flex: 1 },
   menuBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   backBtn: {
     width: 40,

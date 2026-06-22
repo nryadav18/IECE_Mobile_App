@@ -109,12 +109,20 @@ const TAB_ITEMS = [
   { key: 'ManageEvents', label: 'Activities', icon: 'calendar-outline' },
 ];
 
-export default function CreatorAdminPortal({ navigation }) {
+export default function CreatorAdminPortal({ navigation, route }) {
   const { user, logout } = useContext(AuthContext);
   const { theme } = useContext(ThemeContext);
   const insets = useSafeAreaInsets();
-  
-  const [activeTab, setActiveTab] = useState('Monitoring');
+
+  const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Monitoring');
+
+  // Honor an `initialTab` passed via navigation (e.g. from a tapped report
+  // notification) even if the portal is already mounted.
+  useEffect(() => {
+    if (route?.params?.initialTab) {
+      setActiveTab(route.params.initialTab);
+    }
+  }, [route?.params?.initialTab]);
 
   // Sidebar (hamburger) drawer
   const sidebarRef = useRef(null);
@@ -328,7 +336,7 @@ export default function CreatorAdminPortal({ navigation }) {
   if (!user) return null;
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
       <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
@@ -355,9 +363,11 @@ export default function CreatorAdminPortal({ navigation }) {
       {loadingData ? (
         <ScreenLoader message="Loading Admin Dashboard..." />
       ) : (
-        <ScrollView 
-          contentContainerStyle={styles.scrollContent} 
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
           refreshControl={
             <RefreshControl 
               refreshing={refreshing} 
@@ -994,6 +1004,7 @@ const styles = StyleSheet.create({
   headerSubtitle: { fontSize: 12, marginTop: 1 },
   menuBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   logoutBtn: { padding: 8, borderRadius: 8 },
+  scroll: { flex: 1 },
   scrollContent: { padding: 20, paddingBottom: 60, flexGrow: 1 },
   formCard: { padding: 20, borderRadius: 16, borderWidth: 1 },
   formTitle: { fontSize: 18, fontWeight: '700', marginBottom: 20 },
