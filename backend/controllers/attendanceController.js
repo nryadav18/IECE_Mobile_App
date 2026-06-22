@@ -229,9 +229,15 @@ exports.registerFaceV2 = async (req, res) => {
     
     const embedding = mlResponse.data.embedding;
 
+    // Reject when the ML service could not find a valid face / blink in the
+    // video. Without a usable embedding we must NOT save anything as pending.
+    if (!Array.isArray(embedding) || embedding.length === 0) {
+      return res.status(400).json({ success: false, message: 'No face detected. Please keep your face clearly in the frame, blink 2–3 times, and try again.' });
+    }
+
     const b64 = Buffer.from(req.file.buffer).toString('base64');
     const dataURI = "data:" + req.file.mimetype + ";base64," + b64;
-    
+
     let result = { secure_url: null };
     try {
       result = await cloudinary.uploader.upload(dataURI, { folder: 'facial_registrations_v2', resource_type: 'video' });

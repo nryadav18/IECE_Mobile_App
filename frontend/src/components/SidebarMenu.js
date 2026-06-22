@@ -1,6 +1,6 @@
 import React, { useRef, useState, useImperativeHandle, forwardRef, useContext } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, Modal, Dimensions, Easing
+  View, Text, StyleSheet, TouchableOpacity, TouchableWithoutFeedback, ScrollView, Animated, Modal, Dimensions, Easing
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemeContext } from '../context/ThemeContext';
@@ -60,9 +60,15 @@ const SidebarMenu = forwardRef(function SidebarMenu(
   return (
     <Modal visible={visible} transparent animationType="none" onShow={runOpenAnimation} onRequestClose={() => close()}>
       <View style={styles.root}>
-        <Animated.View style={[styles.backdrop, { opacity: backdropAnim }]}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => close()} />
-        </Animated.View>
+        {/* Dim layer (visual only) */}
+        <Animated.View style={[styles.backdrop, { opacity: backdropAnim }]} pointerEvents="none" />
+
+        {/* Full-screen touch catcher: any tap outside the drawer closes it.
+            The drawer is rendered AFTER this, so taps on the drawer never
+            reach here. */}
+        <TouchableWithoutFeedback onPress={() => close()} accessibilityLabel="Close menu">
+          <View style={StyleSheet.absoluteFill} />
+        </TouchableWithoutFeedback>
 
         <Animated.View
           style={[
@@ -151,10 +157,13 @@ const SidebarMenu = forwardRef(function SidebarMenu(
 export default SidebarMenu;
 
 const styles = StyleSheet.create({
-  root: { flex: 1, flexDirection: 'row' },
+  root: { flex: 1 },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
   drawer: {
-    height: '100%',
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
     borderRightWidth: 1,
     paddingHorizontal: 12,
     paddingBottom: 16,
