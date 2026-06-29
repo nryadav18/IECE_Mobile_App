@@ -37,6 +37,9 @@ const attendanceRoutes = require('./routes/attendanceRoutes');
 const profileRoutes = require('./routes/profileRoutes');
 
 // Mount routers
+
+app.get('/', (req, res) => res.send('API is running'))
+
 app.use('/api/auth', authRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/reports', reportRoutes);
