@@ -56,6 +56,7 @@ export default function LoginScreen({ navigation }) {
 
     setLoading(true);
     try {
+      console.log(process.env.EXPO_PUBLIC_API_URL);
       await login(trimmedEmail, trimmedPassword);
     } catch (err) {
       const errMsg = err.response?.data?.error || 'Login failed. Please check your credentials.';
