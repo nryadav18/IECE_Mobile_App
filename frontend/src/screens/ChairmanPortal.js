@@ -12,7 +12,15 @@ import CustomAlert from '../components/CustomAlert';
 import SidebarMenu from '../components/SidebarMenu';
 import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
 
+const TAB_ITEMS = [
+  { key: 'Overview', label: 'Overview', icon: 'home-outline' },
+  { key: 'Pending', label: 'Pending Approvals', icon: 'time-outline' },
+  { key: 'Completed', label: 'Completed Activities', icon: 'checkmark-done-outline' },
+  { key: 'Holidays', label: 'School Holidays', icon: 'sunny-outline' },
+];
+
 export default function ChairmanPortal({ navigation }) {
+  const [activeTab, setActiveTab] = useState('Overview');
   const [school, setSchool] = useState(null);
   const [faculty, setFaculty] = useState([]);
   const [activities, setActivities] = useState([]);
@@ -185,12 +193,28 @@ export default function ChairmanPortal({ navigation }) {
     }
   };
 
-  const headerComponent = React.useMemo(() => {
+  const refreshControl = (
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={onRefresh}
+      tintColor={theme.colors.primary}
+      colors={[theme.colors.primary]}
+      progressBackgroundColor={theme.colors.surface}
+    />
+  );
+
+  // ---- Overview tab: school profile/progress + faculty roster ----
+  const renderOverview = () => {
     const remainingCount = Math.max(0, 30 - approvedCount);
     const progressPercent = Math.min(100, (approvedCount / 30) * 100);
 
     return (
-      <View style={{ paddingBottom: 16 }}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={refreshControl}
+      >
         {school && (
           <MotiView 
             style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} 
@@ -255,34 +279,36 @@ export default function ChairmanPortal({ navigation }) {
             </Text>
           }
         />
-
-        {/* Section of Completed Activities */}
-        {completedActivities.length > 0 && (
-          <View style={{ marginTop: 24 }}>
-            <Text style={[styles.subtitle, { color: theme.colors.textPrimary }]}>Completed Activities Details</Text>
-            {completedActivities.map((act) => (
-              <View key={act._id} style={[styles.completedActivityCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 14, flex: 1, marginRight: 8 }} numberOfLines={1}>{act.name}</Text>
-                  <Text style={{ color: theme.colors.textSecondary, fontSize: 11 }}>{new Date(act.activityDate).toLocaleDateString()}</Text>
-                </View>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4 }}>
-                  Trainer: <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>{act.uploaderId?.name || 'N/A'}</Text>
-                </Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* School Holiday approvals */}
-        <View style={{ marginTop: 24 }}>
-          <SchoolHolidayApprovals />
-        </View>
-
-        <Text style={[styles.subtitle, { color: theme.colors.textPrimary, marginTop: 24 }]}>Pending Reports & Activities</Text>
-      </View>
+      </ScrollView>
     );
-  }, [school, approvedCount, faculty, completedActivities, theme]);
+  };
+
+  // ---- Completed Activities tab ----
+  const renderCompleted = () => (
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
+      showsVerticalScrollIndicator={false}
+      refreshControl={refreshControl}
+    >
+      <Text style={[styles.subtitle, { color: theme.colors.textPrimary }]}>Completed Activities</Text>
+      {completedActivities.length > 0 ? (
+        completedActivities.map((act) => (
+          <View key={act._id} style={[styles.completedActivityCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 14, flex: 1, marginRight: 8 }} numberOfLines={1}>{act.name}</Text>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 11 }}>{new Date(act.activityDate).toLocaleDateString()}</Text>
+            </View>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4 }}>
+              Trainer: <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>{act.uploaderId?.name || 'N/A'}</Text>
+            </Text>
+          </View>
+        ))
+      ) : (
+        <Text style={{ color: theme.colors.textSecondary, fontSize: 14, marginTop: 8 }}>No completed activities yet.</Text>
+      )}
+    </ScrollView>
+  );
 
   if (loading) {
     return (
@@ -347,25 +373,42 @@ export default function ChairmanPortal({ navigation }) {
               <Ionicons name="menu" size={24} color={theme.colors.textPrimary} />
             </TouchableOpacity>
             <View style={{ marginLeft: 14, flex: 1 }}>
-              <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0, fontSize: 20 }]} numberOfLines={1}>Chairman Portal</Text>
-              <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 1 }}>{user?.name || 'Chairman'}</Text>
+              <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0, fontSize: 20 }]} numberOfLines={1}>
+                {TAB_ITEMS.find(t => t.key === activeTab)?.label || 'Chairman Portal'}
+              </Text>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 1 }}>Chairman Portal · {user?.name || 'Chairman'}</Text>
             </View>
           </View>
         </View>
       </View>
 
+      {activeTab === 'Overview' && renderOverview()}
+
+      {activeTab === 'Completed' && renderCompleted()}
+
+      {activeTab === 'Holidays' && (
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={refreshControl}
+        >
+          <SchoolHolidayApprovals />
+        </ScrollView>
+      )}
+
+      {activeTab === 'Pending' && (
       <FlatList
         data={[...visitReports, ...activities]}
         keyExtractor={(item) => item._id}
-        ListHeaderComponent={headerComponent}
         contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl 
-            refreshing={refreshing} 
-            onRefresh={onRefresh} 
-            tintColor={theme.colors.primary} 
-            colors={[theme.colors.primary]} 
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.primary}
+            colors={[theme.colors.primary]}
             progressBackgroundColor={theme.colors.surface}
           />
         }
@@ -442,6 +485,7 @@ export default function ChairmanPortal({ navigation }) {
           </View>
         }
       />
+      )}
       {/* Rejection Remark Modal */}
       <Modal
         visible={!!rejectingItem}
@@ -617,6 +661,9 @@ export default function ChairmanPortal({ navigation }) {
         ref={sidebarRef}
         title="Chairman Portal"
         subtitle={user?.name || 'Chairman'}
+        tabs={TAB_ITEMS}
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
         actions={[
           { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
           { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },

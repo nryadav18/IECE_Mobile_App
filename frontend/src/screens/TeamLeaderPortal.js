@@ -90,13 +90,28 @@ export default function TeamLeaderPortal({ navigation, route }) {
   // Fetch the two independently so a hiccup in one request can never strand the
   // other. (Previously a single Promise.all meant a failed attendance call would
   // skip setFaceStatus, leaving a stale "Register Face" button after registering.)
-  const fetchFaceStatusAndAttendance = async () => {
+  // Load face-registration status with a /profile/me fallback so an approved
+  // user is never stuck on "Register Face" if /auth/me intermittently fails.
+  const loadFaceStatus = async () => {
     try {
       const meRes = await api.get('/auth/me');
-      setFaceStatus(meRes.data.data?.facialRegistrationStatusV2 || meRes.data.data?.facialRegistrationStatus || 'none');
+      const d = meRes.data.data || {};
+      setFaceStatus(d.facialRegistrationStatusV2 || d.facialRegistrationStatus || 'none');
+      return;
     } catch (err) {
-      console.log('Error fetching face status', err);
+      console.log('Error fetching face status from /auth/me', err?.response?.status);
     }
+    try {
+      const pRes = await api.get('/profile/me');
+      const p = pRes.data.data?.profile || {};
+      setFaceStatus(p.facialRegistrationStatusV2 || p.facialRegistrationStatus || 'none');
+    } catch (err) {
+      console.log('Error fetching face status from /profile/me', err?.response?.status);
+    }
+  };
+
+  const fetchFaceStatusAndAttendance = async () => {
+    await loadFaceStatus();
     try {
       const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
@@ -121,24 +136,21 @@ export default function TeamLeaderPortal({ navigation, route }) {
       // Use allSettled so one failing endpoint (e.g. a 404 on /auth/me) can't
       // blank out unrelated data like the team-members list. Each result is
       // applied independently.
-      const [reportsRes, trainersRes, activitiesRes, attendanceRes, meRes] = await Promise.allSettled([
+      const [reportsRes, trainersRes, activitiesRes, attendanceRes] = await Promise.allSettled([
         api.get('/reports'),
         api.get(`/admin/users?role=trainer&teamLeaderId=${user._id || user.id}&limit=100`),
         api.get(`/activities?uploaderId=${user._id || user.id}`),
         api.get('/attendance/my-attendance'),
-        api.get('/auth/me')
       ]);
       if (reportsRes.status === 'fulfilled') setReports(reportsRes.value.data.data);
       if (trainersRes.status === 'fulfilled') setTrainers(trainersRes.value.data.data);
       if (activitiesRes.status === 'fulfilled') setMyActivities(activitiesRes.value.data.data);
       if (attendanceRes.status === 'fulfilled') setAttendanceRecords(attendanceRes.value.data.data || []);
-      if (meRes.status === 'fulfilled') {
-        setFaceStatus(meRes.value.data.data?.facialRegistrationStatusV2 || meRes.value.data.data?.facialRegistrationStatus || 'none');
-      }
       // Log any individual failures without discarding the successful results.
-      [reportsRes, trainersRes, activitiesRes, attendanceRes, meRes].forEach((r, i) => {
+      [reportsRes, trainersRes, activitiesRes, attendanceRes].forEach((r, i) => {
         if (r.status === 'rejected') console.log('TeamLeader fetchData call failed', i, r.reason?.message);
       });
+      await loadFaceStatus();
       fetchHolidays();
     } catch (err) {
       console.error(err);

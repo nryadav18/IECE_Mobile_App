@@ -36,15 +36,23 @@ export default function DashboardScreen({ navigation }) {
 
   const fetchMedia = async () => {
     try {
-      const [mediaRes, activitiesRes] = await Promise.all([
+      // Use allSettled so one failing endpoint can't block the other from
+      // updating — otherwise a single hiccup makes pull-to-refresh appear to do
+      // nothing (neither media nor activities would update).
+      const [mediaRes, activitiesRes] = await Promise.allSettled([
         api.get('/media'),
         api.get('/activities?status=approved')
       ]);
-      setMedia(mediaRes.data.data);
-      setActivities(activitiesRes.data.data);
+      if (mediaRes.status === 'fulfilled') setMedia(mediaRes.value.data.data || []);
+      if (activitiesRes.status === 'fulfilled') setActivities(activitiesRes.value.data.data || []);
+
+      // Only surface an error if nothing could be refreshed.
+      if (mediaRes.status === 'rejected' && activitiesRes.status === 'rejected') {
+        console.log('Error fetching dashboard data:', mediaRes.reason?.message, activitiesRes.reason?.message);
+        showAlert('Error', 'Failed to retrieve latest activities and media details. Please refresh to try again.', 'error');
+      }
     } catch (error) {
       console.log('Error fetching dashboard data:', error);
-      showAlert('Error', 'Failed to retrieve latest activities and media details. Please refresh to try again.', 'error');
     } finally {
       setLoading(false);
     }

@@ -84,16 +84,29 @@ export default function TrainerPortal({ navigation, route }) {
     }, [])
   );
 
-  // Fetch the two independently so a hiccup in one request can never strand the
-  // other. (Previously a single Promise.all meant a failed attendance call would
-  // skip setFaceStatus, leaving a stale "Register Face" button after registering.)
-  const fetchFaceStatusAndAttendance = async () => {
+  // Load the current face-registration status. Primary source is /auth/me; if
+  // that request fails (it has intermittently 404'd), fall back to /profile/me
+  // so an approved user is never left stuck on the "Register Face" button.
+  const loadFaceStatus = async () => {
     try {
       const meRes = await api.get('/auth/me');
-      setFaceStatus(meRes.data.data?.facialRegistrationStatusV2 || meRes.data.data?.facialRegistrationStatus || 'none');
+      const d = meRes.data.data || {};
+      setFaceStatus(d.facialRegistrationStatusV2 || d.facialRegistrationStatus || 'none');
+      return;
     } catch (error) {
-      console.log('Error fetching face status', error);
+      console.log('Error fetching face status from /auth/me', error?.response?.status);
     }
+    try {
+      const pRes = await api.get('/profile/me');
+      const p = pRes.data.data?.profile || {};
+      setFaceStatus(p.facialRegistrationStatusV2 || p.facialRegistrationStatus || 'none');
+    } catch (error) {
+      console.log('Error fetching face status from /profile/me', error?.response?.status);
+    }
+  };
+
+  const fetchFaceStatusAndAttendance = async () => {
+    await loadFaceStatus();
     try {
       const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
@@ -131,12 +144,9 @@ export default function TrainerPortal({ navigation, route }) {
         setMyActivities(myActRes.data.data);
       }
 
-      const [attendanceRes, meRes] = await Promise.all([
-        api.get('/attendance/my-attendance'),
-        api.get('/auth/me')
-      ]);
+      const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
-      setFaceStatus(meRes.data.data?.facialRegistrationStatusV2 || meRes.data.data?.facialRegistrationStatus || 'none');
+      await loadFaceStatus();
       fetchHolidays();
     } catch (error) {
       console.log('Error fetching trainer data', error);
