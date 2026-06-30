@@ -97,7 +97,12 @@ exports.updateActivity = async (req, res) => {
       }
     });
 
-    if (previousStatus === 'approved' || previousStatus === 'rejected') {
+    if (req.user.role === 'creator_admin') {
+      // Admin edits are trusted: auto-approve and don't send it back into the
+      // approval queue (no re-approval notification to admins).
+      activity.status = 'approved';
+      await activity.save();
+    } else if (previousStatus === 'approved' || previousStatus === 'rejected') {
       activity.status = 'pending';
       await activity.save();
       await notifyAdminForActivityApproval(activity, req.user.id);

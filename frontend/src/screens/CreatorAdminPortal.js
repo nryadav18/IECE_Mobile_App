@@ -2,6 +2,7 @@ import React, { useState, useEffect, useContext, useCallback, useRef } from 'rea
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, RefreshControl, KeyboardAvoidingView, Platform, Image
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Formik } from 'formik';
 import * as Yup from 'yup';
@@ -158,9 +159,14 @@ export default function CreatorAdminPortal({ navigation, route }) {
     setAlertConfig({ visible: true, title, message, type, buttons });
   };
 
-  useEffect(() => {
-    fetchDropdownData();
-  }, []);
+  // Re-fetch whenever the admin returns to / focuses the portal so newly
+  // submitted Team Leader reports (and other data) show up without needing a
+  // manual pull-to-refresh. useFocusEffect also runs on the initial mount.
+  useFocusEffect(
+    useCallback(() => {
+      fetchDropdownData();
+    }, [])
+  );
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -171,7 +177,9 @@ export default function CreatorAdminPortal({ navigation, route }) {
 
   const fetchDropdownData = async () => {
     try {
-      const [schoolsRes, tlsRes, trainersRes, activitiesRes, bannerRes, reportsRes] = await Promise.all([
+      // Use allSettled so a single failing endpoint can't blank unrelated data
+      // (e.g. the Visit Reports list staying empty just because /media failed).
+      const [schoolsRes, tlsRes, trainersRes, activitiesRes, bannerRes, reportsRes] = await Promise.allSettled([
         api.get('/admin/schools'),
         api.get('/admin/team-leaders'),
         api.get('/admin/users?role=trainer&limit=100'),
@@ -179,12 +187,15 @@ export default function CreatorAdminPortal({ navigation, route }) {
         api.get('/media'),
         api.get('/reports')
       ]);
-      setSchools(schoolsRes.data.data);
-      setTeamLeaders(tlsRes.data.data);
-      setTrainers(trainersRes.data.data);
-      setAllActivities(activitiesRes.data.data);
-      setBanners(bannerRes.data.data);
-      setReports(reportsRes.data.data);
+      if (schoolsRes.status === 'fulfilled') setSchools(schoolsRes.value.data.data);
+      if (tlsRes.status === 'fulfilled') setTeamLeaders(tlsRes.value.data.data);
+      if (trainersRes.status === 'fulfilled') setTrainers(trainersRes.value.data.data);
+      if (activitiesRes.status === 'fulfilled') setAllActivities(activitiesRes.value.data.data);
+      if (bannerRes.status === 'fulfilled') setBanners(bannerRes.value.data.data);
+      if (reportsRes.status === 'fulfilled') setReports(reportsRes.value.data.data);
+      [schoolsRes, tlsRes, trainersRes, activitiesRes, bannerRes, reportsRes].forEach((r, i) => {
+        if (r.status === 'rejected') console.log('Admin fetchDropdownData call failed', i, r.reason?.message);
+      });
     } catch (err) {
       console.log('Error fetching initial admin data', err);
     } finally {
