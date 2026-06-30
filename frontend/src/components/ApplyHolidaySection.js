@@ -61,6 +61,10 @@ export default function ApplyHolidaySection({ onChanged }) {
       showAlert('Sunday', `${dateStr} is a Sunday — already a weekly holiday.`, 'info');
       return;
     }
+    if (!reason.trim()) {
+      showAlert('Reason required', 'Please enter a reason for the holiday so your school/admin can review it.', 'warning');
+      return;
+    }
     setSubmitting(true);
     try {
       await api.post('/holidays', { date: dateStr, reason: reason.trim() });
@@ -128,12 +132,12 @@ export default function ApplyHolidaySection({ onChanged }) {
           />
         )}
 
-        <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 6 }}>Reason (optional)</Text>
+        <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 6 }}>Reason <Text style={{ color: '#F44336' }}>*</Text></Text>
         <TextInput
           style={{ borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: 14, color: theme.colors.textPrimary, marginBottom: 16, minHeight: 44 }}
           value={reason}
           onChangeText={setReason}
-          placeholder="e.g. Local festival, exam holiday"
+          placeholder="e.g. Local festival, exam holiday (required)"
           placeholderTextColor={theme.colors.placeholder}
           multiline
         />

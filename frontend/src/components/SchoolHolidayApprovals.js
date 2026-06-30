@@ -75,7 +75,10 @@ export default function SchoolHolidayApprovals({ refreshKey }) {
           <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>
             {h.schoolId?.name || 'School'} · by {h.appliedBy?.name || 'Unknown'}
           </Text>
-          {!!h.reason && <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4, fontStyle: 'italic' }}>"{h.reason}"</Text>}
+          <View style={{ marginTop: 6, backgroundColor: theme.colors.background, borderRadius: 8, padding: 8 }}>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 11, fontWeight: '700' }}>REASON</Text>
+            <Text style={{ color: theme.colors.textPrimary, fontSize: 13, marginTop: 2 }}>{h.reason || '—'}</Text>
+          </View>
         </View>
         <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, backgroundColor: (STATUS_COLORS[h.status] || '#999') + '20' }}>
           <Text style={{ fontSize: 10, fontWeight: '800', color: STATUS_COLORS[h.status] || '#999', textTransform: 'uppercase' }}>{h.status}</Text>

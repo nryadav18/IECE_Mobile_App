@@ -11,6 +11,9 @@ exports.applyHoliday = async (req, res) => {
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res.status(400).json({ success: false, message: 'A valid date (YYYY-MM-DD) is required' });
     }
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ success: false, message: 'A reason is required for the holiday request' });
+    }
 
     const schoolId = req.user.schoolId;
     if (!schoolId) {
@@ -27,7 +30,7 @@ exports.applyHoliday = async (req, res) => {
     const holiday = await SchoolHoliday.create({
       schoolId,
       date,
-      reason: reason || '',
+      reason: reason.trim(),
       appliedBy: req.user._id,
       status: 'pending',
     });
