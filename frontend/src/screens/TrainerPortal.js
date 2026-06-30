@@ -47,6 +47,14 @@ export default function TrainerPortal({ navigation, route }) {
     }
   }, [route?.params?.initialTab]);
 
+  // Optimistically reflect a just-completed face registration so the user
+  // immediately sees "Pending Approval" instead of the stale "Register Face".
+  useEffect(() => {
+    if (route?.params?.faceJustRegistered) {
+      setFaceStatus('pending');
+    }
+  }, [route?.params?.faceJustRegistered]);
+
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
 
   const showAlert = (title, message, type = 'info', buttons = []) => {
@@ -71,16 +79,21 @@ export default function TrainerPortal({ navigation, route }) {
     }, [])
   );
 
+  // Fetch the two independently so a hiccup in one request can never strand the
+  // other. (Previously a single Promise.all meant a failed attendance call would
+  // skip setFaceStatus, leaving a stale "Register Face" button after registering.)
   const fetchFaceStatusAndAttendance = async () => {
     try {
-      const [meRes, attendanceRes] = await Promise.all([
-        api.get('/auth/me'),
-        api.get('/attendance/my-attendance')
-      ]);
+      const meRes = await api.get('/auth/me');
       setFaceStatus(meRes.data.data?.facialRegistrationStatusV2 || meRes.data.data?.facialRegistrationStatus || 'none');
+    } catch (error) {
+      console.log('Error fetching face status', error);
+    }
+    try {
+      const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
     } catch (error) {
-      console.log('Error fetching face/attendance status', error);
+      console.log('Error fetching attendance', error);
     }
   };
 
@@ -325,7 +338,7 @@ export default function TrainerPortal({ navigation, route }) {
                 {faceStatus === 'none' && (
                   <TouchableOpacity
                     style={[styles.uploadBtn, { flex: 1, backgroundColor: theme.colors.primary }]}
-                    onPress={() => navigation.navigate('FaceRegistration')}
+                    onPress={() => navigation.navigate('FaceRegistration', { returnTo: 'TrainerPortal' })}
                   >
                     <Ionicons name="scan-outline" size={20} color="#fff" />
                     <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>Register Face</Text>

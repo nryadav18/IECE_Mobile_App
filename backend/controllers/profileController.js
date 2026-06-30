@@ -22,8 +22,11 @@ exports.getUserProfile = async (req, res) => {
     // - chairman can view anyone in their school (skipped strict check for simplicity, can add later)
     // - team_leader can view their assigned trainers or themselves.
     // - trainer can view themselves.
-    if (req.user.role !== 'creator_admin' && req.user.id !== userId) {
-        if (req.user.role === 'team_leader' && user.teamLeaderId?.toString() !== req.user.id) {
+    if (req.user.role !== 'creator_admin' && req.user.id !== String(userId)) {
+        // teamLeaderId is populated above, so it's a subdocument — read its _id
+        // (falling back to the raw value if it wasn't populated) before comparing.
+        const trainerTeamLeaderId = (user.teamLeaderId?._id || user.teamLeaderId)?.toString();
+        if (req.user.role === 'team_leader' && trainerTeamLeaderId !== req.user.id) {
             return res.status(403).json({ success: false, error: 'Not authorized to view this profile' });
         }
         if (req.user.role === 'trainer') {

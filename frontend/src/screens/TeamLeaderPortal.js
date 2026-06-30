@@ -59,6 +59,14 @@ export default function TeamLeaderPortal({ navigation, route }) {
       setActiveTab(route.params.initialTab);
     }
   }, [route?.params?.initialTab]);
+
+  // Optimistically reflect a just-completed face registration so the user
+  // immediately sees "Pending Approval" instead of the stale "Register Face".
+  useEffect(() => {
+    if (route?.params?.faceJustRegistered) {
+      setFaceStatus('pending');
+    }
+  }, [route?.params?.faceJustRegistered]);
   const [activityToEdit, setActivityToEdit] = useState(null);
   const [reportToEdit, setReportToEdit] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -74,16 +82,21 @@ export default function TeamLeaderPortal({ navigation, route }) {
     }, [])
   );
 
+  // Fetch the two independently so a hiccup in one request can never strand the
+  // other. (Previously a single Promise.all meant a failed attendance call would
+  // skip setFaceStatus, leaving a stale "Register Face" button after registering.)
   const fetchFaceStatusAndAttendance = async () => {
     try {
-      const [meRes, attendanceRes] = await Promise.all([
-        api.get('/auth/me'),
-        api.get('/attendance/my-attendance')
-      ]);
+      const meRes = await api.get('/auth/me');
       setFaceStatus(meRes.data.data?.facialRegistrationStatusV2 || meRes.data.data?.facialRegistrationStatus || 'none');
+    } catch (err) {
+      console.log('Error fetching face status', err);
+    }
+    try {
+      const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
     } catch (err) {
-      console.log('Error fetching face/attendance status', err);
+      console.log('Error fetching attendance', err);
     }
   };
 
@@ -512,7 +525,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
               {faceStatus === 'none' && (
                 <TouchableOpacity
                   style={[styles.actionBtn, { flex: 1, borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '10' }]}
-                  onPress={() => navigation.navigate('FaceRegistration')}
+                  onPress={() => navigation.navigate('FaceRegistration', { returnTo: 'TeamLeaderPortal' })}
                 >
                   <Ionicons name="scan-outline" size={20} color={theme.colors.primary} />
                   <Text style={{ color: theme.colors.primary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Register Face</Text>
