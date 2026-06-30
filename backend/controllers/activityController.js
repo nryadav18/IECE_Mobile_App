@@ -17,16 +17,29 @@ const notifyAdminForActivityApproval = async (activity, senderId) => {
 exports.getActivities = async (req, res) => {
   try {
     let query = {};
-    if (req.user.role === 'chairman') {
+    const { role } = req.user;
+
+    if (role === 'chairman') {
+      // School login: only their own school(s) activities.
       const School = require('../models/School');
       const schools = await School.find({ chairmanId: req.user.id });
-      const schoolIds = schools.map(s => s._id);
-      query.schoolId = { $in: schoolIds };
-    } else {
+      query.schoolId = { $in: schools.map(s => s._id) };
+    } else if (req.query.schoolId || req.query.uploaderId) {
+      // Explicit scoping (portal screens) — honor whatever filter was requested.
       if (req.query.schoolId) query.schoolId = req.query.schoolId;
       if (req.query.uploaderId) query.uploaderId = req.query.uploaderId;
+    } else if (role === 'trainer') {
+      // Trainer: only their own activities.
+      query.uploaderId = req.user._id;
+    } else if (role === 'team_leader') {
+      // Team Leader: their school's activities + their team members' (and own) activities.
+      const teamMemberIds = await User.find({ teamLeaderId: req.user._id }).distinct('_id');
+      const orClauses = [{ uploaderId: { $in: [...teamMemberIds, req.user._id] } }];
+      if (req.user.schoolId) orClauses.push({ schoolId: req.user.schoolId });
+      query.$or = orClauses;
     }
-    
+    // creator_admin (or any other role) with no explicit filter → all activities.
+
     // Support filtering by status
     if (req.query.status) {
       query.status = req.query.status;
