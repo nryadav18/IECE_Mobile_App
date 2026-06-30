@@ -21,12 +21,14 @@ import { Image } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
 import { dayKey, isOffToday, buildHolidayMarks } from '../utils/holiday';
+import ApplyHolidaySection from '../components/ApplyHolidaySection';
 
 const TAB_ITEMS = [
   { key: 'Reports', label: 'Log Visit', icon: 'document-text-outline' },
   { key: 'MyReports', label: 'My Reports', icon: 'folder-open-outline' },
   { key: 'MyTeam', label: 'My Team', icon: 'people-outline' },
   { key: 'Attendance', label: 'Attendance', icon: 'calendar-outline' },
+  { key: 'SchoolHoliday', label: 'Apply School Holiday', icon: 'sunny-outline' },
   { key: 'Events', label: 'Publish Activity', icon: 'add-circle-outline' },
   { key: 'ManageEvents', label: 'Manage Activities', icon: 'list-outline' },
 ];
@@ -109,45 +111,6 @@ export default function TeamLeaderPortal({ navigation, route }) {
       setHolidays(res.data.data || []);
     } catch (err) {
       console.log('Error fetching holidays', err);
-    }
-  };
-
-  // Tap a calendar date → request it as a school holiday (needs school/admin
-  // approval). Sundays are already weekly holidays.
-  const onDayPress = (day) => {
-    const dateStr = day.dateString;
-    const existing = holidays.find((h) => h.date === dateStr);
-    if (existing) {
-      const label = existing.status === 'approved'
-        ? 'is an approved school holiday.'
-        : existing.status === 'pending'
-          ? 'has a pending holiday request.'
-          : 'had a rejected holiday request.';
-      showAlert('School Holiday', `${dateStr} ${label}`, existing.status === 'approved' ? 'success' : 'info');
-      return;
-    }
-    if (new Date(`${dateStr}T00:00:00`).getDay() === 0) {
-      showAlert('Sunday', `${dateStr} is a Sunday — already a weekly holiday.`, 'info');
-      return;
-    }
-    showAlert(
-      'Apply School Holiday',
-      `Request ${dateStr} as a school holiday? It will be sent to your school/admin for approval.`,
-      'warning',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Apply', onPress: () => applyHoliday(dateStr) },
-      ]
-    );
-  };
-
-  const applyHoliday = async (dateStr) => {
-    try {
-      await api.post('/holidays', { date: dateStr });
-      showAlert('Requested', 'Your school holiday request was submitted for approval.', 'success');
-      fetchHolidays();
-    } catch (err) {
-      showAlert('Error', err.response?.data?.message || 'Failed to apply for holiday.', 'error');
     }
   };
 
@@ -634,13 +597,6 @@ export default function TeamLeaderPortal({ navigation, route }) {
           </View>
         )}
 
-        {faceStatus === 'approved' && !isHolidayToday && (
-          <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 10, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#B3E5FC' }}>
-            <Ionicons name="calendar-outline" size={15} color="#0277BD" style={{ marginRight: 8 }} />
-            <Text style={{ color: '#01579B', fontSize: 12, fontWeight: '600', flex: 1 }}>Tap any date below to request a School Holiday (needs school/admin approval).</Text>
-          </View>
-        )}
-
         {faceStatus === 'pending' && (
           <View style={{ backgroundColor: '#FEF3C7', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#F59E0B' }}>
             <Ionicons name="hourglass-outline" size={16} color="#D97706" style={{ marginRight: 8 }} />
@@ -651,7 +607,6 @@ export default function TeamLeaderPortal({ navigation, route }) {
         <View style={{ backgroundColor: theme.colors.surface, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border }}>
           <Calendar
             current={new Date().toISOString().split('T')[0]}
-            onDayPress={faceStatus === 'approved' ? onDayPress : undefined}
             markedDates={{
               ...attendanceRecords.reduce((acc, record) => {
                 const dateString = new Date(record.date).toISOString().split('T')[0];
@@ -695,6 +650,10 @@ export default function TeamLeaderPortal({ navigation, route }) {
           <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#87CEEB', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Holiday</Text></View>
           <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#E0E0E0', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Blank</Text></View>
         </View>
+      </View>
+
+      <View style={{ display: activeTab === 'SchoolHoliday' ? 'flex' : 'none', marginTop: 16 }}>
+        <ApplyHolidaySection onChanged={fetchHolidays} />
       </View>
 
       <View style={{ display: activeTab === 'Events' ? 'flex' : 'none' }}>
