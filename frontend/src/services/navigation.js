@@ -58,8 +58,10 @@ function resolveTarget(data = {}) {
     case 'face_registration_pending':
       return { screen: 'PendingRegistrations' };
 
-    // "Please check out" reminder → open the user's Attendance tab so they can
-    // check out right away. The recipient's role rides along in the payload.
+    // "Please check in" / "Please check out" reminders → open the user's
+    // Attendance tab so they can act right away. The recipient's role rides
+    // along in the payload.
+    case 'checkin_reminder':
     case 'checkout_reminder':
       return {
         screen: data.role === 'team_leader' ? 'TeamLeaderPortal' : 'TrainerPortal',

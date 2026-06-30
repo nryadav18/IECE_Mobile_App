@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const Attendance = require('../models/Attendance');
+const User = require('../models/User');
 const { sendPushNotification } = require('./pushNotification');
 
 // IST is a fixed offset of UTC+5:30 (India observes no daylight saving).
@@ -22,6 +23,59 @@ function getISTDayRange() {
     start: new Date(istMidnightUtcMs),
     end: new Date(istMidnightUtcMs + 24 * 60 * 60 * 1000 - 1),
   };
+}
+
+/**
+ * Finds every trainer / team leader who can mark attendance (facial registration
+ * approved) but has NOT checked in yet today (IST), and pushes them a reminder to
+ * check in. Runs each morning hour until they check in.
+ */
+async function sendCheckinReminders() {
+  try {
+    const { start, end } = getISTDayRange();
+
+    // Anyone with an attendance record today has already checked in.
+    const checkedInIds = await Attendance.distinct('trainerId', {
+      date: { $gte: start, $lte: end },
+    });
+    const checkedInSet = new Set(checkedInIds.map((id) => id.toString()));
+
+    // Trainers / team leaders who can actually check in (approved face) and have
+    // a registered push token.
+    const users = await User.find({
+      role: { $in: ['trainer', 'team_leader'] },
+      expoPushToken: { $ne: null },
+      $or: [
+        { facialRegistrationStatusV2: 'approved' },
+        { facialRegistrationStatus: 'approved' },
+      ],
+    }).select('name role expoPushToken');
+
+    let sent = 0;
+    let pending = 0;
+    for (const user of users) {
+      if (checkedInSet.has(user._id.toString())) continue; // already checked in
+      pending += 1;
+
+      const firstName = (user.name || '').trim().split(/\s+/)[0] || 'there';
+
+      try {
+        await sendPushNotification(
+          user.expoPushToken,
+          '☀️ Time to Check In',
+          `Hi ${firstName}, please check in on the app to mark your attendance for today.`,
+          { type: 'checkin_reminder', role: user.role }
+        );
+        sent += 1;
+      } catch (err) {
+        console.error(`[checkin-reminder] Failed for ${user._id}:`, err.message);
+      }
+    }
+
+    console.log(`[checkin-reminder] Reminders sent: ${sent}/${pending} pending check-ins.`);
+  } catch (err) {
+    console.error('[checkin-reminder] Job error:', err.message);
+  }
 }
 
 /**
@@ -73,27 +127,38 @@ async function sendCheckoutReminders() {
   }
 }
 
-let task = null;
+let checkinTask = null;
+let checkoutTask = null;
 
 /**
- * Schedules the hourly checkout reminder.
- * Fires at 17:00, 18:00, 19:00, 20:00, 21:00 and 22:00 IST every day — i.e.
- * every hour from 5 PM up to and including 10 PM IST. Each run only notifies
- * users who checked in today and have not checked out yet.
+ * Schedules the attendance reminder crons (Asia/Kolkata timezone so the schedule
+ * is correct regardless of the server's local time / UTC):
+ *
+ *  - Check-in reminder: fires at 08:00–12:00 IST (08, 09, 10, 11, 12) every day.
+ *    Each run only notifies users who have NOT checked in yet today.
+ *  - Check-out reminder: fires at 16:00–22:00 IST (every hour from 4 PM up to
+ *    and including 10 PM). Each run only notifies users who checked in today and
+ *    have not checked out yet.
  */
 function startAttendanceReminderCron() {
-  if (task) return task; // guard against double-registration
+  if (checkinTask && checkoutTask) return { checkinTask, checkoutTask }; // guard against double-registration
 
-  // Minute 0 of hours 17..22, scheduled in the Asia/Kolkata timezone so the
-  // schedule is correct regardless of the server's local time / UTC.
-  task = cron.schedule(
-    '0 17-22 * * *',
+  // Minute 0 of hours 8..12 — morning check-in nudges until they check in.
+  checkinTask = cron.schedule(
+    '0 8-12 * * *',
+    sendCheckinReminders,
+    { timezone: 'Asia/Kolkata' }
+  );
+
+  // Minute 0 of hours 16..22 — evening check-out reminders (now starting 4 PM).
+  checkoutTask = cron.schedule(
+    '0 16-22 * * *',
     sendCheckoutReminders,
     { timezone: 'Asia/Kolkata' }
   );
 
-  console.log('[checkout-reminder] Cron scheduled: hourly 17:00–22:00 IST.');
-  return task;
+  console.log('[attendance-reminder] Crons scheduled: check-in hourly 08:00–12:00 IST, check-out hourly 16:00–22:00 IST.');
+  return { checkinTask, checkoutTask };
 }
 
-module.exports = { startAttendanceReminderCron, sendCheckoutReminders };
+module.exports = { startAttendanceReminderCron, sendCheckinReminders, sendCheckoutReminders };
