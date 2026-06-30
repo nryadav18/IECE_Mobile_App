@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const Attendance = require('../models/Attendance');
 const User = require('../models/User');
 const { sendPushNotification } = require('./pushNotification');
+const { istDateKey, isSunday, approvedHolidaySchoolIds } = require('./holiday');
 
 // IST is a fixed offset of UTC+5:30 (India observes no daylight saving).
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
@@ -32,7 +33,17 @@ function getISTDayRange() {
  */
 async function sendCheckinReminders() {
   try {
+    const dateKey = istDateKey();
+    // No reminders on Sundays — it's a holiday for everyone.
+    if (isSunday(dateKey)) {
+      console.log('[checkin-reminder] Sunday — skipping all reminders.');
+      return;
+    }
+
     const { start, end } = getISTDayRange();
+
+    // Schools that are on an approved holiday today are skipped entirely.
+    const holidaySchoolIds = await approvedHolidaySchoolIds(dateKey);
 
     // Anyone with an attendance record today has already checked in.
     const checkedInIds = await Attendance.distinct('trainerId', {
@@ -49,12 +60,14 @@ async function sendCheckinReminders() {
         { facialRegistrationStatusV2: 'approved' },
         { facialRegistrationStatus: 'approved' },
       ],
-    }).select('name role expoPushToken');
+    }).select('name role expoPushToken schoolId');
 
     let sent = 0;
     let pending = 0;
     for (const user of users) {
       if (checkedInSet.has(user._id.toString())) continue; // already checked in
+      // Skip users whose school is on an approved holiday today.
+      if (user.schoolId && holidaySchoolIds.has(user.schoolId.toString())) continue;
       pending += 1;
 
       const firstName = (user.name || '').trim().split(/\s+/)[0] || 'there';
@@ -85,7 +98,17 @@ async function sendCheckinReminders() {
  */
 async function sendCheckoutReminders() {
   try {
+    const dateKey = istDateKey();
+    // No reminders on Sundays — it's a holiday for everyone.
+    if (isSunday(dateKey)) {
+      console.log('[checkout-reminder] Sunday — skipping all reminders.');
+      return;
+    }
+
     const { start, end } = getISTDayRange();
+
+    // Schools on an approved holiday today are skipped entirely.
+    const holidaySchoolIds = await approvedHolidaySchoolIds(dateKey);
 
     // Checked in today + no checkout yet = needs a reminder.
     const pending = await Attendance.find({
@@ -105,6 +128,8 @@ async function sendCheckoutReminders() {
       // and skip users without a registered push token.
       if (!user || !user.expoPushToken) continue;
       if (!['trainer', 'team_leader'].includes(user.role)) continue;
+      // Skip schools that are on an approved holiday today.
+      if (att.schoolId && holidaySchoolIds.has(att.schoolId.toString())) continue;
 
       const firstName = (user.name || '').trim().split(/\s+/)[0] || 'there';
 

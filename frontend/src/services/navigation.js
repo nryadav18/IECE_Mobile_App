@@ -68,7 +68,11 @@ function resolveTarget(data = {}) {
         params: { initialTab: 'Attendance' },
       };
 
-    // Status / informational notifications land on the dashboard.
+    // Status / informational notifications land on the dashboard. School holiday
+    // requests/decisions also land on Home — the relevant portal (approval list
+    // or attendance calendar) is one tap away.
+    case 'holiday_approval':
+    case 'holiday_status_update':
     case 'face_approved':
     case 'face_removed':
     case 'welcome':

@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../components/Avatar';
 import CustomAlert from '../components/CustomAlert';
 import SidebarMenu from '../components/SidebarMenu';
+import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
 
 export default function ChairmanPortal({ navigation }) {
   const [school, setSchool] = useState(null);
@@ -272,6 +273,11 @@ export default function ChairmanPortal({ navigation }) {
             ))}
           </View>
         )}
+
+        {/* School Holiday approvals */}
+        <View style={{ marginTop: 24 }}>
+          <SchoolHolidayApprovals />
+        </View>
 
         <Text style={[styles.subtitle, { color: theme.colors.textPrimary, marginTop: 24 }]}>Pending Reports & Activities</Text>
       </View>

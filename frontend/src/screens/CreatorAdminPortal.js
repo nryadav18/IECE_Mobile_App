@@ -22,6 +22,7 @@ import ScreenLoader from '../components/ScreenLoader';
 import EditReportModal from '../components/EditReportModal';
 import IndiaMap from '../components/IndiaMap';
 import SidebarMenu from '../components/SidebarMenu';
+import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
 
 const TlSchema = Yup.object().shape({
   name: Yup.string().required('Required'),
@@ -106,6 +107,7 @@ const TAB_ITEMS = [
   { key: 'Chairman', label: 'Create Chairman', icon: 'business-outline' },
   { key: 'TeamLeader', label: 'Create Team Leader', icon: 'person-add-outline' },
   { key: 'Reports', label: 'Reports', icon: 'document-text-outline' },
+  { key: 'Holidays', label: 'School Holidays', icon: 'sunny-outline' },
   { key: 'Banners', label: 'Banners', icon: 'images-outline' },
   { key: 'ManageEvents', label: 'Activities', icon: 'calendar-outline' },
 ];
@@ -816,6 +818,11 @@ export default function CreatorAdminPortal({ navigation, route }) {
                 </Formik>
               </View>
             </MotiView>
+          </View>
+
+          {/* School Holidays TAB */}
+          <View style={{ display: activeTab === 'Holidays' ? 'flex' : 'none' }}>
+            <SchoolHolidayApprovals refreshKey={activeTab === 'Holidays' ? 1 : 0} />
           </View>
 
           {/* Banners TAB */}

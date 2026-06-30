@@ -20,6 +20,7 @@ import SidebarMenu from '../components/SidebarMenu';
 import { Image } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
+import { dayKey, isOffToday, buildHolidayMarks } from '../utils/holiday';
 
 const TAB_ITEMS = [
   { key: 'Reports', label: 'Log Visit', icon: 'document-text-outline' },
@@ -49,6 +50,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
   const [myActivities, setMyActivities] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [faceStatus, setFaceStatus] = useState('none'); // 'none' | 'pending' | 'approved'
+  const [holidays, setHolidays] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Reports');
 
@@ -79,6 +81,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
   useFocusEffect(
     useCallback(() => {
       fetchFaceStatusAndAttendance();
+      fetchHolidays();
     }, [])
   );
 
@@ -97,6 +100,54 @@ export default function TeamLeaderPortal({ navigation, route }) {
       setAttendanceRecords(attendanceRes.data.data || []);
     } catch (err) {
       console.log('Error fetching attendance', err);
+    }
+  };
+
+  const fetchHolidays = async () => {
+    try {
+      const res = await api.get('/holidays');
+      setHolidays(res.data.data || []);
+    } catch (err) {
+      console.log('Error fetching holidays', err);
+    }
+  };
+
+  // Tap a calendar date → request it as a school holiday (needs school/admin
+  // approval). Sundays are already weekly holidays.
+  const onDayPress = (day) => {
+    const dateStr = day.dateString;
+    const existing = holidays.find((h) => h.date === dateStr);
+    if (existing) {
+      const label = existing.status === 'approved'
+        ? 'is an approved school holiday.'
+        : existing.status === 'pending'
+          ? 'has a pending holiday request.'
+          : 'had a rejected holiday request.';
+      showAlert('School Holiday', `${dateStr} ${label}`, existing.status === 'approved' ? 'success' : 'info');
+      return;
+    }
+    if (new Date(`${dateStr}T00:00:00`).getDay() === 0) {
+      showAlert('Sunday', `${dateStr} is a Sunday — already a weekly holiday.`, 'info');
+      return;
+    }
+    showAlert(
+      'Apply School Holiday',
+      `Request ${dateStr} as a school holiday? It will be sent to your school/admin for approval.`,
+      'warning',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Apply', onPress: () => applyHoliday(dateStr) },
+      ]
+    );
+  };
+
+  const applyHoliday = async (dateStr) => {
+    try {
+      await api.post('/holidays', { date: dateStr });
+      showAlert('Requested', 'Your school holiday request was submitted for approval.', 'success');
+      fetchHolidays();
+    } catch (err) {
+      showAlert('Error', err.response?.data?.message || 'Failed to apply for holiday.', 'error');
     }
   };
 
@@ -125,6 +176,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
       [reportsRes, trainersRes, activitiesRes, attendanceRes, meRes].forEach((r, i) => {
         if (r.status === 'rejected') console.log('TeamLeader fetchData call failed', i, r.reason?.message);
       });
+      fetchHolidays();
     } catch (err) {
       console.error(err);
     } finally {
@@ -177,6 +229,10 @@ export default function TeamLeaderPortal({ navigation, route }) {
   const todayAttendance = attendanceRecords.find((r) => isToday(r.date));
   const alreadyCheckedIn = !!(todayAttendance && todayAttendance.checkInTime);
   const alreadyCheckedOut = !!(todayAttendance && todayAttendance.checkOutTime);
+
+  // Today is a non-working day if it's a Sunday or an approved school holiday;
+  // check-in / check-out are disabled on those days.
+  const isHolidayToday = isOffToday(holidays);
 
   const getInputStyle = (field) => {
     const isFocused = focusFields[field];
@@ -551,18 +607,18 @@ export default function TeamLeaderPortal({ navigation, route }) {
             /* Side-by-Side Login/Logout */
             <View style={{ flexDirection: 'row', gap: 10, flex: 1 }}>
               <TouchableOpacity
-                style={[styles.actionBtn, { flex: 1, borderColor: '#4CAF50', backgroundColor: '#4CAF5010', opacity: alreadyCheckedIn ? 0.5 : 1 }]}
+                style={[styles.actionBtn, { flex: 1, borderColor: '#4CAF50', backgroundColor: '#4CAF5010', opacity: (alreadyCheckedIn || isHolidayToday) ? 0.5 : 1 }]}
                 onPress={() => navigation.navigate('Attendance', { intent: 'login' })}
-                disabled={alreadyCheckedIn}
+                disabled={alreadyCheckedIn || isHolidayToday}
               >
                 <Ionicons name={alreadyCheckedIn ? 'checkmark-done-outline' : 'log-in-outline'} size={20} color="#4CAF50" />
                 <Text style={{ color: '#4CAF50', fontSize: 13, marginLeft: 6, fontWeight: '600' }}>{alreadyCheckedIn ? 'Checked In' : 'Login'}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.actionBtn, { flex: 1, borderColor: '#F44336', backgroundColor: '#F4433610', opacity: alreadyCheckedOut ? 0.5 : 1 }]}
+                style={[styles.actionBtn, { flex: 1, borderColor: '#F44336', backgroundColor: '#F4433610', opacity: (alreadyCheckedOut || isHolidayToday) ? 0.5 : 1 }]}
                 onPress={() => navigation.navigate('Attendance', { intent: 'logout' })}
-                disabled={alreadyCheckedOut}
+                disabled={alreadyCheckedOut || isHolidayToday}
               >
                 <Ionicons name={alreadyCheckedOut ? 'checkmark-done-outline' : 'log-out-outline'} size={20} color="#F44336" />
                 <Text style={{ color: '#F44336', fontSize: 13, marginLeft: 6, fontWeight: '600' }}>{alreadyCheckedOut ? 'Checked Out' : 'Logout'}</Text>
@@ -571,16 +627,31 @@ export default function TeamLeaderPortal({ navigation, route }) {
           )}
         </View>
 
+        {isHolidayToday && (
+          <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#87CEEB' }}>
+            <Ionicons name="sunny-outline" size={16} color="#0277BD" style={{ marginRight: 8 }} />
+            <Text style={{ color: '#01579B', fontSize: 12, fontWeight: '600', flex: 1 }}>Today is a holiday. Check-in and check-out are disabled.</Text>
+          </View>
+        )}
+
+        {faceStatus === 'approved' && !isHolidayToday && (
+          <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 10, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#B3E5FC' }}>
+            <Ionicons name="calendar-outline" size={15} color="#0277BD" style={{ marginRight: 8 }} />
+            <Text style={{ color: '#01579B', fontSize: 12, fontWeight: '600', flex: 1 }}>Tap any date below to request a School Holiday (needs school/admin approval).</Text>
+          </View>
+        )}
+
         {faceStatus === 'pending' && (
           <View style={{ backgroundColor: '#FEF3C7', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#F59E0B' }}>
             <Ionicons name="hourglass-outline" size={16} color="#D97706" style={{ marginRight: 8 }} />
             <Text style={{ color: '#92400E', fontSize: 12, fontWeight: '600', flex: 1 }}>Your facial registration is pending admin approval. You will be able to mark attendance once approved.</Text>
           </View>
         )}
-        
+
         <View style={{ backgroundColor: theme.colors.surface, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border }}>
           <Calendar
             current={new Date().toISOString().split('T')[0]}
+            onDayPress={faceStatus === 'approved' ? onDayPress : undefined}
             markedDates={{
               ...attendanceRecords.reduce((acc, record) => {
                 const dateString = new Date(record.date).toISOString().split('T')[0];
@@ -596,14 +667,15 @@ export default function TeamLeaderPortal({ navigation, route }) {
                 };
                 return acc;
               }, {}),
-              [new Date().toISOString().split('T')[0]]: {
-                ...(attendanceRecords.find(r => new Date(r.date).toISOString().split('T')[0] === new Date().toISOString().split('T')[0]) ? {} : {
+              ...buildHolidayMarks(holidays),
+              ...((attendanceRecords.find(r => new Date(r.date).toISOString().split('T')[0] === dayKey()) || holidays.find(h => h.date === dayKey() && h.status !== 'rejected')) ? {} : {
+                [dayKey()]: {
                   customStyles: {
                     container: { backgroundColor: '#E0E0E0', borderRadius: 8, borderWidth: 2, borderColor: theme.colors.primary },
                     text: { color: theme.colors.textPrimary, fontWeight: 'bold' }
                   }
-                })
-              }
+                }
+              })
             }}
             markingType={'custom'}
             theme={{
@@ -620,6 +692,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
           <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#4CAF50', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Present</Text></View>
           <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#F44336', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Absent</Text></View>
           <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#FFC107', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Leave</Text></View>
+          <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#87CEEB', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Holiday</Text></View>
           <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#E0E0E0', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Blank</Text></View>
         </View>
       </View>

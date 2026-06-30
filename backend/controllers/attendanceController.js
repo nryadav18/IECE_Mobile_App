@@ -4,6 +4,7 @@ const axios = require('axios');
 const FormData = require('form-data');
 const cloudinary = require('cloudinary').v2;
 const { notifyRole } = require('../utils/pushNotification');
+const { isSchoolOffDay } = require('../utils/holiday');
 
 // Distance calculator using Haversine formula
 function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
@@ -295,6 +296,11 @@ exports.verifyFaceV2 = async (req, res) => {
 
     if (!user.schoolId && user.role !== 'team_leader') {
       return res.status(400).json({ success: false, message: 'Trainer is not assigned to a school' });
+    }
+
+    // Block check-in / check-out on Sundays and approved school holidays.
+    if (await isSchoolOffDay(user.schoolId)) {
+      return res.status(400).json({ success: false, message: 'Attendance is disabled today — it is a holiday.' });
     }
 
     // 1. Check Location (50 meters logic)
