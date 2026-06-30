@@ -290,9 +290,10 @@ export default function TrainerPortal({ navigation, route }) {
           )}
         </MotiView>
 
-        <TouchableOpacity 
-          style={[styles.uploadBtn, { backgroundColor: theme.colors.primary }]}
+        <TouchableOpacity
+          style={[styles.uploadBtn, { backgroundColor: theme.colors.primary, opacity: 0.5 }]}
           onPress={uploadTimetable}
+          disabled={true}
         >
           <Ionicons name="document-attach-outline" size={20} color="#fff" />
           <Text style={styles.uploadBtnText}>Upload Timetable (PDF)</Text>

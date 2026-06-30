@@ -104,18 +104,27 @@ export default function TeamLeaderPortal({ navigation, route }) {
 
   const fetchData = async () => {
     try {
-      const [reportsRes, trainersRes, activitiesRes, attendanceRes, meRes] = await Promise.all([
+      // Use allSettled so one failing endpoint (e.g. a 404 on /auth/me) can't
+      // blank out unrelated data like the team-members list. Each result is
+      // applied independently.
+      const [reportsRes, trainersRes, activitiesRes, attendanceRes, meRes] = await Promise.allSettled([
         api.get('/reports'),
         api.get(`/admin/users?role=trainer&teamLeaderId=${user._id || user.id}&limit=100`),
         api.get(`/activities?uploaderId=${user._id || user.id}`),
         api.get('/attendance/my-attendance'),
         api.get('/auth/me')
       ]);
-      setReports(reportsRes.data.data);
-      setTrainers(trainersRes.data.data);
-      setMyActivities(activitiesRes.data.data);
-      setAttendanceRecords(attendanceRes.data.data || []);
-      setFaceStatus(meRes.data.data?.facialRegistrationStatusV2 || meRes.data.data?.facialRegistrationStatus || 'none');
+      if (reportsRes.status === 'fulfilled') setReports(reportsRes.value.data.data);
+      if (trainersRes.status === 'fulfilled') setTrainers(trainersRes.value.data.data);
+      if (activitiesRes.status === 'fulfilled') setMyActivities(activitiesRes.value.data.data);
+      if (attendanceRes.status === 'fulfilled') setAttendanceRecords(attendanceRes.value.data.data || []);
+      if (meRes.status === 'fulfilled') {
+        setFaceStatus(meRes.value.data.data?.facialRegistrationStatusV2 || meRes.value.data.data?.facialRegistrationStatus || 'none');
+      }
+      // Log any individual failures without discarding the successful results.
+      [reportsRes, trainersRes, activitiesRes, attendanceRes, meRes].forEach((r, i) => {
+        if (r.status === 'rejected') console.log('TeamLeader fetchData call failed', i, r.reason?.message);
+      });
     } catch (err) {
       console.error(err);
     } finally {

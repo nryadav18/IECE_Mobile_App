@@ -246,9 +246,22 @@ exports.deleteUser = async (req, res) => {
       }
     }
 
+    // Capture the push token before deletion so we can force-logout the user's
+    // device. (After delete, protect() already 401s their token on the next
+    // request and the app logs them out — this just makes it instant.)
+    const deletedUserForPush = { expoPushToken: user.expoPushToken };
+
     await User.findByIdAndDelete(user._id);
 
     res.status(200).json({ success: true, data: {} });
+
+    // Instantly sign out the deleted user's device if it's foregrounded.
+    notifyUser(
+      deletedUserForPush,
+      'Signed out',
+      'Your account has been removed.',
+      { type: 'force_logout' }
+    ).catch(err => console.error('Force-logout (account deleted) push error:', err.message));
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
