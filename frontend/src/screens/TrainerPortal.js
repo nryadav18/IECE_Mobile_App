@@ -153,6 +153,22 @@ export default function TrainerPortal({ navigation, route }) {
   // out of this render so we don't read properties off a null user.
   if (!user) return null;
 
+  // Lock check-in / check-out to once per calendar day. Once a trainer checks
+  // in (or out) they cannot repeat that action until the next local midnight,
+  // when a fresh day has no record and both buttons become available again.
+  const isToday = (d) => {
+    const date = new Date(d);
+    const now = new Date();
+    return (
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate()
+    );
+  };
+  const todayAttendance = attendanceRecords.find((r) => isToday(r.date));
+  const alreadyCheckedIn = !!(todayAttendance && todayAttendance.checkInTime);
+  const alreadyCheckedOut = !!(todayAttendance && todayAttendance.checkOutTime);
+
   const renderProgressTab = () => {
     const remainingCount = Math.max(0, 30 - approvedCount);
     const progressPercent = Math.min(100, (approvedCount / 30) * 100);
@@ -326,19 +342,21 @@ export default function TrainerPortal({ navigation, route }) {
               /* Side-by-Side Login/Logout */
               <View style={{ flexDirection: 'row', gap: 10, flex: 1 }}>
                 <TouchableOpacity
-                  style={[styles.uploadBtn, { flex: 1, backgroundColor: '#4CAF50' }]}
+                  style={[styles.uploadBtn, { flex: 1, backgroundColor: '#4CAF50', opacity: alreadyCheckedIn ? 0.5 : 1 }]}
                   onPress={() => navigation.navigate('Attendance', { intent: 'login' })}
+                  disabled={alreadyCheckedIn}
                 >
-                  <Ionicons name="log-in-outline" size={20} color="#fff" />
-                  <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>Check In</Text>
+                  <Ionicons name={alreadyCheckedIn ? 'checkmark-done-outline' : 'log-in-outline'} size={20} color="#fff" />
+                  <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>{alreadyCheckedIn ? 'Checked In' : 'Check In'}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.uploadBtn, { flex: 1, backgroundColor: '#F44336' }]}
+                  style={[styles.uploadBtn, { flex: 1, backgroundColor: '#F44336', opacity: alreadyCheckedOut ? 0.5 : 1 }]}
                   onPress={() => navigation.navigate('Attendance', { intent: 'logout' })}
+                  disabled={alreadyCheckedOut}
                 >
-                  <Ionicons name="log-out-outline" size={20} color="#fff" />
-                  <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>Check Out</Text>
+                  <Ionicons name={alreadyCheckedOut ? 'checkmark-done-outline' : 'log-out-outline'} size={20} color="#fff" />
+                  <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>{alreadyCheckedOut ? 'Checked Out' : 'Check Out'}</Text>
                 </TouchableOpacity>
               </View>
             )}
