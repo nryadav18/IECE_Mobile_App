@@ -9,6 +9,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.ieceaccts.iece",
+      "icon": "./assets/apple.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": [
@@ -36,6 +37,26 @@
       "@react-native-community/datetimepicker",
       "expo-video",
       "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "IECE uses the camera to record a short face video for attendance check-in, check-out, and face registration.",
+          "microphonePermission": "IECE needs microphone access to record the face-verification video used for attendance.",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "IECE accesses your photos so you can attach images to activities and reports."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "IECE uses your location to verify that attendance check-in and check-out happen at the correct site."
+        }
+      ],
       [
         "expo-build-properties",
         {

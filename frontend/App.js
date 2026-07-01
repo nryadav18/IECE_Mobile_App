@@ -8,6 +8,7 @@ import AppNavigator from './src/navigation/AppNavigator';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AlertProvider } from './src/context/AlertContext';
+import ErrorBoundary from './src/components/ErrorBoundary';
 import { navigationRef, handleNotificationResponse } from './src/services/navigation';
 
 LogBox.ignoreLogs([
@@ -17,8 +18,9 @@ LogBox.ignoreLogs([
 
 export default function App() {
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
+    <ErrorBoundary>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
         <ThemeProvider>
           <AlertProvider>
             <AuthProvider>
@@ -34,7 +36,8 @@ export default function App() {
             </AuthProvider>
           </AlertProvider>
         </ThemeProvider>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </ErrorBoundary>
   );
 }
