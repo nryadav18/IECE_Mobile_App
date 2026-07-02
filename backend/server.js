@@ -4,14 +4,17 @@ if (process.env.NODE_ENV !== 'production') {
     dns.setServers(['8.8.8.8', '8.8.4.4']);
 }
 
-const express = require('express');
+// Load env vars FIRST — before any require that reads process.env at import
+// time. utils/pushNotification.js runs initApns()/initFirebase() on load (pulled
+// in transitively via attendanceReminderCron below), and APNs init needs
+// APNS_KEY_ID/APNS_TEAM_ID to already be present or it permanently disables iOS push.
 const dotenv = require('dotenv');
+dotenv.config();
+
+const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const { startAttendanceReminderCron } = require('./utils/attendanceReminderCron');
-
-// Load env vars
-dotenv.config();
 
 // Connect to database
 connectDB();
