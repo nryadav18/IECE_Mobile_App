@@ -95,7 +95,12 @@ const sendApnsNotification = async (tokens, title, body, data = {}) => {
   Object.entries(data).forEach(([k, v]) => {
     if (v !== undefined && v !== null) payload[k] = String(v);
   });
-  note.payload = payload;
+  // expo-notifications on iOS reads a remote notification's `content.data`
+  // ONLY from the top-level `body` key of the APNs payload — it ignores other
+  // root-level keys (see NotificationRecords.serializedNotificationData). node-apn
+  // spreads `note.payload` at the JSON root, so nest our data under `body` or the
+  // app receives empty `data` on tap and can't route (Android/FCM reads it fine).
+  note.payload = { body: payload };
 
   const result = await provider.send(note, tokens);
 
