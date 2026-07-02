@@ -68,11 +68,24 @@ function resolveTarget(data = {}) {
         params: { initialTab: 'Attendance' },
       };
 
-    // Status / informational notifications land on the dashboard. School holiday
-    // requests/decisions also land on Home — the relevant portal (approval list
-    // or attendance calendar) is one tap away.
+    // A holiday request needs review → open the recipient's portal directly on
+    // its "School Holidays" tab (the approval / pending list). Recipients are the
+    // school's chairman and the creator admins; `role` (set by the backend) picks
+    // the right portal.
     case 'holiday_approval':
+      return data.role === 'creator_admin'
+        ? { screen: 'CreatorAdminPortal', params: { initialTab: 'Holidays' } }
+        : { screen: 'ChairmanPortal', params: { initialTab: 'Holidays' } };
+
+    // A holiday request was approved/rejected → open the applicant's portal on
+    // its "Apply School Holiday" tab so they see the decision. Applicants are
+    // trainers or team leaders.
     case 'holiday_status_update':
+      return data.role === 'team_leader'
+        ? { screen: 'TeamLeaderPortal', params: { initialTab: 'SchoolHoliday' } }
+        : { screen: 'TrainerPortal', params: { initialTab: 'SchoolHoliday' } };
+
+    // Status / informational notifications land on the dashboard.
     case 'face_approved':
     case 'face_removed':
     case 'welcome':

@@ -19,8 +19,8 @@ const TAB_ITEMS = [
   { key: 'Holidays', label: 'School Holidays', icon: 'sunny-outline' },
 ];
 
-export default function ChairmanPortal({ navigation }) {
-  const [activeTab, setActiveTab] = useState('Overview');
+export default function ChairmanPortal({ navigation, route }) {
+  const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Overview');
   const [school, setSchool] = useState(null);
   const [faculty, setFaculty] = useState([]);
   const [activities, setActivities] = useState([]);
@@ -54,6 +54,14 @@ export default function ChairmanPortal({ navigation }) {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Honor an `initialTab` passed via navigation (e.g. from a tapped school
+  // holiday notification) even when the portal is already mounted.
+  useEffect(() => {
+    if (route?.params?.initialTab) {
+      setActiveTab(route.params.initialTab);
+    }
+  }, [route?.params?.initialTab]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);

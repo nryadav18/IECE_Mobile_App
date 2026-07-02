@@ -44,14 +44,14 @@ exports.applyHoliday = async (req, res) => {
         school.chairmanId,
         '🏫 School Holiday Request',
         `${req.user.name} requested ${date} as a school holiday. Please review it.`,
-        { type: 'holiday_approval' }
+        { type: 'holiday_approval', role: 'chairman' }
       ).catch((e) => console.error('Holiday chairman notify error:', e.message));
     }
     notifyRole(
       'creator_admin',
       '🏫 School Holiday Request',
       `${req.user.name} requested ${date} as a holiday for ${school ? school.name : 'a school'}.`,
-      { type: 'holiday_approval' }
+      { type: 'holiday_approval', role: 'creator_admin' }
     ).catch((e) => console.error('Holiday admin notify error:', e.message));
   } catch (error) {
     if (error.code === 11000) {
@@ -105,7 +105,7 @@ exports.reviewHoliday = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid status' });
     }
 
-    const holiday = await SchoolHoliday.findById(req.params.id);
+    const holiday = await SchoolHoliday.findById(req.params.id).populate('appliedBy', 'role');
     if (!holiday) return res.status(404).json({ success: false, message: 'Holiday request not found' });
 
     // Authorization: admin, or the chairman who owns that school.
@@ -124,14 +124,16 @@ exports.reviewHoliday = async (req, res) => {
 
     res.status(200).json({ success: true, data: holiday });
 
-    // Notify the applicant of the decision.
+    // Notify the applicant of the decision. `role` (trainer / team_leader) lets
+    // the app open the right portal when the notification is tapped.
+    const applicant = holiday.appliedBy;
     notifyUserById(
-      holiday.appliedBy,
+      applicant?._id || applicant,
       status === 'approved' ? '✅ School Holiday Approved' : '❌ School Holiday Rejected',
       status === 'approved'
         ? `Your school holiday on ${holiday.date} was approved. Check-in/out is disabled that day.`
         : `Your school holiday request for ${holiday.date} was rejected.${rejectionRemark ? ` Remark: "${rejectionRemark}"` : ''}`,
-      { type: 'holiday_status_update' }
+      { type: 'holiday_status_update', role: applicant?.role }
     ).catch((e) => console.error('Holiday status notify error:', e.message));
   } catch (error) {
     console.error(error);
