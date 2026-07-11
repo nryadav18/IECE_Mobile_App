@@ -6,6 +6,7 @@ import { flushPendingNotification } from '../services/navigation';
 
 // Screens
 import LoginScreen from '../screens/LoginScreen';
+import PublicExploreScreen from '../screens/PublicExploreScreen';
 import DashboardScreen from '../screens/DashboardScreen';
 import TrainerPortal from '../screens/TrainerPortal';
 import ChairmanPortal from '../screens/ChairmanPortal';
@@ -77,6 +78,9 @@ const AppNavigator = () => {
         </>
       ) : (
         <>
+          {/* Guests land in public, account-free content first. Member sign in
+              is one tap away for IECE staff. */}
+          <Stack.Screen name="PublicExplore" component={PublicExploreScreen} />
           <Stack.Screen name="Login" component={LoginScreen} />
           <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
         </>

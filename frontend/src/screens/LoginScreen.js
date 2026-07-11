@@ -74,10 +74,17 @@ export default function LoginScreen({ navigation }) {
     >
       <View style={styles.background} />
 
-      {/* Top Bar for Mode Toggle */}
+      {/* Top Bar: back to public browsing + mode toggle */}
       <View style={[styles.topBar, { top: insets.top + 10 }]}>
-        <TouchableOpacity 
-          onPress={toggleTheme} 
+        <TouchableOpacity
+          onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('PublicExplore')}
+          style={[styles.toggleBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="arrow-back-outline" size={20} color={theme.colors.textPrimary} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={toggleTheme}
           style={[styles.toggleBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} 
           activeOpacity={0.8}
         >
@@ -240,7 +247,7 @@ const styles = StyleSheet.create({
     left: 20,
     right: 20,
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     alignItems: 'center',
     zIndex: 10,
   },

@@ -9,9 +9,9 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 const creatorAdmin = {
-  name: 'Creator Admin',
-  email: 'creator@iece.com',
-  password: 'Creator@2017',
+  name: 'Apple Test',
+  email: 'apple_test@gmail.com',
+  password: 'AppleTest@2026',
   role: 'creator_admin',
 };
 
