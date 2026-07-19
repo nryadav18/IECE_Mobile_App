@@ -4,7 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "templates": "node onboarding/generate_templates.js",
+    "create:schools": "node create_schools_chairmen.js",
+    "create:leaders": "node create_team_leaders.js",
+    "create:trainers": "node create_trainers.js"
   },
   "keywords": [],
   "author": "",
@@ -18,6 +22,7 @@
     "cloudinary": "^1.41.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "firebase-admin": "^14.0.0",
     "form-data": "^4.0.5",

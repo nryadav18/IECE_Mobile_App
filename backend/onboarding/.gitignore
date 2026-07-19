@@ -1,0 +1,4 @@
+# Filled sheets and generated credential files contain personal data and passwords.
+data/*
+!data/.gitkeep
+output/

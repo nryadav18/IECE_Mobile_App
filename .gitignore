@@ -38,9 +38,20 @@ expo-env.d.ts
 **/*-firebase-adminsdk-*.json
 **/google-service-account.json
 **/IECE_Google_PlayStore_Details.txt
+# Seeding / onboarding scripts — contain account credentials
 **/create_admins.js
+**/create_creator_admin.js
 **/create_creator_admins.js
+**/create_schools_chairmen.js
+**/create_team_leaders.js
+**/create_trainers.js
 **/testCloudinary.js
+
+# Bulk onboarding — filled staff sheets (personal data) and generated
+# credential handouts (plaintext passwords). Blank templates stay tracked.
+backend/onboarding/data/
+backend/onboarding/output/
+**/*_credentials_*.xlsx
 
 # Metro
 .metro-health-check*
