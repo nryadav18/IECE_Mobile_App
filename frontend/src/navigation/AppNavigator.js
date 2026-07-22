@@ -85,6 +85,10 @@ const AppNavigator = () => {
               <Stack.Screen name="PendingRegistrations" component={PendingRegistrationsScreen} />
             </>
           )}
+          {/* CEO reuses the admin portal (create/manage options are hidden for them). */}
+          {user.role === 'ceo' && (
+            <Stack.Screen name="CreatorAdminPortal" component={CreatorAdminPortal} />
+          )}
         </>
       ) : (
         <>

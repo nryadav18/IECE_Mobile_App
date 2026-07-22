@@ -73,7 +73,13 @@ exports.login = async (req, res) => {
 
 exports.getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
+    // Populate assigned schools and per-school face registrations (with school
+    // names) so the app can render the multi-school attendance UI. Face
+    // embeddings are large and never needed client-side, so drop them.
+    const user = await User.findById(req.user.id)
+      .select('-faceEmbedding -faceEmbeddingV2 -faceRegistrations.faceEmbedding')
+      .populate('schoolIds', 'name state associationYear classCoverage')
+      .populate('faceRegistrations.schoolId', 'name state');
     res.status(200).json({ success: true, data: user });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });

@@ -15,7 +15,8 @@ import CustomDropdown from '../components/CustomDropdown';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import CreateActivityForm from '../components/CreateActivityForm';
 import EditActivityModal from '../components/EditActivityModal';
-import EditReportModal from '../components/EditReportModal';
+import VisitReportForm from '../components/VisitReportForm';
+import VisitReportDetail from '../components/VisitReportDetail';
 import SidebarMenu from '../components/SidebarMenu';
 import { Image } from 'react-native';
 import { Calendar } from 'react-native-calendars';
@@ -51,7 +52,10 @@ export default function TeamLeaderPortal({ navigation, route }) {
   const [trainers, setTrainers] = useState([]);
   const [myActivities, setMyActivities] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
-  const [faceStatus, setFaceStatus] = useState('none'); // 'none' | 'pending' | 'approved'
+  const [faceStatus, setFaceStatus] = useState('none'); // aggregate: 'none' | 'pending' | 'approved'
+  const [mySchools, setMySchools] = useState([]);        // [{ _id, name }] assigned schools
+  const [faceRegs, setFaceRegs] = useState([]);          // per-school face registrations
+  const [selectedSchoolId, setSelectedSchoolId] = useState(null); // school chosen for attendance
   const [holidays, setHolidays] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Reports');
@@ -72,7 +76,9 @@ export default function TeamLeaderPortal({ navigation, route }) {
     }
   }, [route?.params?.faceJustRegistered]);
   const [activityToEdit, setActivityToEdit] = useState(null);
-  const [reportToEdit, setReportToEdit] = useState(null);
+  const [reportToEdit, setReportToEdit] = useState(null); // opens VisitReportForm in edit mode
+  const [reportFormVisible, setReportFormVisible] = useState(false); // new report
+  const [reportToView, setReportToView] = useState(null); // read-only detail
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [dateOfInspection, setDateOfInspection] = useState(new Date());
 
@@ -97,6 +103,16 @@ export default function TeamLeaderPortal({ navigation, route }) {
       const meRes = await api.get('/auth/me');
       const d = meRes.data.data || {};
       setFaceStatus(d.facialRegistrationStatusV2 || d.facialRegistrationStatus || 'none');
+
+      const schools = Array.isArray(d.schoolIds) && d.schoolIds.length
+        ? d.schoolIds.filter(Boolean)
+        : (d.schoolId && typeof d.schoolId === 'object' ? [d.schoolId] : []);
+      setMySchools(schools);
+      setFaceRegs(Array.isArray(d.faceRegistrations) ? d.faceRegistrations : []);
+      setSelectedSchoolId((prev) => {
+        const stillValid = prev && schools.some((s) => String(s._id) === String(prev));
+        return stillValid ? prev : (schools[0]?._id || null);
+      });
       return;
     } catch (err) {
       console.log('Error fetching face status from /auth/me', err?.response?.status);
@@ -314,141 +330,33 @@ export default function TeamLeaderPortal({ navigation, route }) {
     >
 
       <View style={{ display: activeTab === 'Reports' ? 'flex' : 'none' }}>
-        {/* Log Visit Form */}
-        <MotiView 
-        style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} 
-        from={{ opacity: 0, translateY: 15 }} 
-        animate={{ opacity: 1, translateY: 0 }}
-      >
-        <View style={styles.formHeader}>
-          <Ionicons name="document-text-outline" size={20} color={theme.colors.primary} />
-          <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Log Visit Report</Text>
-        </View>
-
-        <Formik
-          initialValues={{ personMet: '', discussionContext: '', trainerId: '', schoolId: '' }}
-          validationSchema={VisitSchema}
-          onSubmit={handleVisitSubmit}
+        {/* Log Visit — launches the full IECE EGM Visit report form */}
+        <MotiView
+          style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+          from={{ opacity: 0, translateY: 15 }}
+          animate={{ opacity: 1, translateY: 0 }}
         >
-          {({ handleChange, handleBlur: formikBlur, handleSubmit, setFieldValue, values, errors, touched }) => (
-            <View>
-              <View style={styles.inputContainer}>
-                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>Find our Trainer</Text>
-                <CustomDropdown
-                  data={trainers}
-                  selectedValue={values.trainerId}
-                  onSelect={(item) => {
-                    setFieldValue('trainerId', item._id);
-                    if (item.schoolId) {
-                      setFieldValue('schoolId', item.schoolId._id || item.schoolId);
-                    } else {
-                      setFieldValue('schoolId', '');
-                    }
-                  }}
-                  placeholder="Search & Select Trainer"
-                  theme={theme}
-                />
-                {errors.trainerId && touched.trainerId && (
-                  <Text style={[styles.error, { color: theme.colors.primary }]}>{errors.trainerId}</Text>
-                )}
-              </View>
-
-              <View style={styles.inputContainer}>
-                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>Find the School</Text>
-                <CustomDropdown
-                  data={values.trainerId ? [trainers.find(t => t._id === values.trainerId)?.schoolId].filter(Boolean) : []}
-                  selectedValue={values.schoolId}
-                  onSelect={() => {}} // Readonly basically, auto-selected
-                  placeholder="Auto-selected based on Trainer"
-                  theme={theme}
-                />
-                {errors.schoolId && touched.schoolId && (
-                  <Text style={[styles.error, { color: theme.colors.primary }]}>{errors.schoolId}</Text>
-                )}
-              </View>
-
-              <View style={styles.inputContainer}>
-                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>Date of Inspection</Text>
-                <TouchableOpacity 
-                  style={[styles.input, { borderColor: theme.colors.border, justifyContent: 'center' }]}
-                  onPress={() => setShowDatePicker(true)}
-                >
-                  <Text style={{ color: theme.colors.textPrimary }}>{dateOfInspection.toLocaleDateString()}</Text>
-                </TouchableOpacity>
-                {showDatePicker && (
-                  <DateTimePicker
-                    value={dateOfInspection}
-                    mode="date"
-                    display="default"
-                    onChange={(event, selectedDate) => {
-                      setShowDatePicker(false);
-                      if (selectedDate) setDateOfInspection(selectedDate);
-                    }}
-                  />
-                )}
-              </View>
-
-              <View style={styles.inputContainer}>
-                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>Person Met</Text>
-                <TextInput
-                  style={getInputStyle('personMet')}
-                  onChangeText={handleChange('personMet')}
-                  onBlur={() => {
-                    formikBlur('personMet');
-                    handleBlur('personMet');
-                  }}
-                  onFocus={() => handleFocus('personMet')}
-                  value={values.personMet}
-                  placeholder="Enter name"
-                  placeholderTextColor={theme.colors.placeholder}
-                />
-                {errors.personMet && touched.personMet ? (
-                  <View style={styles.errorRow}>
-                    <Ionicons name="alert-circle-outline" size={14} color={theme.colors.primary} style={{ marginRight: 4 }} />
-                    <Text style={[styles.error, { color: theme.colors.primary }]}>{errors.personMet}</Text>
-                  </View>
-                ) : null}
-              </View>
-              
-              <View style={styles.inputContainer}>
-                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>Discussion Context</Text>
-                <TextInput
-                  style={[getInputStyle('discussionContext'), { height: 100, textAlignVertical: 'top' }]}
-                  onChangeText={handleChange('discussionContext')}
-                  onBlur={() => {
-                    formikBlur('discussionContext');
-                    handleBlur('discussionContext');
-                  }}
-                  onFocus={() => handleFocus('discussionContext')}
-                  value={values.discussionContext}
-                  placeholder="What was discussed?"
-                  placeholderTextColor={theme.colors.placeholder}
-                  multiline
-                  numberOfLines={4}
-                />
-                {errors.discussionContext && touched.discussionContext ? (
-                  <View style={styles.errorRow}>
-                    <Ionicons name="alert-circle-outline" size={14} color={theme.colors.primary} style={{ marginRight: 4 }} />
-                    <Text style={[styles.error, { color: theme.colors.primary }]}>{errors.discussionContext}</Text>
-                  </View>
-                ) : null}
-              </View>
-              
-              <TouchableOpacity 
-                style={[styles.button, { backgroundColor: theme.colors.primary }]} 
-                onPress={handleSubmit}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.buttonText}>Submit Report</Text>
-                <Ionicons name="send-outline" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
-              </TouchableOpacity>
-            </View>
+          <View style={styles.formHeader}>
+            <Ionicons name="document-text-outline" size={20} color={theme.colors.primary} />
+            <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Log Visit Report</Text>
+          </View>
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 13, lineHeight: 20, marginBottom: 16 }}>
+            Visit a trainer's school and complete the full IECE EGM Visit / Sparked Visit report. Every field is
+            mandatory. Once submitted it is sent to that school for review.
+          </Text>
+          {trainers.length === 0 ? (
+            <Text style={{ color: theme.colors.textSecondary, fontStyle: 'italic' }}>No trainers assigned to you yet.</Text>
+          ) : (
+            <TouchableOpacity
+              style={[styles.button, { backgroundColor: theme.colors.primary }]}
+              onPress={() => setReportFormVisible(true)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="add-circle-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.buttonText}>Start Visit Report</Text>
+            </TouchableOpacity>
           )}
-        </Formik>
-      </MotiView>
-
-
-
+        </MotiView>
       </View>
 
       <View style={{ display: activeTab === 'MyReports' ? 'flex' : 'none' }}>
@@ -509,6 +417,13 @@ export default function TeamLeaderPortal({ navigation, route }) {
 
                      <View style={styles.eventActions}>
                        <TouchableOpacity
+                         style={[styles.actionBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.background }]}
+                         onPress={() => setReportToView(report)}
+                       >
+                         <Ionicons name="eye-outline" size={18} color={theme.colors.textPrimary} />
+                         <Text style={{ color: theme.colors.textPrimary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>View</Text>
+                       </TouchableOpacity>
+                       <TouchableOpacity
                          style={[styles.actionBtn, { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '10' }]}
                          onPress={() => setReportToEdit(report)}
                        >
@@ -543,7 +458,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
                <View style={{ flex: 1 }}>
                  <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{trainer.name}</Text>
                  <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{trainer.email}</Text>
-                 <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>School: {trainer.schoolId?.name || 'N/A'}</Text>
+                 <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>School: {trainer.schoolIds?.length ? trainer.schoolIds.map(s => s.name).join(', ') : (trainer.schoolId?.name || 'N/A')}</Text>
                </View>
                <TouchableOpacity 
                  style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, justifyContent: 'center' }}
@@ -557,50 +472,99 @@ export default function TeamLeaderPortal({ navigation, route }) {
       </View>
 
       <View style={{ display: activeTab === 'Attendance' ? 'flex' : 'none', marginTop: 16 }}>
-        {/* Dynamic Buttons based on status */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
-          {faceStatus !== 'approved' ? (
-            /* Single Button Layout */
-            <>
-              {faceStatus === 'none' && (
+        {/* School selector — shown when the leader works under multiple schools */}
+        {mySchools.length > 1 && (
+          <View style={{ marginBottom: 14 }}>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 8 }}>Select School for Attendance</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {mySchools.map((s) => {
+                const sel = String(s._id) === String(selectedSchoolId);
+                return (
+                  <TouchableOpacity
+                    key={s._id}
+                    onPress={() => setSelectedSchoolId(s._id)}
+                    style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, marginRight: 8, backgroundColor: sel ? theme.colors.primary : theme.colors.surface, borderColor: sel ? theme.colors.primary : theme.colors.border }}
+                  >
+                    <Text style={{ color: sel ? '#fff' : theme.colors.textPrimary, fontWeight: '600', fontSize: 13 }}>{s.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* Per-school attendance actions (register / login / logout) */}
+        {(() => {
+          if (!selectedSchoolId) {
+            return (
+              <View style={{ backgroundColor: theme.colors.surface, borderRadius: 10, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: theme.colors.border }}>
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' }}>No school assigned yet. Please contact your admin.</Text>
+              </View>
+            );
+          }
+
+          const selSchool = mySchools.find((s) => String(s._id) === String(selectedSchoolId));
+          const schoolName = selSchool?.name || 'this school';
+          const reg = faceRegs.find((r) => String(r.schoolId?._id || r.schoolId) === String(selectedSchoolId));
+          const regStatus = reg?.status || 'none';
+
+          const todayAtt = attendanceRecords.find((r) => isToday(r.date));
+          const todaySchoolId = todayAtt ? String(todayAtt.schoolId?._id || todayAtt.schoolId) : null;
+          const todaySchoolName = todayAtt ? (todayAtt.schoolId?.name || 'another school') : null;
+          const checkedInHere = !!(todayAtt && todaySchoolId === String(selectedSchoolId) && todayAtt.checkInTime);
+          const checkedOutHere = !!(todayAtt && todaySchoolId === String(selectedSchoolId) && todayAtt.checkOutTime);
+          const checkedInElsewhere = !!(todayAtt && todaySchoolId !== String(selectedSchoolId));
+
+          return (
+            <View style={{ marginBottom: 12 }}>
+              {regStatus === 'none' && (
                 <TouchableOpacity
-                  style={[styles.actionBtn, { flex: 1, borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '10' }]}
-                  onPress={() => navigation.navigate('FaceRegistration', { returnTo: 'TeamLeaderPortal' })}
+                  style={[styles.actionBtn, { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '10' }]}
+                  onPress={() => navigation.navigate('FaceRegistration', { schoolId: selectedSchoolId, schoolName, returnTo: 'TeamLeaderPortal' })}
                 >
                   <Ionicons name="scan-outline" size={20} color={theme.colors.primary} />
-                  <Text style={{ color: theme.colors.primary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Register Face</Text>
+                  <Text style={{ color: theme.colors.primary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Register Face for {schoolName}</Text>
                 </TouchableOpacity>
               )}
-              {faceStatus === 'pending' && (
-                <View style={[styles.actionBtn, { flex: 1, borderColor: '#F59E0B', backgroundColor: '#FEF3C7' }]}>
+
+              {regStatus === 'pending' && (
+                <View style={[styles.actionBtn, { borderColor: '#F59E0B', backgroundColor: '#FEF3C7' }]}>
                   <Ionicons name="hourglass-outline" size={20} color="#D97706" />
-                  <Text style={{ color: '#D97706', fontSize: 13, marginLeft: 6, fontWeight: '700' }}>Pending Approval</Text>
+                  <Text style={{ color: '#D97706', fontSize: 13, marginLeft: 6, fontWeight: '700' }}>Pending Approval — {schoolName}</Text>
                 </View>
               )}
-            </>
-          ) : (
-            /* Side-by-Side Login/Logout */
-            <View style={{ flexDirection: 'row', gap: 10, flex: 1 }}>
-              <TouchableOpacity
-                style={[styles.actionBtn, { flex: 1, borderColor: '#4CAF50', backgroundColor: '#4CAF5010', opacity: (alreadyCheckedIn || isHolidayToday) ? 0.5 : 1 }]}
-                onPress={() => navigation.navigate('Attendance', { intent: 'login' })}
-                disabled={alreadyCheckedIn || isHolidayToday}
-              >
-                <Ionicons name={alreadyCheckedIn ? 'checkmark-done-outline' : 'log-in-outline'} size={20} color="#4CAF50" />
-                <Text style={{ color: '#4CAF50', fontSize: 13, marginLeft: 6, fontWeight: '600' }}>{alreadyCheckedIn ? 'Checked In' : 'Login'}</Text>
-              </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[styles.actionBtn, { flex: 1, borderColor: '#F44336', backgroundColor: '#F4433610', opacity: (alreadyCheckedOut || isHolidayToday) ? 0.5 : 1 }]}
-                onPress={() => navigation.navigate('Attendance', { intent: 'logout' })}
-                disabled={alreadyCheckedOut || isHolidayToday}
-              >
-                <Ionicons name={alreadyCheckedOut ? 'checkmark-done-outline' : 'log-out-outline'} size={20} color="#F44336" />
-                <Text style={{ color: '#F44336', fontSize: 13, marginLeft: 6, fontWeight: '600' }}>{alreadyCheckedOut ? 'Checked Out' : 'Logout'}</Text>
-              </TouchableOpacity>
+              {regStatus === 'approved' && (
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { flex: 1, borderColor: '#4CAF50', backgroundColor: '#4CAF5010', opacity: (checkedInHere || isHolidayToday || checkedInElsewhere) ? 0.5 : 1 }]}
+                    onPress={() => navigation.navigate('Attendance', { intent: 'login', schoolId: selectedSchoolId, schoolName })}
+                    disabled={checkedInHere || isHolidayToday || checkedInElsewhere}
+                  >
+                    <Ionicons name={checkedInHere ? 'checkmark-done-outline' : 'log-in-outline'} size={20} color="#4CAF50" />
+                    <Text style={{ color: '#4CAF50', fontSize: 13, marginLeft: 6, fontWeight: '600' }}>{checkedInHere ? 'Checked In' : 'Login'}</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { flex: 1, borderColor: '#F44336', backgroundColor: '#F4433610', opacity: (!checkedInHere || checkedOutHere || isHolidayToday) ? 0.5 : 1 }]}
+                    onPress={() => navigation.navigate('Attendance', { intent: 'logout', schoolId: selectedSchoolId, schoolName })}
+                    disabled={!checkedInHere || checkedOutHere || isHolidayToday}
+                  >
+                    <Ionicons name={checkedOutHere ? 'checkmark-done-outline' : 'log-out-outline'} size={20} color="#F44336" />
+                    <Text style={{ color: '#F44336', fontSize: 13, marginLeft: 6, fontWeight: '600' }}>{checkedOutHere ? 'Checked Out' : 'Logout'}</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {checkedInElsewhere && (
+                <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 12, marginTop: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#87CEEB' }}>
+                  <Ionicons name="information-circle-outline" size={16} color="#0277BD" style={{ marginRight: 8 }} />
+                  <Text style={{ color: '#01579B', fontSize: 12, fontWeight: '600', flex: 1 }}>You already checked in at {todaySchoolName} today, so check-in here is disabled. You can only work at one school per day.</Text>
+                </View>
+              )}
             </View>
-          )}
-        </View>
+          );
+        })()}
 
         {isHolidayToday && (
           <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#87CEEB' }}>
@@ -744,20 +708,33 @@ export default function TeamLeaderPortal({ navigation, route }) {
         onError={(msg) => showAlert('Error', msg, 'error')}
       />
     )}
-    {reportToEdit && (
-      <EditReportModal
-        visible={!!reportToEdit}
-        report={reportToEdit}
-        trainers={trainers}
-        onClose={() => setReportToEdit(null)}
-        onReportUpdated={(message) => {
-          setReportToEdit(null);
-          showAlert('Success', message, 'success');
-          fetchData();
-        }}
-        onError={(message) => showAlert('Error', message, 'error')}
-      />
-    )}
+    {/* New visit report */}
+    <VisitReportForm
+      visible={reportFormVisible}
+      targets={trainers}
+      author={user}
+      onClose={() => setReportFormVisible(false)}
+      onSubmitted={(message) => { showAlert('Success', message, 'success'); fetchData(); }}
+      onError={(message) => showAlert('Error', message, 'error')}
+    />
+
+    {/* Edit existing report */}
+    <VisitReportForm
+      visible={!!reportToEdit}
+      editReport={reportToEdit}
+      targets={trainers}
+      author={user}
+      onClose={() => setReportToEdit(null)}
+      onSubmitted={(message) => { setReportToEdit(null); showAlert('Success', message, 'success'); fetchData(); }}
+      onError={(message) => showAlert('Error', message, 'error')}
+    />
+
+    {/* Read-only full report */}
+    <VisitReportDetail
+      visible={!!reportToView}
+      report={reportToView}
+      onClose={() => setReportToView(null)}
+    />
   </KeyboardAvoidingView>
   );
 }

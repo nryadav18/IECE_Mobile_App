@@ -1,10 +1,27 @@
 const User = require('../models/User');
+const School = require('../models/School');
 const Attendance = require('../models/Attendance');
 const axios = require('axios');
 const FormData = require('form-data');
 const cloudinary = require('cloudinary').v2;
 const { notifyRole } = require('../utils/pushNotification');
 const { isSchoolOffDay } = require('../utils/holiday');
+
+// Keep the coarse legacy aggregate face status in sync with the per-school
+// registrations, so older reads and the app's faceStatus gate stay meaningful.
+function syncLegacyFaceStatus(user) {
+  const regs = user.faceRegistrations || [];
+  if (regs.some(r => r.status === 'approved')) {
+    user.facialRegistrationStatus = 'approved';
+    user.facialRegistrationStatusV2 = 'approved';
+  } else if (regs.some(r => r.status === 'pending')) {
+    user.facialRegistrationStatus = 'pending';
+    user.facialRegistrationStatusV2 = 'pending';
+  } else {
+    user.facialRegistrationStatus = 'none';
+    user.facialRegistrationStatusV2 = 'none';
+  }
+}
 
 // Distance calculator using Haversine formula
 function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
@@ -189,6 +206,7 @@ exports.verifyFace = async (req, res) => {
 exports.getMyAttendance = async (req, res) => {
   try {
     const attendanceRecords = await Attendance.find({ trainerId: req.user._id })
+      .populate('schoolId', 'name state')
       .sort({ date: -1 });
 
     res.status(200).json({
@@ -203,19 +221,34 @@ exports.getMyAttendance = async (req, res) => {
 
 exports.registerFaceV2 = async (req, res) => {
   try {
-    const { lat, lng } = req.body;
-    
+    const { lat, lng, schoolId } = req.body;
+
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Please upload an image' });
     }
-    
+
     if (!lat || !lng) {
       return res.status(400).json({ success: false, message: 'Location is required' });
     }
 
+    if (!schoolId) {
+      return res.status(400).json({ success: false, message: 'Please select which school you are registering at.' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // The person must actually be assigned to this school to register there.
+    const assigned = (user.schoolIds || []).map(String);
+    if (!assigned.includes(String(schoolId))) {
+      return res.status(400).json({ success: false, message: 'You are not assigned to this school.' });
+    }
+
     const formData = new FormData();
     formData.append('file', req.file.buffer, { filename: 'video.mp4', contentType: 'video/mp4' });
-    
+
     let mlResponse;
     try {
       mlResponse = await axios.post(`${process.env.ML_SERVICE_API}/extract-v2`, formData, {
@@ -227,7 +260,7 @@ exports.registerFaceV2 = async (req, res) => {
       const msg = error.response?.data?.detail || 'Error communicating with ML service';
       return res.status(400).json({ success: false, message: msg });
     }
-    
+
     const embedding = mlResponse.data.embedding;
 
     // Reject when the ML service could not find a valid face / blink in the
@@ -246,27 +279,53 @@ exports.registerFaceV2 = async (req, res) => {
       console.error('Cloudinary upload failed:', err);
     }
 
-    const user = await User.findById(req.user.id);
-    user.facialRegistrationStatusV2 = 'pending';
+    const registrationLocation = { lat: parseFloat(lat), lng: parseFloat(lng) };
+
+    // Upsert the per-school registration. Re-registering resets it to pending
+    // so the admin approves the fresh capture for that school again.
+    const existing = (user.faceRegistrations || []).find(
+      (fr) => String(fr.schoolId) === String(schoolId)
+    );
+    if (existing) {
+      existing.status = 'pending';
+      existing.faceEmbedding = embedding;
+      existing.registrationLocation = registrationLocation;
+      existing.registrationPhotoUrl = result.secure_url;
+    } else {
+      user.faceRegistrations.push({
+        schoolId,
+        status: 'pending',
+        faceEmbedding: embedding,
+        registrationLocation,
+        registrationPhotoUrl: result.secure_url
+      });
+    }
+
+    // Keep the legacy fields pointing at the most recent registration + status.
     user.faceEmbeddingV2 = embedding;
-    user.registrationLocation = { lat: parseFloat(lat), lng: parseFloat(lng) };
+    user.registrationLocation = registrationLocation;
     user.registrationPhotoUrl = result.secure_url;
-    
+    syncLegacyFaceStatus(user);
+
     await user.save();
-    
+
     res.status(200).json({
       success: true,
-      message: 'Facial registration v2 submitted for approval',
+      message: 'Facial registration submitted for approval',
       data: {
-         status: user.facialRegistrationStatusV2
+        schoolId,
+        status: 'pending'
       }
     });
+
+    const school = await School.findById(schoolId).select('name');
+    const schoolName = school ? school.name : 'a school';
 
     // Notify admins that a new facial registration needs approval.
     notifyRole(
       'creator_admin',
       '🧑‍💼 New Facial Registration',
-      `${user.name} submitted a facial registration for your approval.`,
+      `${user.name} submitted a facial registration for ${schoolName} for your approval.`,
       { type: 'face_registration_pending' }
     ).catch(err => console.error('Face-registration notification error:', err.message));
 
@@ -278,55 +337,64 @@ exports.registerFaceV2 = async (req, res) => {
 
 exports.verifyFaceV2 = async (req, res) => {
   try {
-    const { lat, lng, intent } = req.body;
-    
+    const { lat, lng, intent, schoolId } = req.body;
+
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Please upload an image' });
     }
-    
+
     if (!lat || !lng) {
       return res.status(400).json({ success: false, message: 'Location is required' });
     }
 
+    if (!schoolId) {
+      return res.status(400).json({ success: false, message: 'Please select which school you are marking attendance at.' });
+    }
+
     const user = await User.findById(req.user.id);
-    
-    if (user.facialRegistrationStatusV2 !== 'approved') {
-      return res.status(400).json({ success: false, message: 'Facial registration v2 is not approved yet' });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Only plain trainers strictly require a school; leaders/heads may mark
-    // attendance without one (same allowance the team leader already had).
-    if (!user.schoolId && user.role === 'trainer') {
-      return res.status(400).json({ success: false, message: 'Trainer is not assigned to a school' });
+    // Resolve the per-school registration for the selected school. Everything
+    // downstream (geofence anchor, face embedding) is scoped to THIS school.
+    const reg = (user.faceRegistrations || []).find(
+      (fr) => String(fr.schoolId) === String(schoolId)
+    );
+    if (!reg) {
+      return res.status(400).json({ success: false, message: 'You have not registered your face for this school yet.' });
+    }
+    if (reg.status !== 'approved') {
+      return res.status(400).json({ success: false, message: 'Your facial registration for this school is not approved yet.' });
     }
 
-    // Block check-in / check-out on Sundays and approved school holidays.
-    if (await isSchoolOffDay(user.schoolId)) {
+    // Block check-in / check-out on Sundays and approved holidays for THIS school.
+    if (await isSchoolOffDay(schoolId)) {
       return res.status(400).json({ success: false, message: 'Attendance is disabled today — it is a holiday.' });
     }
 
-    // 1. Check Location (50 meters logic)
-    const registeredLat = user.registrationLocation.lat;
-    const registeredLng = user.registrationLocation.lng;
-    
-    if (!registeredLat || !registeredLng) {
-       return res.status(400).json({ success: false, message: 'Registration location not found' });
+    // 1. Location check against this school's own registration anchor (50 m).
+    const registeredLat = reg.registrationLocation && reg.registrationLocation.lat;
+    const registeredLng = reg.registrationLocation && reg.registrationLocation.lng;
+
+    if (registeredLat == null || registeredLng == null) {
+      return res.status(400).json({ success: false, message: 'Registration location not found for this school.' });
     }
 
     const distance = getDistanceFromLatLonInM(parseFloat(lat), parseFloat(lng), registeredLat, registeredLng);
-    
+
     if (distance > 50) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `Location verification failed. You are ${Math.round(distance)} meters away from the registered location. Must be within 50 meters.` 
+      return res.status(400).json({
+        success: false,
+        message: `Location verification failed. You are ${Math.round(distance)} meters away from this school's registered location. Must be within 50 meters.`
       });
     }
 
-    // 2. Face Verification
+    // 2. Face verification against this school's embedding.
     const formData = new FormData();
     formData.append('file', req.file.buffer, { filename: 'video.mp4', contentType: 'video/mp4' });
-    formData.append('target_embedding', user.faceEmbeddingV2.join(','));
-    
+    formData.append('target_embedding', (reg.faceEmbedding || []).join(','));
+
     let mlResponse;
     try {
       mlResponse = await axios.post(`${process.env.ML_SERVICE_API}/verify-v2`, formData, {
@@ -338,12 +406,13 @@ exports.verifyFaceV2 = async (req, res) => {
       const msg = error.response?.data?.detail || 'Error communicating with ML service';
       return res.status(400).json({ success: false, message: msg });
     }
-    
+
     if (!mlResponse.data.match) {
       return res.status(400).json({ success: false, message: 'Face verification failed. Not a match.' });
     }
 
-    // 3. Mark Attendance (Login / Logout Logic)
+    // 3. Mark Attendance — one record per person per day, tied to the school
+    //    they checked in at. Check-out must happen at that same school.
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date();
@@ -356,47 +425,67 @@ exports.verifyFaceV2 = async (req, res) => {
 
     if (intent === 'logout') {
       if (!existingAttendance) {
-         return res.status(400).json({ success: false, message: 'You must log in before you can log out.' });
+        return res.status(400).json({ success: false, message: 'You must check in before you can check out.' });
       }
+
+      // Same-school check-out guard: you must check out where you checked in.
+      if (String(existingAttendance.schoolId) !== String(schoolId)) {
+        const checkedInSchool = await School.findById(existingAttendance.schoolId).select('name');
+        const name = checkedInSchool ? checkedInSchool.name : 'another school';
+        return res.status(400).json({
+          success: false,
+          message: `You checked in at ${name} today, so you must check out at ${name}.`
+        });
+      }
+
       if (existingAttendance.checkOutTime) {
-         return res.status(400).json({ success: false, message: 'You have already logged out today.' });
+        return res.status(400).json({ success: false, message: 'You have already checked out today.' });
       }
-      
+
       existingAttendance.checkOutTime = new Date();
       existingAttendance.checkOutLocation = { lat: parseFloat(lat), lng: parseFloat(lng) };
       existingAttendance.status = 'Present';
-      
-      // Calculate total time in minutes
+
       const diffMs = existingAttendance.checkOutTime - existingAttendance.checkInTime;
       existingAttendance.totalTimeSpent = Math.round(diffMs / 60000);
-      
+
       await existingAttendance.save();
-      
+
       return res.status(200).json({
         success: true,
-        message: 'Logged out successfully. Status is Present.',
+        message: 'Checked out successfully. Status is Present.',
         data: existingAttendance
       });
-      
+
     } else {
-      // It's a login
+      // It's a check-in / login.
       if (existingAttendance) {
-         return res.status(400).json({ success: false, message: 'You have already logged in for today.' });
+        // One school per day: block a second check-in and name the other
+        // school so the message is unambiguous.
+        if (String(existingAttendance.schoolId) !== String(schoolId)) {
+          const checkedInSchool = await School.findById(existingAttendance.schoolId).select('name');
+          const name = checkedInSchool ? checkedInSchool.name : 'another school';
+          return res.status(400).json({
+            success: false,
+            message: `You have already checked in at ${name} today. You can only work at one school per day.`
+          });
+        }
+        return res.status(400).json({ success: false, message: 'You have already checked in for today.' });
       }
 
       const attendance = await Attendance.create({
         trainerId: user._id,
-        schoolId: user.schoolId || null,
+        schoolId,
         date: new Date(),
         status: 'Partially Present',
         checkInTime: new Date(),
         checkInLocation: { lat: parseFloat(lat), lng: parseFloat(lng) },
         verifiedViaFace: true
       });
-      
+
       return res.status(200).json({
         success: true,
-        message: 'Logged in successfully. Status is Partially Present until you log out.',
+        message: 'Checked in successfully. Status is Partially Present until you check out.',
         data: attendance
       });
     }

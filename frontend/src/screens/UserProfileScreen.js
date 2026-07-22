@@ -6,6 +6,7 @@ import api from '../services/api';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Calendar } from 'react-native-calendars';
+import VisitReportDetail from '../components/VisitReportDetail';
 
 const { width } = Dimensions.get('window');
 
@@ -18,6 +19,7 @@ export default function UserProfileScreen({ route, navigation }) {
   const [loading, setLoading] = useState(true);
   const [profileData, setProfileData] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [reportToView, setReportToView] = useState(null);
   const [activeTab, setActiveTab] = useState('Overview');
 
   useEffect(() => {
@@ -131,21 +133,28 @@ export default function UserProfileScreen({ route, navigation }) {
           <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0 }]}>Assignment Details</Text>
         </View>
         
-        {profile.schoolId ? (
-          <View style={styles.detailRow}>
-            <Text style={{ color: theme.colors.textSecondary, width: 80 }}>School:</Text>
-            <Text style={{ color: theme.colors.textPrimary, flex: 1, fontWeight: '500' }}>{profile.schoolId.name}</Text>
-          </View>
-        ) : (
-          <Text style={{ color: theme.colors.textSecondary }}>No school assigned.</Text>
-        )}
-        
-        {profile.schoolId?.state && (
-          <View style={styles.detailRow}>
-            <Text style={{ color: theme.colors.textSecondary, width: 80 }}>Location:</Text>
-            <Text style={{ color: theme.colors.textPrimary, flex: 1 }}>{profile.schoolId.state}</Text>
-          </View>
-        )}
+        {(() => {
+          const schools = Array.isArray(profile.schoolIds) && profile.schoolIds.length
+            ? profile.schoolIds
+            : (profile.schoolId ? [profile.schoolId] : []);
+          if (!schools.length) {
+            return <Text style={{ color: theme.colors.textSecondary }}>No school assigned.</Text>;
+          }
+          return (
+            <View style={styles.detailRow}>
+              <Text style={{ color: theme.colors.textSecondary, width: 80 }}>
+                {schools.length > 1 ? 'Schools:' : 'School:'}
+              </Text>
+              <View style={{ flex: 1 }}>
+                {schools.map((s) => (
+                  <Text key={s._id || s.name} style={{ color: theme.colors.textPrimary, fontWeight: '500', marginBottom: 2 }}>
+                    {s.name}{s.state ? ` — ${s.state}` : ''}
+                  </Text>
+                ))}
+              </View>
+            </View>
+          );
+        })()}
 
         {profile.teamId?.name && (
           <View style={[styles.detailRow, { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.colors.border }]}>
@@ -325,6 +334,12 @@ export default function UserProfileScreen({ route, navigation }) {
                 <View style={{ backgroundColor: theme.colors.background, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border }}>
                   <Text style={{ color: theme.colors.textPrimary, fontSize: 13 }}>{rep.discussionContext}</Text>
                 </View>
+                {rep.form && (
+                  <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }} onPress={() => setReportToView(rep)}>
+                    <Ionicons name="reader-outline" size={15} color={theme.colors.primary} style={{ marginRight: 4 }} />
+                    <Text style={{ color: theme.colors.primary, fontSize: 13, fontWeight: '600' }}>View Full Report</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           ))
@@ -380,6 +395,12 @@ export default function UserProfileScreen({ route, navigation }) {
         {activeTab === 'Activities' && renderActivities()}
         {activeTab === 'Reports' && renderReports()}
       </ScrollView>
+
+      <VisitReportDetail
+        visible={!!reportToView}
+        report={reportToView}
+        onClose={() => setReportToView(null)}
+      />
     </View>
   );
 }

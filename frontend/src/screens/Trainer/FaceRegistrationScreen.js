@@ -5,11 +5,17 @@ import FaceCapture from '../../components/FaceCapture';
 
 export default function FaceRegistrationScreen({ navigation, route }) {
   const { showAlert } = useAlert();
+  const schoolId = route?.params?.schoolId;
+  const schoolName = route?.params?.schoolName;
 
   const submitRegistration = async (video, location) => {
+    if (!schoolId) {
+      throw new Error('No school selected for registration. Please go back and pick a school.');
+    }
     const formData = new FormData();
     formData.append('lat', String(location.lat));
     formData.append('lng', String(location.lng));
+    formData.append('schoolId', String(schoolId));
     formData.append('video', {
       uri: video.uri,
       name: 'registration.mp4',
@@ -29,7 +35,7 @@ export default function FaceRegistrationScreen({ navigation, route }) {
   return (
     <FaceCapture
       title="Face Registration"
-      subtitle="Register your face for attendance"
+      subtitle={schoolName ? `Register your face at ${schoolName}` : 'Register your face for attendance'}
       actionVerb="Register"
       accentColor="#E23744"
       onSubmit={submitRegistration}

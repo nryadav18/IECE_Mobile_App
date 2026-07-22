@@ -60,7 +60,7 @@ export default function DashboardScreen({ navigation }) {
   };
 
   const getPortalRoute = () => {
-    if (user.role === 'creator_admin') return 'CreatorAdminPortal';
+    if (user.role === 'creator_admin' || user.role === 'ceo') return 'CreatorAdminPortal';
     if (user.role === 'trainer') return 'TrainerPortal';
     if (user.role === 'chairman') return 'ChairmanPortal';
     // Trainee Team Leader shares the Team Leader portal (full parity).

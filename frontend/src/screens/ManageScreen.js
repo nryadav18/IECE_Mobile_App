@@ -9,6 +9,7 @@ import api from '../services/api';
 import ScreenLoader from '../components/ScreenLoader';
 import CustomAlert from '../components/CustomAlert';
 import CustomDropdown from '../components/CustomDropdown';
+import MultiSelectField from '../components/MultiSelectField';
 import TeamMultiSelectModal from '../components/TeamMultiSelectModal';
 import { HEAD_ROLES, LEADER_ROLES, roleLabel } from '../utils/roles';
 
@@ -34,7 +35,7 @@ export default function ManageScreen({ navigation }) {
     name: '',
     email: '',
     password: '',
-    schoolId: '',
+    schoolIds: [],
     teamLeaderId: '',
     teamId: '',
     teamIds: [],
@@ -85,7 +86,9 @@ export default function ManageScreen({ navigation }) {
       name: item.name || '',
       email: item.email || '',
       password: '',
-      schoolId: item.schoolId?._id || item.schoolId || '',
+      schoolIds: Array.isArray(item.schoolIds) && item.schoolIds.length
+        ? item.schoolIds.map(s => s?._id || s)
+        : (item.schoolId ? [item.schoolId?._id || item.schoolId] : []),
       teamLeaderId: item.teamLeaderId?._id || item.teamLeaderId || '',
       teamId: item.teamId?._id || item.teamId || '',
       // teamIds may be populated ({_id,name}) or raw ids — normalize to ids.
@@ -107,7 +110,7 @@ export default function ManageScreen({ navigation }) {
       const payload = {
         name: editForm.name,
         email: editForm.email,
-        schoolId: editForm.schoolId || undefined,
+        schoolIds: editForm.schoolIds,
         teamLeaderId: editForm.teamLeaderId || undefined,
         teamId: editForm.teamId || undefined,
         teamIds: HEAD_ROLES.includes(editingUser?.role) ? editForm.teamIds : undefined,
@@ -179,6 +182,14 @@ export default function ManageScreen({ navigation }) {
   };
 
   const getSchoolName = (user) => {
+    // Prefer the multi-school list; fall back to the legacy single school.
+    if (Array.isArray(user?.schoolIds) && user.schoolIds.length) {
+      const names = user.schoolIds.map((s) =>
+        typeof s === 'object' ? s.name : (schools.find((sc) => sc._id === s)?.name)
+      ).filter(Boolean);
+      if (names.length) return names.join(', ');
+    }
+
     if (!user?.schoolId) return 'None';
 
     if (typeof user.schoolId === 'object') {
@@ -491,7 +502,7 @@ export default function ManageScreen({ navigation }) {
                             <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{item.email}</Text>
                           </View>
                           <View style={[styles.tdContainer, { width: 140 }]}>
-                            <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{item.schoolId?.name || 'None'}</Text>
+                            <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{getSchoolName(item)}</Text>
                           </View>
                           <View style={[styles.tdContainer, { width: 120 }]}>
                             <View style={[styles.badgeContainer, { backgroundColor: '#27AE6010', borderColor: '#27AE6030' }]}>
@@ -650,12 +661,12 @@ export default function ManageScreen({ navigation }) {
 
                 {editingUser?.role === 'trainer' && (
                   <>
-                    <CustomDropdown
-                      label="Assign School"
+                    <MultiSelectField
+                      label="Assign School(s)"
                       data={schools}
-                      selectedValue={editForm.schoolId}
-                      onSelect={(item) => setEditForm({ ...editForm, schoolId: item._id })}
-                      placeholder="Select a school"
+                      selectedIds={editForm.schoolIds}
+                      onChange={(ids) => setEditForm({ ...editForm, schoolIds: ids })}
+                      placeholder="Select one or more schools"
                     />
                     <View style={{ height: 12 }} />
                     <CustomDropdown
@@ -678,12 +689,12 @@ export default function ManageScreen({ navigation }) {
 
                 {LEADER_ROLES.includes(editingUser?.role) && (
                   <>
-                    <CustomDropdown
-                      label="Assign School"
+                    <MultiSelectField
+                      label="Assign School(s)"
                       data={schools}
-                      selectedValue={editForm.schoolId}
-                      onSelect={(item) => setEditForm({ ...editForm, schoolId: item._id })}
-                      placeholder="Select a school"
+                      selectedIds={editForm.schoolIds}
+                      onChange={(ids) => setEditForm({ ...editForm, schoolIds: ids })}
+                      placeholder="Select one or more schools"
                     />
                     <View style={{ height: 12 }} />
                     <CustomDropdown
@@ -698,12 +709,12 @@ export default function ManageScreen({ navigation }) {
 
                 {HEAD_ROLES.includes(editingUser?.role) && (
                   <>
-                    <CustomDropdown
-                      label="Assign School"
+                    <MultiSelectField
+                      label="Assign School(s)"
                       data={schools}
-                      selectedValue={editForm.schoolId}
-                      onSelect={(item) => setEditForm({ ...editForm, schoolId: item._id })}
-                      placeholder="Select a school"
+                      selectedIds={editForm.schoolIds}
+                      onChange={(ids) => setEditForm({ ...editForm, schoolIds: ids })}
+                      placeholder="Select one or more schools"
                     />
                     <Text style={[styles.inputLabel, { color: theme.colors.textSecondary, marginTop: 12 }]}>Assign Team(s)</Text>
                     <TouchableOpacity

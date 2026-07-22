@@ -11,6 +11,14 @@ const REPORT_FIELDS = [
   'discussionContext',
 ];
 
+// Derive the legacy summary fields from the full form so existing list/detail
+// views (chairman feed, cards) keep rendering meaningful data.
+const deriveLegacyFields = (form = {}) => ({
+  dateOfInspection: form.dateOfVisit || Date.now(),
+  personMet: form.schoolAuthority || form.trainersName || 'N/A',
+  discussionContext: form.authorityFeedback || form.issuesAcademics || 'See full visit report',
+});
+
 const notifyChairmanForApproval = async (report, senderId) => {
   const School = require('../models/School');
   const school = await School.findById(report.schoolId);
@@ -39,12 +47,13 @@ exports.getReports = async (req, res) => {
       // A (trainee) team leader sees the reports they authored.
       query.teamLeaderId = req.user.id;
     } else if (HEAD_ROLES.includes(req.user.role)) {
-      // A head sees reports authored by the leaders in the teams they oversee.
-      const leaderIds = await User.find({
-        teamId: { $in: req.user.teamIds || [] },
-        role: { $in: LEADER_ROLES }
-      }).distinct('_id');
-      query.teamLeaderId = { $in: leaderIds };
+      // A head sees the reports they authored PLUS any report about a member of
+      // the teams they oversee (so they see what their leaders logged too).
+      const memberIds = await User.find({ teamId: { $in: req.user.teamIds || [] } }).distinct('_id');
+      query.$or = [
+        { teamLeaderId: req.user.id },
+        { trainerId: { $in: memberIds } },
+      ];
     } else if (req.user.role === 'creator_admin') {
       // Admin sees all reports, so no status filter is applied here
     }
@@ -67,10 +76,20 @@ exports.getReports = async (req, res) => {
 
 exports.createReport = async (req, res) => {
   try {
-    req.body.teamLeaderId = req.user.id;
-    req.body.status = 'pending'; // Default status
-    
-    const report = await VisitReport.create(req.body);
+    const { trainerId, schoolId, form = {} } = req.body;
+    if (!trainerId || !schoolId) {
+      return res.status(400).json({ success: false, error: 'A target person and school are required' });
+    }
+
+    const legacy = deriveLegacyFields(form);
+    const report = await VisitReport.create({
+      teamLeaderId: req.user.id,
+      trainerId,
+      schoolId,
+      form,
+      ...legacy,
+      status: 'pending',
+    });
 
     // Send notification to the chairman of that school
     await notifyChairmanForApproval(report, req.user.id);
@@ -83,14 +102,22 @@ exports.createReport = async (req, res) => {
 
 exports.updateReportStatus = async (req, res) => {
   try {
-    const { status, rejectionRemark } = req.body;
+    const { status, rejectionRemark, feedback } = req.body;
     if (!['approved', 'rejected'].includes(status)) {
       return res.status(400).json({ success: false, error: 'Invalid status' });
     }
 
+    // The reviewing authority's feedback/comment is mandatory for either action.
+    if (!feedback || !feedback.trim()) {
+      return res.status(400).json({ success: false, error: 'Feedback on the report is required' });
+    }
+    if (status === 'rejected' && (!rejectionRemark || !rejectionRemark.trim())) {
+      return res.status(400).json({ success: false, error: 'A reason for rejection is required' });
+    }
+
     const report = await VisitReport.findByIdAndUpdate(
       req.params.id,
-      { status, rejectionRemark },
+      { status, rejectionRemark, chairmanFeedback: feedback.trim() },
       { returnDocument: 'after', runValidators: true }
     );
 
@@ -150,6 +177,16 @@ exports.updateReport = async (req, res) => {
         report[field] = req.body[field];
       }
     });
+
+    // Full-form edit: replace the form and re-derive the legacy summary fields.
+    if (req.body.form !== undefined) {
+      report.form = req.body.form;
+      report.markModified('form');
+      const legacy = deriveLegacyFields(req.body.form);
+      report.dateOfInspection = legacy.dateOfInspection;
+      report.personMet = legacy.personMet;
+      report.discussionContext = legacy.discussionContext;
+    }
 
     if (req.body.status !== undefined && ['pending', 'approved', 'rejected'].includes(req.body.status)) {
       report.status = req.body.status;

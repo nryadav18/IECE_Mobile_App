@@ -20,10 +20,13 @@ import CustomDropdown from '../components/CustomDropdown';
 import EditActivityModal from '../components/EditActivityModal';
 import ScreenLoader from '../components/ScreenLoader';
 import EditReportModal from '../components/EditReportModal';
+import VisitReportDetail from '../components/VisitReportDetail';
+import VisitReportForm from '../components/VisitReportForm';
 import IndiaMap from '../components/IndiaMap';
 import SidebarMenu from '../components/SidebarMenu';
 import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
 import TeamMultiSelectModal from '../components/TeamMultiSelectModal';
+import MultiSelectField from '../components/MultiSelectField';
 import { HEAD_ROLES, roleLabel } from '../utils/roles';
 
 // Head roles as dropdown options ({ _id, name }) for CustomDropdown.
@@ -38,7 +41,7 @@ const TlSchema = Yup.object().shape({
   name: Yup.string().required('Required'),
   email: Yup.string().email('Invalid email').required('Required'),
   password: Yup.string().min(6, 'Min 6 chars').required('Required'),
-  schoolId: Yup.string().required('Required'),
+  schoolIds: Yup.array().of(Yup.string()).min(1, 'Assign at least one school'),
   teamId: Yup.string().required('Required'),
 });
 
@@ -47,7 +50,7 @@ const HeadSchema = Yup.object().shape({
   email: Yup.string().email('Invalid email').required('Required'),
   password: Yup.string().min(6, 'Min 6 chars').required('Required'),
   role: Yup.string().oneOf(HEAD_ROLES, 'Select a head role').required('Required'),
-  schoolId: Yup.string().required('Required'),
+  schoolIds: Yup.array().of(Yup.string()).min(1, 'Assign at least one school'),
   teamIds: Yup.array().of(Yup.string()).min(1, 'Assign at least one team'),
 });
 
@@ -116,7 +119,7 @@ const TrainerSchema = Yup.object().shape({
   name: Yup.string().required('Required'),
   email: Yup.string().email('Invalid email').required('Required'),
   password: Yup.string().min(6, 'Min 6 chars').required('Required'),
-  schoolId: Yup.string().required('Required'),
+  schoolIds: Yup.array().of(Yup.string()).min(1, 'Assign at least one school'),
   teamLeaderId: Yup.string().required('Required'),
   teamId: Yup.string().required('Required'),
 });
@@ -130,15 +133,23 @@ const TAB_ITEMS = [
   { key: 'Head', label: 'Create Head', icon: 'ribbon-outline' },
   { key: 'Teams', label: 'Teams', icon: 'people-circle-outline' },
   { key: 'Reports', label: 'Reports', icon: 'document-text-outline' },
+  { key: 'LogVisit', label: 'Log Visit', icon: 'clipboard-outline' },
   { key: 'Holidays', label: 'School Holidays', icon: 'sunny-outline' },
   { key: 'Banners', label: 'Banners', icon: 'images-outline' },
   { key: 'ManageEvents', label: 'Activities', icon: 'calendar-outline' },
 ];
 
+// The CEO is a read-only super-viewer: no create/manage, no holidays. They keep
+// Monitoring, Profiles, Reports and can log their own visit reports.
+const CEO_TABS = ['Monitoring', 'Profiles', 'Reports', 'LogVisit'];
+
 export default function CreatorAdminPortal({ navigation, route }) {
   const { user, logout } = useContext(AuthContext);
   const { theme } = useContext(ThemeContext);
   const insets = useSafeAreaInsets();
+
+  const isCEO = user?.role === 'ceo';
+  const visibleTabs = isCEO ? TAB_ITEMS.filter(t => CEO_TABS.includes(t.key)) : TAB_ITEMS;
 
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Monitoring');
 
@@ -161,6 +172,12 @@ export default function CreatorAdminPortal({ navigation, route }) {
   const [newTeamName, setNewTeamName] = useState('');
   const [creatingTeam, setCreatingTeam] = useState(false);
   const [teamModalVisible, setTeamModalVisible] = useState(false);
+  const [reportToView, setReportToView] = useState(null);
+  const [reportFormVisible, setReportFormVisible] = useState(false);
+  // Everyone a visit report can be logged on (all field staff).
+  const reportTargets = [...teamLeaders, ...trainers, ...heads];
+  const myId = user?._id || user?.id;
+  const myReports = reports.filter(r => (r.teamLeaderId?._id || r.teamLeaderId) === myId);
   const [allActivities, setAllActivities] = useState([]);
   const [reports, setReports] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
@@ -626,9 +643,17 @@ export default function CreatorAdminPortal({ navigation, route }) {
                        Trainer: {report.trainerId?.name || 'N/A'}
                      </Text>
                      <Text style={{ color: theme.colors.textSecondary, marginBottom: 4 }}>
-                       Team Leader: {report.teamLeaderId?.name || 'N/A'}
+                       Reported by: {report.teamLeaderId?.name || 'N/A'}
                      </Text>
-                     
+
+                     <TouchableOpacity
+                       style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}
+                       onPress={() => setReportToView(report)}
+                     >
+                       <Ionicons name="reader-outline" size={16} color={theme.colors.primary} style={{ marginRight: 4 }} />
+                       <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>View Full Report</Text>
+                     </TouchableOpacity>
+
                      {!isPending && (
                        <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
                          <Text style={{ color: theme.colors.textSecondary, marginBottom: 8 }}>
@@ -642,6 +667,53 @@ export default function CreatorAdminPortal({ navigation, route }) {
                    </View>
                  );
                })
+            )}
+          </View>
+
+          {/* Log Visit Tab — admin & CEO can log a physical visit report on any staff */}
+          <View style={{ display: activeTab === 'LogVisit' ? 'flex' : 'none' }}>
+            <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, marginBottom: 16 }]}>
+              <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Log Visit Report</Text>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 13, lineHeight: 20, marginBottom: 14 }}>
+                Visit a school and complete the full IECE EGM Visit report on any team leader, trainee team leader,
+                trainer or head. Every field is mandatory.
+              </Text>
+              {reportTargets.length === 0 ? (
+                <Text style={{ color: theme.colors.textSecondary, fontStyle: 'italic' }}>No staff available yet.</Text>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.submitBtn, { backgroundColor: theme.colors.primary, marginTop: 0 }]}
+                  onPress={() => setReportFormVisible(true)}
+                >
+                  <Text style={[styles.submitBtnText, { color: '#FFF' }]}>Start Visit Report</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginBottom: 12 }]}>My Reports</Text>
+            {myReports.length === 0 ? (
+              <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>You haven't logged any visit reports yet.</Text>
+            ) : (
+              myReports.map(report => (
+                <TouchableOpacity
+                  key={report._id}
+                  style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12, flexDirection: 'row', alignItems: 'center' }]}
+                  onPress={() => setReportToView(report)}
+                  activeOpacity={0.85}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>{report.trainerId?.name || 'Member'}</Text>
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>{report.schoolId?.name || ''}</Text>
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                      {report.dateOfInspection ? new Date(report.dateOfInspection).toLocaleDateString() : ''}
+                    </Text>
+                  </View>
+                  <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: (report.status === 'approved' ? '#4CAF50' : report.status === 'rejected' ? '#F44336' : '#F59E0B') + '20', marginRight: 8 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', textTransform: 'capitalize', color: report.status === 'approved' ? '#4CAF50' : report.status === 'rejected' ? '#F44336' : '#F59E0B' }}>{report.status}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+              ))
             )}
           </View>
 
@@ -714,7 +786,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
                      <View style={{ flex: 1 }}>
                        <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{trainer.name}</Text>
                        <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{trainer.email}</Text>
-                       <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>School: {trainer.schoolId?.name || 'N/A'}</Text>
+                       <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>School: {trainer.schoolIds?.length ? trainer.schoolIds.map(s => s.name).join(', ') : (trainer.schoolId?.name || 'N/A')}</Text>
                      </View>
                      <TouchableOpacity 
                        style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
@@ -734,18 +806,18 @@ export default function CreatorAdminPortal({ navigation, route }) {
               <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                 <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Trainer</Text>
                 <Formik
-                  initialValues={{ name: '', email: '', password: '', schoolId: '', teamLeaderId: '', teamId: '' }}
+                  initialValues={{ name: '', email: '', password: '', schoolIds: [], teamLeaderId: '', teamId: '' }}
                   validationSchema={TrainerSchema}
                   onSubmit={(v, { resetForm }) => submitForm('/admin/trainer', v, resetForm)}
                 >
-                  {({ handleChange, handleSubmit, values, errors, submitCount }) => (
+                  {({ handleChange, handleSubmit, values, errors, submitCount, setFieldValue }) => (
                     <View>
                       <TextInput style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, color: theme.colors.textPrimary }]} placeholder="Name" placeholderTextColor={theme.colors.placeholder} onChangeText={handleChange('name')} value={values.name} />
                       {submitCount > 0 && errors.name && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.name}</Text>}
-                      
+
                       <TextInput style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, color: theme.colors.textPrimary }]} placeholder="Email" placeholderTextColor={theme.colors.placeholder} onChangeText={handleChange('email')} value={values.email} autoCapitalize="none" keyboardType="email-address" />
                       {submitCount > 0 && errors.email && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.email}</Text>}
-                      
+
                       <View style={[styles.passwordInputWrapper, { borderColor: theme.colors.border, backgroundColor: theme.colors.background }]}>
                         <TextInput style={[styles.passwordInput, { color: theme.colors.textPrimary }]} placeholder="Password" placeholderTextColor={theme.colors.placeholder} onChangeText={handleChange('password')} value={values.password} secureTextEntry={secureTextEntry} />
                         <TouchableOpacity onPress={() => setSecureTextEntry(!secureTextEntry)} style={styles.eyeIconContainer}>
@@ -753,15 +825,15 @@ export default function CreatorAdminPortal({ navigation, route }) {
                         </TouchableOpacity>
                       </View>
                       {submitCount > 0 && errors.password && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.password}</Text>}
-                      
-                      <CustomDropdown
-                        label="Assign School"
+
+                      <MultiSelectField
+                        label="Assign School(s)"
                         data={schools}
-                        selectedValue={values.schoolId}
-                        onSelect={(item) => handleChange('schoolId')(item._id)}
-                        placeholder="Select a school"
+                        selectedIds={values.schoolIds}
+                        onChange={(ids) => setFieldValue('schoolIds', ids)}
+                        placeholder="Select one or more schools"
                       />
-                      {submitCount > 0 && errors.schoolId && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.schoolId}</Text>}
+                      {submitCount > 0 && errors.schoolIds && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.schoolIds}</Text>}
 
                       <CustomDropdown
                         label="Assign Team Leader"
@@ -891,7 +963,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
               <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                 <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Team Leader</Text>
                 <Formik
-                  initialValues={{ name: '', email: '', password: '', schoolId: '', teamId: '', role: 'team_leader' }}
+                  initialValues={{ name: '', email: '', password: '', schoolIds: [], teamId: '', role: 'team_leader' }}
                   validationSchema={TlSchema}
                   onSubmit={(v, { resetForm }) => submitForm('/admin/team-leader', v, resetForm)}
                 >
@@ -936,14 +1008,14 @@ export default function CreatorAdminPortal({ navigation, route }) {
                       </View>
                       {submitCount > 0 && errors.password && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.password}</Text>}
 
-                      <CustomDropdown
-                        label="Assign School"
+                      <MultiSelectField
+                        label="Assign School(s)"
                         data={schools}
-                        selectedValue={values.schoolId}
-                        onSelect={(item) => handleChange('schoolId')(item._id)}
-                        placeholder="Select a school"
+                        selectedIds={values.schoolIds}
+                        onChange={(ids) => setFieldValue('schoolIds', ids)}
+                        placeholder="Select one or more schools"
                       />
-                      {submitCount > 0 && errors.schoolId && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.schoolId}</Text>}
+                      {submitCount > 0 && errors.schoolIds && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.schoolIds}</Text>}
 
                       <CustomDropdown
                         label="Assign Team"
@@ -972,7 +1044,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
               <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                 <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Head</Text>
                 <Formik
-                  initialValues={{ name: '', email: '', password: '', role: '', schoolId: '', teamIds: [] }}
+                  initialValues={{ name: '', email: '', password: '', role: '', schoolIds: [], teamIds: [] }}
                   validationSchema={HeadSchema}
                   onSubmit={(v, { resetForm }) => submitForm('/admin/head', v, resetForm)}
                 >
@@ -1001,14 +1073,14 @@ export default function CreatorAdminPortal({ navigation, route }) {
                       </View>
                       {submitCount > 0 && errors.password && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.password}</Text>}
 
-                      <CustomDropdown
-                        label="Assign School"
+                      <MultiSelectField
+                        label="Assign School(s)"
                         data={schools}
-                        selectedValue={values.schoolId}
-                        onSelect={(item) => handleChange('schoolId')(item._id)}
-                        placeholder="Select a school"
+                        selectedIds={values.schoolIds}
+                        onChange={(ids) => setFieldValue('schoolIds', ids)}
+                        placeholder="Select one or more schools"
                       />
-                      {submitCount > 0 && errors.schoolId && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.schoolId}</Text>}
+                      {submitCount > 0 && errors.schoolIds && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.schoolIds}</Text>}
 
                       {/* Assign Team (multi-select) */}
                       <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Assign Team(s)</Text>
@@ -1244,14 +1316,17 @@ export default function CreatorAdminPortal({ navigation, route }) {
       {/* Sidebar Drawer */}
       <SidebarMenu
         ref={sidebarRef}
-        title="IECE Admin"
-        subtitle="Management Portal"
-        tabs={TAB_ITEMS}
+        title={isCEO ? 'IECE CEO' : 'IECE Admin'}
+        subtitle={isCEO ? 'Executive Portal' : 'Management Portal'}
+        tabs={visibleTabs}
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         actions={[
-          { label: 'Pending Registrations', icon: 'scan-outline', onPress: () => navigation.navigate('PendingRegistrations') },
-          { label: 'IECE Staff', icon: 'people-outline', onPress: () => navigation.navigate('ManageScreen') },
+          // Face approvals + staff management are admin-only. CEO is read-only.
+          ...(isCEO ? [] : [
+            { label: 'Face Approvals', icon: 'scan-outline', onPress: () => navigation.navigate('PendingRegistrations') },
+            { label: 'IECE Staff', icon: 'people-outline', onPress: () => navigation.navigate('ManageScreen') },
+          ]),
           { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
         ]}
       />
@@ -1268,13 +1343,28 @@ export default function CreatorAdminPortal({ navigation, route }) {
         onError={(msg) => showAlert('Error', msg, 'error')}
       />
 
-      <CustomAlert 
+      <CustomAlert
         visible={alertConfig.visible}
         title={alertConfig.title}
         message={alertConfig.message}
         type={alertConfig.type}
         buttons={alertConfig.buttons}
         onDismiss={() => setAlertConfig({ ...alertConfig, visible: false })}
+      />
+
+      <VisitReportDetail
+        visible={!!reportToView}
+        report={reportToView}
+        onClose={() => setReportToView(null)}
+      />
+
+      <VisitReportForm
+        visible={reportFormVisible}
+        targets={reportTargets}
+        author={user}
+        onClose={() => setReportFormVisible(false)}
+        onSubmitted={(message) => { showAlert('Success', message, 'success'); fetchDropdownData(); }}
+        onError={(message) => showAlert('Error', message, 'error')}
       />
       </View>
     </KeyboardAvoidingView>

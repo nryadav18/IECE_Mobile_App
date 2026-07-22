@@ -5,14 +5,20 @@ import FaceCapture from '../../components/FaceCapture';
 
 export default function AttendanceScreen({ navigation, route }) {
   const intent = route.params?.intent || 'login';
+  const schoolId = route.params?.schoolId;
+  const schoolName = route.params?.schoolName;
   const isLogout = intent === 'logout';
   const { showAlert } = useAlert();
 
   const submitAttendance = async (video, location) => {
+    if (!schoolId) {
+      throw new Error('No school selected. Please go back and choose a school.');
+    }
     const formData = new FormData();
     formData.append('lat', String(location.lat));
     formData.append('lng', String(location.lng));
     formData.append('intent', intent);
+    formData.append('schoolId', String(schoolId));
     formData.append('video', {
       uri: video.uri,
       name: 'attendance.mp4',
@@ -32,7 +38,11 @@ export default function AttendanceScreen({ navigation, route }) {
   return (
     <FaceCapture
       title={isLogout ? 'Face Check Out' : 'Face Check In'}
-      subtitle={isLogout ? 'Verify your face to check out' : 'Verify your face to check in'}
+      subtitle={
+        schoolName
+          ? `${isLogout ? 'Check out' : 'Check in'} at ${schoolName}`
+          : (isLogout ? 'Verify your face to check out' : 'Verify your face to check in')
+      }
       actionVerb={isLogout ? 'Check Out' : 'Check In'}
       accentColor={isLogout ? '#F44336' : '#4CAF50'}
       onSubmit={submitAttendance}

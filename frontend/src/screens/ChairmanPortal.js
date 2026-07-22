@@ -11,6 +11,7 @@ import Avatar from '../components/Avatar';
 import CustomAlert from '../components/CustomAlert';
 import SidebarMenu from '../components/SidebarMenu';
 import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
+import VisitReportDetail from '../components/VisitReportDetail';
 
 const TAB_ITEMS = [
   { key: 'Overview', label: 'Overview', icon: 'home-outline' },
@@ -37,6 +38,7 @@ export default function ChairmanPortal({ navigation, route }) {
   const [rejectingItem, setRejectingItem] = useState(null); // { id, type: 'activity' | 'report' }
   const [rejectionRemark, setRejectionRemark] = useState('');
   const [editingReport, setEditingReport] = useState(null); // report object
+  const [reportToView, setReportToView] = useState(null); // full read-only report
   const [editPersonMet, setEditPersonMet] = useState('');
   const [editDiscussionContext, setEditDiscussionContext] = useState('');
   const [completedActivities, setCompletedActivities] = useState([]);
@@ -119,6 +121,34 @@ export default function ChairmanPortal({ navigation, route }) {
   const handleRejectClick = (id, type) => {
     setRejectingItem({ id, type });
     setRejectionRemark('');
+  };
+
+  // Approve / reject a visit report from the full-report screen. Feedback is
+  // mandatory; rejection also carries a reason.
+  const approveReportWithFeedback = async (feedback) => {
+    const id = reportToView?._id;
+    if (!id) return;
+    try {
+      await api.put(`/reports/${id}/status`, { status: 'approved', feedback });
+      setVisitReports(prev => prev.filter(r => r._id !== id));
+      setReportToView(null);
+      showAlert('Success', 'Report approved successfully.', 'success');
+    } catch (error) {
+      showAlert('Error', error.response?.data?.error || 'Failed to approve report.', 'error');
+    }
+  };
+
+  const rejectReportWithFeedback = async (feedback, reason) => {
+    const id = reportToView?._id;
+    if (!id) return;
+    try {
+      await api.put(`/reports/${id}/status`, { status: 'rejected', feedback, rejectionRemark: reason });
+      setVisitReports(prev => prev.filter(r => r._id !== id));
+      setReportToView(null);
+      showAlert('Success', 'Report rejected.', 'success');
+    } catch (error) {
+      showAlert('Error', error.response?.data?.error || 'Failed to reject report.', 'error');
+    }
   };
 
   const handleApproveReportClick = (item) => {
@@ -427,8 +457,8 @@ export default function ChairmanPortal({ navigation, route }) {
             transition={{ type: 'timing', duration: 300, delay: index * 50 }}
             style={{ marginBottom: 12 }}
           >
-            <Swipeable 
-              renderRightActions={(progress, dragX) => item.personMet ? renderRightActionsReport(progress, dragX, item) : null}
+            <Swipeable
+              renderRightActions={() => null}
               overshootRight={false}
             >
               <View style={[styles.reportItem, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
@@ -469,19 +499,30 @@ export default function ChairmanPortal({ navigation, route }) {
                   )}
                 </View>
                 
-                <View style={[styles.swipeHint, { backgroundColor: theme.colors.primary + '15' }]}>
-                  <MotiView
-                    from={{ translateX: 12, opacity: 0.1 }}
-                    animate={{ translateX: -12, opacity: 1 }}
-                    transition={{ type: 'timing', duration: 1200, loop: true }}
-                    style={{ flexDirection: 'row', alignItems: 'center' }}
+                {item.personMet ? (
+                  <TouchableOpacity
+                    style={{ marginTop: 14, backgroundColor: theme.colors.primary, padding: 14, borderRadius: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}
+                    onPress={() => setReportToView(item)}
+                    activeOpacity={0.85}
                   >
-                    <Ionicons name="chevron-back-outline" size={18} color={theme.colors.primary} style={{ marginRight: -6 }} />
-                    <Ionicons name="chevron-back-outline" size={18} color={theme.colors.primary} style={{ marginRight: -6, opacity: 0.7 }} />
-                    <Ionicons name="chevron-back-outline" size={18} color={theme.colors.primary} style={{ marginRight: 6, opacity: 0.4 }} />
-                  </MotiView>
-                  <Text style={[styles.swipeHintText, { color: theme.colors.primary }]}>SWIPE LEFT TO APPROVE / REJECT</Text>
-                </View>
+                    <Ionicons name="reader-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>View Full Report</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={[styles.swipeHint, { backgroundColor: theme.colors.primary + '15' }]}>
+                    <MotiView
+                      from={{ translateX: 12, opacity: 0.1 }}
+                      animate={{ translateX: -12, opacity: 1 }}
+                      transition={{ type: 'timing', duration: 1200, loop: true }}
+                      style={{ flexDirection: 'row', alignItems: 'center' }}
+                    >
+                      <Ionicons name="chevron-back-outline" size={18} color={theme.colors.primary} style={{ marginRight: -6 }} />
+                      <Ionicons name="chevron-back-outline" size={18} color={theme.colors.primary} style={{ marginRight: -6, opacity: 0.7 }} />
+                      <Ionicons name="chevron-back-outline" size={18} color={theme.colors.primary} style={{ marginRight: 6, opacity: 0.4 }} />
+                    </MotiView>
+                    <Text style={[styles.swipeHintText, { color: theme.colors.primary }]}>SWIPE LEFT TO APPROVE / REJECT</Text>
+                  </View>
+                )}
               </View>
             </Swipeable>
           </MotiView>
@@ -673,7 +714,6 @@ export default function ChairmanPortal({ navigation, route }) {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         actions={[
-          { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
           { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
           { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
         ]}
@@ -686,6 +726,15 @@ export default function ChairmanPortal({ navigation, route }) {
         type={alertConfig.type}
         buttons={alertConfig.buttons}
         onDismiss={() => setAlertConfig({ ...alertConfig, visible: false })}
+      />
+
+      <VisitReportDetail
+        visible={!!reportToView}
+        report={reportToView}
+        reviewMode
+        onApprove={approveReportWithFeedback}
+        onReject={rejectReportWithFeedback}
+        onClose={() => setReportToView(null)}
       />
     </View>
   );

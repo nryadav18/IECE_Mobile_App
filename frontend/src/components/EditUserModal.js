@@ -6,6 +6,8 @@ import { ThemeContext } from '../context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import CustomDropdown from './CustomDropdown';
+import MultiSelectField from './MultiSelectField';
+import { LEADER_ROLES, HEAD_ROLES } from '../utils/roles';
 
 const INDIAN_STATES = [
   { _id: 'Andhra Pradesh', name: 'Andhra Pradesh' },
@@ -57,11 +59,18 @@ export default function EditUserModal({ visible, user, role, schools, teamLeader
 
   useEffect(() => {
     if (user && visible) {
+      // Seed the multi-school selection from schoolIds, falling back to the
+      // legacy single schoolId for un-migrated users.
+      const idOf = (s) => (typeof s === 'string' ? s : s?._id);
+      const schoolIds = Array.isArray(user.schoolIds) && user.schoolIds.length
+        ? user.schoolIds.map(idOf).filter(Boolean)
+        : (user.schoolId ? [idOf(user.schoolId)].filter(Boolean) : []);
+
       setFormData({
         name: user.name || '',
         email: user.email || '',
         password: '', // Leave blank unless they want to change it
-        schoolId: user.schoolId ? user.schoolId._id : '',
+        schoolIds,
         teamLeaderId: user.teamLeaderId ? user.teamLeaderId._id : '',
         schoolName: user.schoolId ? user.schoolId.name : '',
         associationYear: user.schoolId ? user.schoolId.associationYear : '',
@@ -84,8 +93,10 @@ export default function EditUserModal({ visible, user, role, schools, teamLeader
       }
 
       if (role === 'trainer') {
-        payload.schoolId = formData.schoolId;
+        payload.schoolIds = formData.schoolIds;
         payload.teamLeaderId = formData.teamLeaderId;
+      } else if (LEADER_ROLES.includes(role) || HEAD_ROLES.includes(role)) {
+        payload.schoolIds = formData.schoolIds;
       } else if (role === 'chairman') {
         payload.schoolName = formData.schoolName;
         payload.associationYear = formData.associationYear;
@@ -191,12 +202,12 @@ export default function EditUserModal({ visible, user, role, schools, teamLeader
 
             {role === 'trainer' && (
               <>
-                <CustomDropdown
-                  label="Assign School (Optional)"
+                <MultiSelectField
+                  label="Assign School(s)"
                   data={schools}
-                  selectedValue={formData.schoolId}
-                  onSelect={(item) => setFormData({ ...formData, schoolId: formData.schoolId === item._id ? '' : item._id })}
-                  placeholder="Select a school"
+                  selectedIds={formData.schoolIds || []}
+                  onChange={(ids) => setFormData({ ...formData, schoolIds: ids })}
+                  placeholder="Select one or more schools"
                 />
 
                 <CustomDropdown
@@ -207,6 +218,16 @@ export default function EditUserModal({ visible, user, role, schools, teamLeader
                   placeholder="Select a team leader"
                 />
               </>
+            )}
+
+            {(LEADER_ROLES.includes(role) || HEAD_ROLES.includes(role)) && (
+              <MultiSelectField
+                label="Assign School(s)"
+                data={schools}
+                selectedIds={formData.schoolIds || []}
+                onChange={(ids) => setFormData({ ...formData, schoolIds: ids })}
+                placeholder="Select one or more schools"
+              />
             )}
           </ScrollView>
 

@@ -4,6 +4,15 @@ const Team = require('../models/Team');
 const { HEAD_ROLES, LEADER_ROLES, TEAM_MEMBER_ROLES } = require('../utils/roles');
 const { notifyUser, notifyUserById } = require('../utils/pushNotification');
 
+// Normalize the schools sent from the client into a de-duplicated array.
+// Accepts the new `schoolIds` array or falls back to a single legacy `schoolId`.
+function normalizeSchoolIds(body) {
+  const list = Array.isArray(body.schoolIds)
+    ? body.schoolIds
+    : (body.schoolId ? [body.schoolId] : []);
+  return [...new Set(list.filter(Boolean).map(String))];
+}
+
 // @desc    Get all Team Leaders (and Trainee Team Leaders — full parity)
 // @route   GET /api/admin/team-leaders
 // @access  Private/CreatorAdmin
@@ -12,6 +21,7 @@ exports.getTeamLeaders = async (req, res) => {
     const teamLeaders = await User.find({ role: { $in: LEADER_ROLES } })
       .select('-password')
       .populate('schoolId', 'name state associationYear classCoverage')
+      .populate('schoolIds', 'name state associationYear classCoverage')
       .populate('teamId', 'name')
       .sort('-createdAt');
     res.status(200).json({ success: true, data: teamLeaders });
@@ -93,7 +103,8 @@ exports.deleteTeam = async (req, res) => {
 // @access  Private/CreatorAdmin
 exports.createHead = async (req, res) => {
   try {
-    const { name, email, password, role, schoolId, teamIds } = req.body;
+    const { name, email, password, role, teamIds } = req.body;
+    const schoolIds = normalizeSchoolIds(req.body);
 
     if (!HEAD_ROLES.includes(role)) {
       return res.status(400).json({ success: false, error: 'Invalid head role' });
@@ -109,7 +120,8 @@ exports.createHead = async (req, res) => {
       email,
       password,
       role,
-      schoolId: schoolId || null,
+      schoolIds,
+      schoolId: schoolIds[0] || null,
       teamIds: Array.isArray(teamIds) ? teamIds : []
     });
 
@@ -136,7 +148,8 @@ exports.getSchools = async (req, res) => {
 // @access  Private/CreatorAdmin
 exports.createTeamLeader = async (req, res) => {
   try {
-    const { name, email, password, schoolId, teamId } = req.body;
+    const { name, email, password, teamId } = req.body;
+    const schoolIds = normalizeSchoolIds(req.body);
     // Defaults to team_leader; accepts trainee_team_leader for the same form.
     const role = LEADER_ROLES.includes(req.body.role) ? req.body.role : 'team_leader';
 
@@ -150,7 +163,8 @@ exports.createTeamLeader = async (req, res) => {
       email,
       password,
       role,
-      schoolId,
+      schoolIds,
+      schoolId: schoolIds[0] || null,
       teamId: teamId || null
     });
 
@@ -208,7 +222,8 @@ exports.createChairmanAndSchool = async (req, res) => {
 // @access  Private/CreatorAdmin
 exports.createTrainer = async (req, res) => {
   try {
-    const { name, email, password, schoolId, teamLeaderId, teamId } = req.body;
+    const { name, email, password, teamLeaderId, teamId } = req.body;
+    const schoolIds = normalizeSchoolIds(req.body);
 
     let user = await User.findOne({ email });
     if (user) {
@@ -220,7 +235,8 @@ exports.createTrainer = async (req, res) => {
       email,
       password,
       role: 'trainer',
-      schoolId,
+      schoolIds,
+      schoolId: schoolIds[0] || null,
       teamLeaderId,
       teamId: teamId || null
     });
@@ -266,6 +282,7 @@ exports.getUsersPaginated = async (req, res) => {
     const users = await User.find(query)
       .select('-password')
       .populate('schoolId')
+      .populate('schoolIds')
       .populate('teamLeaderId', 'name email')
       .populate('teamId', 'name')
       .populate('teamIds', 'name')
@@ -306,7 +323,7 @@ exports.updateUser = async (req, res) => {
 
     const {
       name, email, password, role,
-      schoolId, teamLeaderId, teamId, teamIds,
+      teamLeaderId, teamId, teamIds,
       schoolName, associationYear, classCoverage
     } = req.body;
 
@@ -321,16 +338,35 @@ exports.updateUser = async (req, res) => {
       user.role = role;
     }
 
+    // Re-assign schools (multi-school aware) whenever the client sends either
+    // the new schoolIds array or a legacy schoolId. Pruning face registrations
+    // for any school the person is no longer assigned to prevents them keeping
+    // check-in access to a school that was taken away.
+    const schoolsProvided =
+      req.body.schoolIds !== undefined || req.body.schoolId !== undefined;
+    const applySchools = () => {
+      if (!schoolsProvided) return;
+      const newIds = normalizeSchoolIds(req.body);
+      user.schoolIds = newIds;
+      user.schoolId = newIds[0] || null;
+      if (Array.isArray(user.faceRegistrations) && user.faceRegistrations.length) {
+        const allowed = new Set(newIds);
+        user.faceRegistrations = user.faceRegistrations.filter(
+          (fr) => allowed.has(String(fr.schoolId))
+        );
+      }
+    };
+
     // Assignment fields, applied by the effective (possibly new) role.
     if (user.role === 'trainer') {
-      if (schoolId !== undefined) user.schoolId = schoolId || null;
+      applySchools();
       if (teamLeaderId !== undefined) user.teamLeaderId = teamLeaderId || null;
       if (teamId !== undefined) user.teamId = teamId || null;
     } else if (LEADER_ROLES.includes(user.role)) {
-      if (schoolId !== undefined) user.schoolId = schoolId || null;
+      applySchools();
       if (teamId !== undefined) user.teamId = teamId || null;
     } else if (HEAD_ROLES.includes(user.role)) {
-      if (schoolId !== undefined) user.schoolId = schoolId || null;
+      applySchools();
       if (Array.isArray(teamIds)) user.teamIds = teamIds;
     }
 
@@ -371,7 +407,21 @@ exports.deleteUser = async (req, res) => {
     if (user.role === 'chairman') {
       const schools = await School.find({ chairmanId: user._id });
       for (const school of schools) {
-        // Unlink trainers and team leaders assigned to this School instead of blocking
+        // Unlink everyone assigned to this School (multi-school aware) instead
+        // of blocking: pull the school from schoolIds, drop its per-school face
+        // registration, and re-sync the legacy primary school.
+        const affected = await User.find({ schoolIds: school._id });
+        for (const member of affected) {
+          member.schoolIds = (member.schoolIds || []).filter(
+            (id) => String(id) !== String(school._id)
+          );
+          member.schoolId = member.schoolIds[0] || null;
+          member.faceRegistrations = (member.faceRegistrations || []).filter(
+            (fr) => String(fr.schoolId) !== String(school._id)
+          );
+          await member.save();
+        }
+        // Safety net for any legacy user that only had the single schoolId set.
         await User.updateMany({ schoolId: school._id }, { $set: { schoolId: null } });
         await School.findByIdAndDelete(school._id);
       }
@@ -403,42 +453,67 @@ exports.deleteUser = async (req, res) => {
 // @access  Private/CreatorAdmin
 exports.getPendingFacialRegistrations = async (req, res) => {
   try {
-    const users = await User.find({ 
-      $or: [
-        { facialRegistrationStatus: 'pending' },
-        { facialRegistrationStatusV2: 'pending' }
-      ]
-    })
-      .select('-password -faceEmbedding')
-      .populate('schoolId', 'name state location');
-      
+    // Return every user that has at least one per-school registration awaiting
+    // approval. The admin approves each (user, school) pair independently.
+    const users = await User.find({ 'faceRegistrations.status': 'pending' })
+      .select('-password -faceEmbedding -faceEmbeddingV2 -faceRegistrations.faceEmbedding')
+      .populate('schoolIds', 'name state')
+      .populate('faceRegistrations.schoolId', 'name state');
+
     res.status(200).json({ success: true, data: users });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 };
 
-// @desc    Approve facial registration
-// @route   PUT /api/admin/approve-face-registration/:id
+// Recompute the coarse legacy aggregate status from the per-school registrations
+// so older reads (and the frontend faceStatus gate) stay meaningful.
+function syncLegacyFaceStatus(user) {
+  const regs = user.faceRegistrations || [];
+  if (regs.some(r => r.status === 'approved')) {
+    user.facialRegistrationStatus = 'approved';
+    user.facialRegistrationStatusV2 = 'approved';
+  } else if (regs.some(r => r.status === 'pending')) {
+    user.facialRegistrationStatus = 'pending';
+    user.facialRegistrationStatusV2 = 'pending';
+  } else {
+    user.facialRegistrationStatus = 'none';
+    user.facialRegistrationStatusV2 = 'none';
+  }
+}
+
+// @desc    Approve a per-school facial registration
+// @route   PUT /api/admin/approve-face-registration/:id/:schoolId
 // @access  Private/CreatorAdmin
 exports.approveFacialRegistration = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const { id, schoolId } = req.params;
+    const user = await User.findById(id);
     if (!user) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    user.facialRegistrationStatus = 'approved';
-    user.facialRegistrationStatusV2 = 'approved';
+    const reg = (user.faceRegistrations || []).find(
+      (fr) => String(fr.schoolId) === String(schoolId)
+    );
+    if (!reg) {
+      return res.status(404).json({ success: false, error: 'No facial registration found for this school' });
+    }
+
+    reg.status = 'approved';
+    syncLegacyFaceStatus(user);
     await user.save();
+
+    const school = await School.findById(schoolId).select('name');
+    const schoolName = school ? school.name : 'the school';
 
     res.status(200).json({ success: true, data: user });
 
-    // Notify the trainer/team-leader that they can now mark attendance.
+    // Notify the person that they can now mark attendance at this school.
     notifyUser(
       user,
       '✅ Facial Registration Approved',
-      'Your facial registration has been approved. You can now mark your attendance.',
+      `Your facial registration for ${schoolName} has been approved. You can now mark attendance there.`,
       { type: 'face_approved' }
     ).catch(err => console.error('Face-approved notification error:', err.message));
   } catch (error) {
@@ -446,31 +521,45 @@ exports.approveFacialRegistration = async (req, res) => {
   }
 };
 
-// @desc    Delete facial registration
-// @route   DELETE /api/admin/face-registration/:id
+// @desc    Delete a per-school facial registration
+// @route   DELETE /api/admin/face-registration/:id/:schoolId
 // @access  Private/CreatorAdmin
 exports.deleteFacialRegistration = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const { id, schoolId } = req.params;
+    const user = await User.findById(id);
     if (!user) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    user.facialRegistrationStatus = 'none';
-    user.facialRegistrationStatusV2 = 'none';
-    user.faceEmbedding = [];
-    user.faceEmbeddingV2 = [];
-    user.registrationLocation = null;
-    user.registrationPhotoUrl = null;
+    const before = (user.faceRegistrations || []).length;
+    user.faceRegistrations = (user.faceRegistrations || []).filter(
+      (fr) => String(fr.schoolId) !== String(schoolId)
+    );
+    if (user.faceRegistrations.length === before) {
+      return res.status(404).json({ success: false, error: 'No facial registration found for this school' });
+    }
+
+    // Clear the legacy fields only once no per-school registrations remain.
+    if (user.faceRegistrations.length === 0) {
+      user.faceEmbedding = [];
+      user.faceEmbeddingV2 = [];
+      user.registrationLocation = null;
+      user.registrationPhotoUrl = null;
+    }
+    syncLegacyFaceStatus(user);
     await user.save();
+
+    const school = await School.findById(schoolId).select('name');
+    const schoolName = school ? school.name : 'a school';
 
     res.status(200).json({ success: true, data: user });
 
-    // Let the user know they need to register their face again.
+    // Let the user know they need to register their face again for this school.
     notifyUser(
       user,
       'Facial Registration Removed',
-      'Your facial registration was removed. Please register your face again to mark attendance.',
+      `Your facial registration for ${schoolName} was removed. Please register your face again there to mark attendance.`,
       { type: 'face_removed' }
     ).catch(err => console.error('Face-removed notification error:', err.message));
   } catch (error) {

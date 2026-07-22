@@ -1,6 +1,38 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
+// A person may work under multiple schools. Face registration is anchored
+// per-school: each school the person is assigned to gets its own face
+// embedding, geofence location and approval state. This lets a trainer /
+// leader / head register their face separately at each school and check
+// in / out at any of them independently.
+const faceRegistrationSchema = new mongoose.Schema({
+  schoolId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'School',
+    required: true
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'approved'],
+    default: 'pending'
+  },
+  faceEmbedding: {
+    type: [Number],
+    default: []
+  },
+  registrationLocation: {
+    lat: { type: Number },
+    lng: { type: Number }
+  },
+  registrationPhotoUrl: {
+    type: String,
+    default: null
+  }
+}, {
+  timestamps: true
+});
+
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -25,6 +57,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: [
       'creator_admin',
+      'ceo',
       'trainer',
       'chairman',
       'team_leader',
@@ -40,10 +73,19 @@ const userSchema = new mongoose.Schema({
     ref: 'User',
     default: null
   },
+  // Legacy single-school reference. Kept in sync with schoolIds[0] so existing
+  // code (holiday checks, VisitReport, populate calls) keeps working.
   schoolId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'School',
     default: null
+  },
+  // A person can be assigned to multiple schools. This is the authoritative
+  // multi-school assignment for field staff (trainer / leaders / heads).
+  schoolIds: {
+    type: [mongoose.Schema.Types.ObjectId],
+    ref: 'School',
+    default: []
   },
   // The team a member belongs to (team_leader / trainee_team_leader / trainer).
   teamId: {
@@ -92,6 +134,12 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Per-school face registrations — the authoritative store for multi-school
+  // facial attendance. One entry per school the person has registered at.
+  faceRegistrations: {
+    type: [faceRegistrationSchema],
+    default: []
+  },
   resetPasswordOtp: {
     type: String,
     select: false
@@ -110,6 +158,19 @@ const userSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true
+});
+
+// Keep the legacy single-school field in sync with the multi-school list so
+// that older code paths (holiday checks, populates, attendance fallbacks)
+// always have a sensible primary school. schoolIds is the source of truth.
+userSchema.pre('save', function(next) {
+  // Only derive the primary from the multi-school list when it actually holds
+  // schools, so a legacy schoolId-only create is never clobbered. Clearing the
+  // list to empty is handled explicitly by the controller.
+  if (this.isModified('schoolIds') && this.schoolIds && this.schoolIds.length > 0) {
+    this.schoolId = this.schoolIds[0];
+  }
+  next();
 });
 
 // Encrypt password using bcrypt

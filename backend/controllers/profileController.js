@@ -2,7 +2,7 @@ const User = require('../models/User');
 const Attendance = require('../models/Attendance');
 const VisitReport = require('../models/VisitReport');
 const Activity = require('../models/Activity');
-const { HEAD_ROLES, LEADER_ROLES } = require('../utils/roles');
+const { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES } = require('../utils/roles');
 
 // @desc    Get detailed user profile (Admin/TL/Self)
 // @route   GET /api/profile/:id
@@ -12,19 +12,21 @@ exports.getUserProfile = async (req, res) => {
     const userId = req.params.id === 'me' ? req.user.id : req.params.id;
     
     const user = await User.findById(userId)
-        .select('-password -faceEmbedding -faceEmbeddingV2')
+        .select('-password -faceEmbedding -faceEmbeddingV2 -faceRegistrations.faceEmbedding')
         .populate('schoolId')
+        .populate('schoolIds')
+        .populate('faceRegistrations.schoolId', 'name state')
         .populate('teamLeaderId', 'name email')
         .populate('teamId', 'name');
 
     if (!user) return res.status(404).json({ success: false, error: 'User not found' });
 
     // Auth Check:
-    // - creator_admin can view anyone.
+    // - creator_admin / ceo can view anyone.
     // - (trainee) team_leader can view their assigned trainers or themselves.
     // - a head can view anyone belonging to one of their teams.
     // - everyone else can view only themselves.
-    if (req.user.role !== 'creator_admin' && req.user.id !== String(userId)) {
+    if (!ADMIN_ROLES.includes(req.user.role) && req.user.id !== String(userId)) {
         if (LEADER_ROLES.includes(req.user.role)) {
             // teamLeaderId is populated above, so it's a subdocument — read its _id
             // (falling back to the raw value if it wasn't populated) before comparing.

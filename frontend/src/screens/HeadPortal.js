@@ -9,11 +9,14 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import CustomAlert from '../components/CustomAlert';
 import SidebarMenu from '../components/SidebarMenu';
+import VisitReportForm from '../components/VisitReportForm';
+import VisitReportDetail from '../components/VisitReportDetail';
 import { roleLabel } from '../utils/roles';
 
 const TAB_ITEMS = [
   { key: 'Home', label: 'Home', icon: 'home-outline' },
   { key: 'MyTeams', label: 'My Teams', icon: 'people-outline' },
+  { key: 'LogVisit', label: 'Log Visit', icon: 'document-text-outline' },
 ];
 
 // Members of a team, grouped by seniority for a clean drill-in view.
@@ -37,21 +40,46 @@ export default function HeadPortal({ navigation, route }) {
   const [selectedTeam, setSelectedTeam] = useState(null);
   const [members, setMembers] = useState([]);
   const [membersLoading, setMembersLoading] = useState(false);
+  const [allMembers, setAllMembers] = useState([]); // everyone across the head's teams (report targets)
+  const [reports, setReports] = useState([]);
+  const [reportFormVisible, setReportFormVisible] = useState(false);
+  const [reportToView, setReportToView] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
 
   const fetchData = async () => {
     try {
-      const [activitiesRes, teamsRes] = await Promise.allSettled([
+      const [activitiesRes, teamsRes, reportsRes] = await Promise.allSettled([
         api.get('/activities'),
         api.get('/admin/teams'),
+        api.get('/reports'),
       ]);
       if (activitiesRes.status === 'fulfilled') setActivities(activitiesRes.value.data.data || []);
-      if (teamsRes.status === 'fulfilled') setTeams(teamsRes.value.data.data || []);
-      [activitiesRes, teamsRes].forEach((r, i) => {
-        if (r.status === 'rejected') console.log('HeadPortal fetch failed', i, r.reason?.message);
-      });
+      if (reportsRes.status === 'fulfilled') setReports(reportsRes.value.data.data || []);
+
+      let teamList = [];
+      if (teamsRes.status === 'fulfilled') {
+        teamList = teamsRes.value.data.data || [];
+        setTeams(teamList);
+      }
+
+      // Gather every member across the head's teams — these are the people the
+      // head can log a visit report on.
+      if (teamList.length) {
+        const perTeam = await Promise.allSettled(
+          teamList.map(t => api.get(`/admin/users?role=${MEMBER_ROLE_QUERY}&teamId=${t._id}&limit=200`))
+        );
+        const merged = {};
+        perTeam.forEach(r => {
+          if (r.status === 'fulfilled') {
+            (r.value.data.data || []).forEach(u => { merged[u._id] = u; });
+          }
+        });
+        setAllMembers(Object.values(merged));
+      } else {
+        setAllMembers([]);
+      }
     } catch (err) {
       console.log('HeadPortal fetchData error', err?.message);
     } finally {
@@ -256,7 +284,7 @@ export default function HeadPortal({ navigation, route }) {
                         <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: '700' }}>{member.name}</Text>
                         <Text style={{ color: theme.colors.textSecondary, marginTop: 2, fontSize: 12 }}>{member.email}</Text>
                         <Text style={{ color: theme.colors.primary, marginTop: 4, fontSize: 12, fontWeight: '600' }}>
-                          {roleLabel(member.role)}{member.schoolId?.name ? ` · ${member.schoolId.name}` : ''}
+                          {roleLabel(member.role)}{member.schoolIds?.length ? ` · ${member.schoolIds.map(s => s.name).join(', ')}` : (member.schoolId?.name ? ` · ${member.schoolId.name}` : '')}
                         </Text>
                       </View>
                       <TouchableOpacity
@@ -271,8 +299,75 @@ export default function HeadPortal({ navigation, route }) {
               </>
             )}
           </View>
+
+          {/* ---------- LOG VISIT: create + review visit reports ---------- */}
+          <View style={{ display: activeTab === 'LogVisit' ? 'flex' : 'none' }}>
+            <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+              <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary, marginBottom: 6 }]}>Log Visit Report</Text>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 13, lineHeight: 20, marginBottom: 14 }}>
+                Visit a school and complete the full IECE EGM Visit report on any team leader, trainee team leader or
+                trainer in your teams. Every field is mandatory.
+              </Text>
+              {allMembers.length === 0 ? (
+                <Text style={{ color: theme.colors.textSecondary, fontStyle: 'italic' }}>No members in your teams yet.</Text>
+              ) : (
+                <TouchableOpacity
+                  style={{ backgroundColor: theme.colors.primary, padding: 15, borderRadius: 10, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}
+                  onPress={() => setReportFormVisible(true)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="add-circle-outline" size={18} color="#fff" style={{ marginRight: 6 }} />
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>Start Visit Report</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary, marginBottom: 10 }]}>Reports</Text>
+            {reports.length === 0 ? (
+              <View style={{ alignItems: 'center', marginTop: 20 }}>
+                <Ionicons name="document-text-outline" size={44} color={theme.colors.border} />
+                <Text style={{ color: theme.colors.textSecondary, marginTop: 10 }}>No visit reports yet.</Text>
+              </View>
+            ) : (
+              reports.map(r => (
+                <TouchableOpacity
+                  key={r._id}
+                  style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, flexDirection: 'row', alignItems: 'center' }]}
+                  onPress={() => setReportToView(r)}
+                  activeOpacity={0.85}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>{r.trainerId?.name || 'Member'}</Text>
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>{r.schoolId?.name || ''}</Text>
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                      By {r.teamLeaderId?.name || '—'} · {r.dateOfInspection ? new Date(r.dateOfInspection).toLocaleDateString() : ''}
+                    </Text>
+                  </View>
+                  <View style={{ backgroundColor: statusColor(r.status) + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginRight: 8 }}>
+                    <Text style={{ color: statusColor(r.status), fontSize: 11, fontWeight: '700', textTransform: 'capitalize' }}>{r.status}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
         </ScrollView>
       )}
+
+      <VisitReportForm
+        visible={reportFormVisible}
+        targets={allMembers}
+        author={user}
+        onClose={() => setReportFormVisible(false)}
+        onSubmitted={(message) => { setAlertConfig({ visible: true, title: 'Success', message, type: 'success', buttons: [] }); fetchData(); }}
+        onError={(message) => setAlertConfig({ visible: true, title: 'Error', message, type: 'error', buttons: [] })}
+      />
+
+      <VisitReportDetail
+        visible={!!reportToView}
+        report={reportToView}
+        onClose={() => setReportToView(null)}
+      />
 
       <SidebarMenu
         ref={sidebarRef}

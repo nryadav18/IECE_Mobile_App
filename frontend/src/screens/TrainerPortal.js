@@ -35,7 +35,10 @@ export default function TrainerPortal({ navigation, route }) {
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Progress');
   const [activityToEdit, setActivityToEdit] = useState(null);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
-  const [faceStatus, setFaceStatus] = useState('none'); // 'none' | 'pending' | 'approved'
+  const [faceStatus, setFaceStatus] = useState('none'); // aggregate: 'none' | 'pending' | 'approved'
+  const [mySchools, setMySchools] = useState([]);        // [{ _id, name }] assigned schools
+  const [faceRegs, setFaceRegs] = useState([]);          // per-school face registrations
+  const [selectedSchoolId, setSelectedSchoolId] = useState(null); // school chosen for attendance
   const [holidays, setHolidays] = useState([]);
   
   const { theme } = useContext(ThemeContext);
@@ -93,6 +96,23 @@ export default function TrainerPortal({ navigation, route }) {
       const meRes = await api.get('/auth/me');
       const d = meRes.data.data || {};
       setFaceStatus(d.facialRegistrationStatusV2 || d.facialRegistrationStatus || 'none');
+
+      // Assigned schools (populated with names). Fall back to the legacy single
+      // school for un-migrated users.
+      const schools = Array.isArray(d.schoolIds) && d.schoolIds.length
+        ? d.schoolIds.filter(Boolean)
+        : (d.schoolId && typeof d.schoolId === 'object' ? [d.schoolId] : []);
+      setMySchools(schools);
+
+      const regs = Array.isArray(d.faceRegistrations) ? d.faceRegistrations : [];
+      setFaceRegs(regs);
+
+      // Default the attendance school to the first assigned school the first
+      // time, or keep the current choice if it's still valid.
+      setSelectedSchoolId((prev) => {
+        const stillValid = prev && schools.some((s) => String(s._id) === String(prev));
+        return stillValid ? prev : (schools[0]?._id || null);
+      });
       return;
     } catch (error) {
       console.log('Error fetching face status from /auth/me', error?.response?.status);
@@ -258,8 +278,20 @@ export default function TrainerPortal({ navigation, route }) {
         >
           <View style={styles.cardHeader}>
             <Ionicons name="school-outline" size={22} color={theme.colors.primary} />
-            <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>Assigned School</Text>
+            <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+              {mySchools.length > 1 ? 'Assigned Schools' : 'Assigned School'}
+            </Text>
           </View>
+
+          {mySchools.length > 1 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+              {mySchools.map((s) => (
+                <View key={s._id} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16, borderWidth: 1, backgroundColor: theme.colors.primary + '15', borderColor: theme.colors.primary }}>
+                  <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '600' }}>{s.name}</Text>
+                </View>
+              ))}
+            </View>
+          )}
 
           {school ? (
             <View style={styles.cardBody}>
@@ -345,64 +377,111 @@ export default function TrainerPortal({ navigation, route }) {
 
       {activeTab === 'Attendance' && (
         <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }} keyboardShouldPersistTaps="handled">
-          {/* Dynamic Buttons based on status */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
-            {faceStatus !== 'approved' ? (
-              /* Single Button Layout */
-              <>
-                {faceStatus === 'none' && (
+          {/* School selector — shown when the person works under multiple schools */}
+          {mySchools.length > 1 && (
+            <View style={{ marginBottom: 14 }}>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 8 }}>Select School for Attendance</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                {mySchools.map((s) => {
+                  const sel = String(s._id) === String(selectedSchoolId);
+                  return (
+                    <TouchableOpacity
+                      key={s._id}
+                      onPress={() => setSelectedSchoolId(s._id)}
+                      style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, marginRight: 8, backgroundColor: sel ? theme.colors.primary : theme.colors.surface, borderColor: sel ? theme.colors.primary : theme.colors.border }}
+                    >
+                      <Text style={{ color: sel ? '#fff' : theme.colors.textPrimary, fontWeight: '600', fontSize: 13 }}>{s.name}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* Per-school attendance actions (register / check-in / check-out) */}
+          {(() => {
+            if (!selectedSchoolId) {
+              return (
+                <View style={{ backgroundColor: theme.colors.surface, borderRadius: 10, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: theme.colors.border }}>
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' }}>No school assigned yet. Please contact your admin.</Text>
+                </View>
+              );
+            }
+
+            const selSchool = mySchools.find((s) => String(s._id) === String(selectedSchoolId));
+            const schoolName = selSchool?.name || 'this school';
+            const reg = faceRegs.find((r) => String(r.schoolId?._id || r.schoolId) === String(selectedSchoolId));
+            const regStatus = reg?.status || 'none';
+
+            const todayAtt = attendanceRecords.find((r) => isToday(r.date));
+            const todaySchoolId = todayAtt ? String(todayAtt.schoolId?._id || todayAtt.schoolId) : null;
+            const todaySchoolName = todayAtt ? (todayAtt.schoolId?.name || 'another school') : null;
+            const checkedInHere = !!(todayAtt && todaySchoolId === String(selectedSchoolId) && todayAtt.checkInTime);
+            const checkedOutHere = !!(todayAtt && todaySchoolId === String(selectedSchoolId) && todayAtt.checkOutTime);
+            const checkedInElsewhere = !!(todayAtt && todaySchoolId !== String(selectedSchoolId));
+
+            return (
+              <View>
+                {regStatus === 'none' && (
                   <TouchableOpacity
-                    style={[styles.uploadBtn, { flex: 1, backgroundColor: theme.colors.primary }]}
-                    onPress={() => navigation.navigate('FaceRegistration', { returnTo: 'TrainerPortal' })}
+                    style={[styles.uploadBtn, { backgroundColor: theme.colors.primary }]}
+                    onPress={() => navigation.navigate('FaceRegistration', { schoolId: selectedSchoolId, schoolName, returnTo: 'TrainerPortal' })}
                   >
                     <Ionicons name="scan-outline" size={20} color="#fff" />
-                    <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>Register Face</Text>
+                    <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>Register Face for {schoolName}</Text>
                   </TouchableOpacity>
                 )}
-                {faceStatus === 'pending' && (
-                  <View style={[styles.uploadBtn, { flex: 1, backgroundColor: '#F59E0B', opacity: 0.9 }]}>
-                    <Ionicons name="hourglass-outline" size={20} color="#fff" />
-                    <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>Pending Approval</Text>
+
+                {regStatus === 'pending' && (
+                  <>
+                    <View style={[styles.uploadBtn, { backgroundColor: '#F59E0B', opacity: 0.9 }]}>
+                      <Ionicons name="hourglass-outline" size={20} color="#fff" />
+                      <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>Pending Approval — {schoolName}</Text>
+                    </View>
+                    <View style={{ backgroundColor: '#FEF3C7', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#F59E0B' }}>
+                      <Ionicons name="hourglass-outline" size={16} color="#D97706" style={{ marginRight: 8 }} />
+                      <Text style={{ color: '#92400E', fontSize: 12, fontWeight: '600', flex: 1 }}>Your facial registration for {schoolName} is pending admin approval. You will be able to mark attendance here once approved.</Text>
+                    </View>
+                  </>
+                )}
+
+                {regStatus === 'approved' && (
+                  <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+                    <TouchableOpacity
+                      style={[styles.uploadBtn, { flex: 1, marginBottom: 0, backgroundColor: '#4CAF50', opacity: (checkedInHere || isHolidayToday || checkedInElsewhere) ? 0.5 : 1 }]}
+                      onPress={() => navigation.navigate('Attendance', { intent: 'login', schoolId: selectedSchoolId, schoolName })}
+                      disabled={checkedInHere || isHolidayToday || checkedInElsewhere}
+                    >
+                      <Ionicons name={checkedInHere ? 'checkmark-done-outline' : 'log-in-outline'} size={20} color="#fff" />
+                      <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>{checkedInHere ? 'Checked In' : 'Check In'}</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.uploadBtn, { flex: 1, marginBottom: 0, backgroundColor: '#F44336', opacity: (!checkedInHere || checkedOutHere || isHolidayToday) ? 0.5 : 1 }]}
+                      onPress={() => navigation.navigate('Attendance', { intent: 'logout', schoolId: selectedSchoolId, schoolName })}
+                      disabled={!checkedInHere || checkedOutHere || isHolidayToday}
+                    >
+                      <Ionicons name={checkedOutHere ? 'checkmark-done-outline' : 'log-out-outline'} size={20} color="#fff" />
+                      <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>{checkedOutHere ? 'Checked Out' : 'Check Out'}</Text>
+                    </TouchableOpacity>
                   </View>
                 )}
-              </>
-            ) : (
-              /* Side-by-Side Login/Logout */
-              <View style={{ flexDirection: 'row', gap: 10, flex: 1 }}>
-                <TouchableOpacity
-                  style={[styles.uploadBtn, { flex: 1, backgroundColor: '#4CAF50', opacity: (alreadyCheckedIn || isHolidayToday) ? 0.5 : 1 }]}
-                  onPress={() => navigation.navigate('Attendance', { intent: 'login' })}
-                  disabled={alreadyCheckedIn || isHolidayToday}
-                >
-                  <Ionicons name={alreadyCheckedIn ? 'checkmark-done-outline' : 'log-in-outline'} size={20} color="#fff" />
-                  <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>{alreadyCheckedIn ? 'Checked In' : 'Check In'}</Text>
-                </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={[styles.uploadBtn, { flex: 1, backgroundColor: '#F44336', opacity: (alreadyCheckedOut || isHolidayToday) ? 0.5 : 1 }]}
-                  onPress={() => navigation.navigate('Attendance', { intent: 'logout' })}
-                  disabled={alreadyCheckedOut || isHolidayToday}
-                >
-                  <Ionicons name={alreadyCheckedOut ? 'checkmark-done-outline' : 'log-out-outline'} size={20} color="#fff" />
-                  <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>{alreadyCheckedOut ? 'Checked Out' : 'Check Out'}</Text>
-                </TouchableOpacity>
+                {checkedInElsewhere && (
+                  <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#87CEEB' }}>
+                    <Ionicons name="information-circle-outline" size={16} color="#0277BD" style={{ marginRight: 8 }} />
+                    <Text style={{ color: '#01579B', fontSize: 12, fontWeight: '600', flex: 1 }}>You already checked in at {todaySchoolName} today, so check-in here is disabled. You can only work at one school per day.</Text>
+                  </View>
+                )}
               </View>
-            )}
-          </View>
+            );
+          })()}
 
           {/* Holiday banner — attendance disabled on Sundays / approved holidays */}
           {isHolidayToday && (
             <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#87CEEB' }}>
               <Ionicons name="sunny-outline" size={16} color="#0277BD" style={{ marginRight: 8 }} />
               <Text style={{ color: '#01579B', fontSize: 12, fontWeight: '600', flex: 1 }}>Today is a holiday. Check-in and check-out are disabled.</Text>
-            </View>
-          )}
-
-          {/* Status info banner */}
-          {faceStatus === 'pending' && (
-            <View style={{ backgroundColor: '#FEF3C7', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#F59E0B' }}>
-              <Ionicons name="hourglass-outline" size={16} color="#D97706" style={{ marginRight: 8 }} />
-              <Text style={{ color: '#92400E', fontSize: 12, fontWeight: '600', flex: 1 }}>Your facial registration is pending admin approval. You will be able to mark attendance once approved.</Text>
             </View>
           )}
 

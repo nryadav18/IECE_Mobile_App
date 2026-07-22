@@ -190,7 +190,17 @@ export default function PendingRegistrationsScreen({ navigation }) {
     try {
       const response = await api.get('/admin/pending-face-registrations');
       if (response.data.success) {
-        setRegistrations(response.data.data);
+        // Flatten users into one item per pending (user, school) registration —
+        // a person can have several schools awaiting approval at once.
+        const items = [];
+        (response.data.data || []).forEach((u) => {
+          (u.faceRegistrations || []).forEach((reg) => {
+            if (reg.status === 'pending') {
+              items.push({ user: u, reg });
+            }
+          });
+        });
+        setRegistrations(items);
       }
     } catch (error) {
       console.error('fetchPendingRegistrations error:', error);
@@ -199,12 +209,16 @@ export default function PendingRegistrationsScreen({ navigation }) {
     }
   };
 
-  const handleApprove = async (id) => {
+  // Stable key for a (user, school) registration pair.
+  const itemKey = (item) => `${item.user._id}_${item.reg?.schoolId?._id || item.reg?.schoolId}`;
+
+  const handleApprove = async (item) => {
     try {
-      const response = await api.put(`/admin/approve-face-registration/${id}`);
+      const schoolId = item.reg?.schoolId?._id || item.reg?.schoolId;
+      const response = await api.put(`/admin/approve-face-registration/${item.user._id}/${schoolId}`);
       if (response.data.success) {
         showAlert('Approved!', 'Facial registration has been approved successfully.', 'success');
-        setRegistrations(prev => prev.filter(u => u._id !== id));
+        setRegistrations(prev => prev.filter(i => itemKey(i) !== itemKey(item)));
         setSelectedUser(null);
       }
     } catch (error) {
@@ -213,12 +227,13 @@ export default function PendingRegistrationsScreen({ navigation }) {
     }
   };
 
-  const handleReject = async (id) => {
+  const handleReject = async (item) => {
     try {
-      const response = await api.delete(`/admin/face-registration/${id}`);
+      const schoolId = item.reg?.schoolId?._id || item.reg?.schoolId;
+      const response = await api.delete(`/admin/face-registration/${item.user._id}/${schoolId}`);
       if (response.data.success) {
         showAlert('Rejected', 'Registration has been rejected and cleared.', 'success');
-        setRegistrations(prev => prev.filter(u => u._id !== id));
+        setRegistrations(prev => prev.filter(i => itemKey(i) !== itemKey(item)));
         setSelectedUser(null);
       }
     } catch (error) {
@@ -227,9 +242,9 @@ export default function PendingRegistrationsScreen({ navigation }) {
     }
   };
 
-  // Safe coordinate extraction
-  const getLocation = (user) => {
-    const loc = user?.registrationLocation;
+  // Safe coordinate extraction from a per-school registration.
+  const getLocation = (reg) => {
+    const loc = reg?.registrationLocation;
     if (!loc) return null;
     const lat = parseFloat(loc.lat);
     const lng = parseFloat(loc.lng);
@@ -240,11 +255,18 @@ export default function PendingRegistrationsScreen({ navigation }) {
   // ---------------------------------------------------------------------------
   // List card
   // ---------------------------------------------------------------------------
+  // Human label + colour for the person's role.
+  const roleMeta = (role) => {
+    if (role === 'trainer') return { label: 'Trainer', color: '#3B82F6' };
+    if (role === 'team_leader' || role === 'trainee_team_leader') return { label: 'Team Leader', color: '#8B5CF6' };
+    if (role === 'zonal_head' || role === 'cluster_head' || role === 'regional_head') return { label: 'Head', color: '#0EA5E9' };
+    return { label: role || 'Staff', color: '#3B82F6' };
+  };
+
   const renderItem = ({ item, index }) => {
-    const location = getLocation(item);
-    const isTeamLeader = item.role === 'team_leader';
-    const roleLabel = isTeamLeader ? 'Team Leader' : 'Trainer';
-    const roleColor = isTeamLeader ? '#8B5CF6' : '#3B82F6';
+    const { user, reg } = item;
+    const location = getLocation(reg);
+    const { label: roleLabel, color: roleColor } = roleMeta(user.role);
 
     return (
       <MotiView
@@ -264,17 +286,17 @@ export default function PendingRegistrationsScreen({ navigation }) {
           <View style={styles.cardInfo}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
               <Text style={[styles.nameText, { color: theme.colors.textPrimary }]} numberOfLines={1}>
-                {item.name}
+                {user.name}
               </Text>
               <View style={[styles.roleBadge, { backgroundColor: roleColor + '18', borderColor: roleColor }]}>
                 <Text style={[styles.roleBadgeText, { color: roleColor }]}>{roleLabel}</Text>
               </View>
             </View>
             <Text style={[styles.schoolText, { color: theme.colors.textSecondary }]} numberOfLines={1}>
-              {item.schoolId?.name || 'No School Assigned'}
+              <Ionicons name="business-outline" size={12} color={theme.colors.textSecondary} /> {reg.schoolId?.name || 'No School Assigned'}
             </Text>
             <Text style={[styles.emailText, { color: theme.colors.textSecondary }]} numberOfLines={1}>
-              {item.email}
+              {user.email}
             </Text>
             {location ? (
               <View style={styles.locationRow}>
@@ -301,11 +323,10 @@ export default function PendingRegistrationsScreen({ navigation }) {
   // ---------------------------------------------------------------------------
   const renderModal = () => {
     if (!selectedUser) return null;
-    const location = getLocation(selectedUser);
-    const videoUrl = selectedUser.registrationPhotoUrl;
-    const isTeamLeader = selectedUser.role === 'team_leader';
-    const roleLabel = isTeamLeader ? 'Team Leader' : 'Trainer';
-    const roleColor = isTeamLeader ? '#8B5CF6' : '#3B82F6';
+    const { user: selUser, reg: selReg } = selectedUser;
+    const location = getLocation(selReg);
+    const videoUrl = selReg.registrationPhotoUrl;
+    const { label: roleLabel, color: roleColor } = roleMeta(selUser.role);
 
     return (
       <Modal
@@ -346,9 +367,9 @@ export default function PendingRegistrationsScreen({ navigation }) {
 
               {/* Personal details */}
               <View style={[styles.detailsBox, { borderColor: theme.colors.border }]}>
-                <DetailRow icon="person-outline"          label="Name"   value={selectedUser.name}               theme={theme} />
-                <DetailRow icon="mail-outline"            label="Email"  value={selectedUser.email}              theme={theme} />
-                <DetailRow icon="business-outline"        label="School" value={selectedUser.schoolId?.name || 'N/A'} theme={theme} />
+                <DetailRow icon="person-outline"          label="Name"   value={selUser.name}               theme={theme} />
+                <DetailRow icon="mail-outline"            label="Email"  value={selUser.email}              theme={theme} />
+                <DetailRow icon="business-outline"        label="School" value={selReg.schoolId?.name || 'N/A'} theme={theme} />
                 <DetailRow icon="shield-checkmark-outline" label="Role"  value={roleLabel} valueColor={roleColor} theme={theme} />
               </View>
 
@@ -396,7 +417,7 @@ export default function PendingRegistrationsScreen({ navigation }) {
             <View style={[styles.actionButtons, { borderTopColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
               <TouchableOpacity
                 style={[styles.btn, styles.btnReject]}
-                onPress={() => handleReject(selectedUser._id)}
+                onPress={() => handleReject(selectedUser)}
                 activeOpacity={0.85}
               >
                 <Ionicons name="close-circle-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
@@ -404,9 +425,9 @@ export default function PendingRegistrationsScreen({ navigation }) {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.btn, styles.btnApprove]}
-                onPress={() => handleApprove(selectedUser._id)}
+                onPress={() => handleApprove(selectedUser)}
                 activeOpacity={0.85}
-              >
+              >ppppppppppppppp
                 <Ionicons name="checkmark-circle-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
                 <Text style={styles.btnText}>Approve</Text>
               </TouchableOpacity>
@@ -427,7 +448,7 @@ export default function PendingRegistrationsScreen({ navigation }) {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>Pending Registrations</Text>
+        <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>Facial Attendance Approvals</Text>
         <View style={{ width: 32 }} />
       </View>
 
@@ -447,7 +468,7 @@ export default function PendingRegistrationsScreen({ navigation }) {
       ) : (
         <FlatList
           data={registrations}
-          keyExtractor={(item) => item._id}
+          keyExtractor={(item) => itemKey(item)}
           renderItem={renderItem}
           contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 20 }]}
           showsVerticalScrollIndicator={false}
