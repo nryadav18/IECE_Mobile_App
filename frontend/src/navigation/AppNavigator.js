@@ -11,6 +11,7 @@ import DashboardScreen from '../screens/DashboardScreen';
 import TrainerPortal from '../screens/TrainerPortal';
 import ChairmanPortal from '../screens/ChairmanPortal';
 import TeamLeaderPortal from '../screens/TeamLeaderPortal';
+import HeadPortal from '../screens/HeadPortal';
 import CreatorAdminPortal from '../screens/CreatorAdminPortal';
 import ManageAssetsScreen from '../screens/ManageAssetsScreen';
 import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
@@ -23,6 +24,7 @@ import ScreenLoader from '../components/ScreenLoader';
 import FaceRegistrationScreen from '../screens/Trainer/FaceRegistrationScreen';
 import AttendanceScreen from '../screens/Trainer/AttendanceScreen';
 import PendingRegistrationsScreen from '../screens/Admin/PendingRegistrationsScreen';
+import { HEAD_ROLES } from '../utils/roles';
 
 const Stack = createStackNavigator();
 
@@ -60,9 +62,17 @@ const AppNavigator = () => {
             </>
           )}
           {user.role === 'chairman' && <Stack.Screen name="ChairmanPortal" component={ChairmanPortal} />}
-          {user.role === 'team_leader' && (
+          {/* Trainee Team Leader has full parity with Team Leader — same portal. */}
+          {(user.role === 'team_leader' || user.role === 'trainee_team_leader') && (
             <>
               <Stack.Screen name="TeamLeaderPortal" component={TeamLeaderPortal} />
+              <Stack.Screen name="FaceRegistration" component={FaceRegistrationScreen} />
+              <Stack.Screen name="Attendance" component={AttendanceScreen} />
+            </>
+          )}
+          {HEAD_ROLES.includes(user.role) && (
+            <>
+              <Stack.Screen name="HeadPortal" component={HeadPortal} />
               <Stack.Screen name="FaceRegistration" component={FaceRegistrationScreen} />
               <Stack.Screen name="Attendance" component={AttendanceScreen} />
             </>

@@ -7,18 +7,19 @@ const {
   updateReportStatus,
 } = require('../controllers/reportController');
 const { protect, authorize } = require('../middleware/auth');
+const { LEADER_ROLES, HEAD_ROLES } = require('../utils/roles');
 
 const router = express.Router();
 
 router.route('/')
-  .get(protect, authorize('team_leader', 'chairman', 'creator_admin'), getReports)
-  .post(protect, authorize('team_leader'), createReport);
+  .get(protect, authorize(...LEADER_ROLES, ...HEAD_ROLES, 'chairman', 'creator_admin'), getReports)
+  .post(protect, authorize(...LEADER_ROLES, ...HEAD_ROLES), createReport);
 
 router.route('/:id/status')
   .put(protect, authorize('chairman'), updateReportStatus);
 
 router.route('/:id')
-  .put(protect, authorize('team_leader', 'chairman'), updateReport)
-  .delete(protect, authorize('team_leader'), deleteReport);
+  .put(protect, authorize(...LEADER_ROLES, ...HEAD_ROLES, 'chairman'), updateReport)
+  .delete(protect, authorize(...LEADER_ROLES, ...HEAD_ROLES), deleteReport);
 
 module.exports = router;

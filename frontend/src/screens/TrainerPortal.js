@@ -29,7 +29,8 @@ const TAB_ITEMS = [
 export default function TrainerPortal({ navigation, route }) {
   const [school, setSchool] = useState(null);
   const [myActivities, setMyActivities] = useState([]);
-  const [approvedCount, setApprovedCount] = useState(0);
+  const [uploadedCount, setUploadedCount] = useState(0);
+  const [myApprovedCount, setMyApprovedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Progress');
   const [activityToEdit, setActivityToEdit] = useState(null);
@@ -129,12 +130,8 @@ export default function TrainerPortal({ navigation, route }) {
       if (user.schoolId) {
         const schoolRes = await api.get(`/schools/${user.schoolId}`);
         setSchool(schoolRes.data.data);
-
-        // Fetch approved activities for progress counter
-        const approvedRes = await api.get(`/activities?schoolId=${user.schoolId}&status=approved`);
-        setApprovedCount(approvedRes.data.count || approvedRes.data.data.length);
       }
-      
+
       // Fetch all activities for the school to share among trainers
       if (user.schoolId) {
         const myActRes = await api.get(`/activities?schoolId=${user.schoolId}`);
@@ -143,6 +140,12 @@ export default function TrainerPortal({ navigation, route }) {
         const myActRes = await api.get(`/activities?uploaderId=${user._id || user.id}`);
         setMyActivities(myActRes.data.data);
       }
+
+      // Count of activities THIS trainer has uploaded (no target — just the count).
+      const mineRes = await api.get(`/activities?uploaderId=${user._id || user.id}`);
+      const mine = mineRes.data.data || [];
+      setUploadedCount(mineRes.data.count ?? mine.length);
+      setMyApprovedCount(mine.filter(a => a.status === 'approved').length);
 
       const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
@@ -212,9 +215,6 @@ export default function TrainerPortal({ navigation, route }) {
   const isHolidayToday = isOffToday(holidays);
 
   const renderProgressTab = () => {
-    const remainingCount = Math.max(0, 30 - approvedCount);
-    const progressPercent = Math.min(100, (approvedCount / 30) * 100);
-
     return (
       <ScrollView
         style={styles.flex1}
@@ -234,33 +234,18 @@ export default function TrainerPortal({ navigation, route }) {
         >
           <View style={styles.cardHeader}>
             <Ionicons name="ribbon-outline" size={24} color={theme.colors.primary} />
-            <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>School Activities Quota</Text>
+            <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>My Activities</Text>
           </View>
           <View style={styles.quotaRow}>
             <View style={styles.quotaBlock}>
-              <Text style={[styles.quotaNumber, { color: theme.colors.primary }]}>{approvedCount}</Text>
+              <Text style={[styles.quotaNumber, { color: theme.colors.primary }]}>{uploadedCount}</Text>
+              <Text style={[styles.quotaLabel, { color: theme.colors.textSecondary }]}>Uploaded</Text>
+            </View>
+            <View style={[styles.quotaDivider, { backgroundColor: theme.colors.border }]} />
+            <View style={styles.quotaBlock}>
+              <Text style={[styles.quotaNumber, { color: '#10B981' }]}>{myApprovedCount}</Text>
               <Text style={[styles.quotaLabel, { color: theme.colors.textSecondary }]}>Approved</Text>
             </View>
-            <View style={[styles.quotaDivider, { backgroundColor: theme.colors.border }]} />
-            <View style={styles.quotaBlock}>
-              <Text style={[styles.quotaNumber, { color: theme.colors.textPrimary }]}>{remainingCount}</Text>
-              <Text style={[styles.quotaLabel, { color: theme.colors.textSecondary }]}>Remaining</Text>
-            </View>
-            <View style={[styles.quotaDivider, { backgroundColor: theme.colors.border }]} />
-            <View style={styles.quotaBlock}>
-              <Text style={[styles.quotaNumber, { color: theme.colors.textSecondary }]}>30</Text>
-              <Text style={[styles.quotaLabel, { color: theme.colors.textSecondary }]}>Target</Text>
-            </View>
-          </View>
-
-          {/* Progress Bar */}
-          <View style={styles.progressBarWrapper}>
-            <View style={[styles.progressBarBackground, { backgroundColor: theme.colors.border }]}>
-              <View style={[styles.progressBarFill, { width: `${progressPercent}%`, backgroundColor: theme.colors.primary }]} />
-            </View>
-            <Text style={[styles.progressPercentText, { color: theme.colors.textSecondary }]}>
-              {Math.floor(progressPercent)}% of target met
-            </Text>
           </View>
         </MotiView>
 

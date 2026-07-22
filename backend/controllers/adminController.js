@@ -1,19 +1,121 @@
 const User = require('../models/User');
 const School = require('../models/School');
+const Team = require('../models/Team');
+const { HEAD_ROLES, LEADER_ROLES, TEAM_MEMBER_ROLES } = require('../utils/roles');
 const { notifyUser, notifyUserById } = require('../utils/pushNotification');
 
-// @desc    Get all Team Leaders
+// @desc    Get all Team Leaders (and Trainee Team Leaders — full parity)
 // @route   GET /api/admin/team-leaders
 // @access  Private/CreatorAdmin
 exports.getTeamLeaders = async (req, res) => {
   try {
-    const teamLeaders = await User.find({ role: 'team_leader' })
+    const teamLeaders = await User.find({ role: { $in: LEADER_ROLES } })
       .select('-password')
       .populate('schoolId', 'name state associationYear classCoverage')
+      .populate('teamId', 'name')
       .sort('-createdAt');
     res.status(200).json({ success: true, data: teamLeaders });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Server Error' });
+  }
+};
+
+// @desc    Create a Team (single mandatory field: name)
+// @route   POST /api/admin/team
+// @access  Private/CreatorAdmin
+exports.createTeam = async (req, res) => {
+  try {
+    const name = (req.body.name || '').trim();
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Team name is required' });
+    }
+
+    const existing = await Team.findOne({ name });
+    if (existing) {
+      return res.status(400).json({ success: false, error: 'A team with this name already exists' });
+    }
+
+    const team = await Team.create({ name, createdBy: req.user.id });
+    res.status(201).json({ success: true, data: team });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// @desc    Get all Teams (with member + head counts for context)
+// @route   GET /api/admin/teams
+// @access  Private/CreatorAdmin + Heads
+exports.getTeams = async (req, res) => {
+  try {
+    // A head only sees the teams assigned to them; admin sees all.
+    let teams;
+    if (HEAD_ROLES.includes(req.user.role)) {
+      teams = await Team.find({ _id: { $in: req.user.teamIds || [] } }).sort('name');
+    } else {
+      teams = await Team.find().sort('name');
+    }
+
+    // Attach a lightweight member count so the UI can show "N members".
+    const data = await Promise.all(teams.map(async (team) => {
+      const memberCount = await User.countDocuments({ teamId: team._id });
+      return { ...team.toObject(), memberCount };
+    }));
+
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// @desc    Delete a Team (unlink members and pull it from every head)
+// @route   DELETE /api/admin/team/:id
+// @access  Private/CreatorAdmin
+exports.deleteTeam = async (req, res) => {
+  try {
+    const team = await Team.findById(req.params.id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    // Detach members and remove the team from any head's oversight list.
+    await User.updateMany({ teamId: team._id }, { $set: { teamId: null } });
+    await User.updateMany({ teamIds: team._id }, { $pull: { teamIds: team._id } });
+    await Team.findByIdAndDelete(team._id);
+
+    res.status(200).json({ success: true, data: {} });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// @desc    Create a Head (zonal / cluster / regional)
+// @route   POST /api/admin/head
+// @access  Private/CreatorAdmin
+exports.createHead = async (req, res) => {
+  try {
+    const { name, email, password, role, schoolId, teamIds } = req.body;
+
+    if (!HEAD_ROLES.includes(role)) {
+      return res.status(400).json({ success: false, error: 'Invalid head role' });
+    }
+
+    let user = await User.findOne({ email });
+    if (user) {
+      return res.status(400).json({ success: false, error: 'User already exists' });
+    }
+
+    user = await User.create({
+      name,
+      email,
+      password,
+      role,
+      schoolId: schoolId || null,
+      teamIds: Array.isArray(teamIds) ? teamIds : []
+    });
+
+    res.status(201).json({ success: true, data: user });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
@@ -29,13 +131,15 @@ exports.getSchools = async (req, res) => {
   }
 };
 
-// @desc    Create a Team Leader
+// @desc    Create a Team Leader or Trainee Team Leader (full parity)
 // @route   POST /api/admin/team-leader
 // @access  Private/CreatorAdmin
 exports.createTeamLeader = async (req, res) => {
   try {
-    const { name, email, password, schoolId } = req.body;
-    
+    const { name, email, password, schoolId, teamId } = req.body;
+    // Defaults to team_leader; accepts trainee_team_leader for the same form.
+    const role = LEADER_ROLES.includes(req.body.role) ? req.body.role : 'team_leader';
+
     let user = await User.findOne({ email });
     if (user) {
       return res.status(400).json({ success: false, error: 'User already exists' });
@@ -45,8 +149,9 @@ exports.createTeamLeader = async (req, res) => {
       name,
       email,
       password,
-      role: 'team_leader',
-      schoolId
+      role,
+      schoolId,
+      teamId: teamId || null
     });
 
     res.status(201).json({ success: true, data: user });
@@ -103,7 +208,7 @@ exports.createChairmanAndSchool = async (req, res) => {
 // @access  Private/CreatorAdmin
 exports.createTrainer = async (req, res) => {
   try {
-    const { name, email, password, schoolId, teamLeaderId } = req.body;
+    const { name, email, password, schoolId, teamLeaderId, teamId } = req.body;
 
     let user = await User.findOne({ email });
     if (user) {
@@ -116,7 +221,8 @@ exports.createTrainer = async (req, res) => {
       password,
       role: 'trainer',
       schoolId,
-      teamLeaderId
+      teamLeaderId,
+      teamId: teamId || null
     });
 
     res.status(201).json({ success: true, data: user });
@@ -140,14 +246,20 @@ exports.createTrainer = async (req, res) => {
 // @access  Private/CreatorAdmin
 exports.getUsersPaginated = async (req, res) => {
   try {
-    const { role, page = 1, limit = 10, teamLeaderId } = req.query;
+    const { role, page = 1, limit = 10, teamLeaderId, teamId } = req.query;
     if (!role) {
       return res.status(400).json({ success: false, error: 'Role is required' });
     }
 
-    const query = { role };
+    // `role` may be a single value or a comma-separated list (e.g. team_leader,trainee_team_leader).
+    const roles = String(role).split(',').map(r => r.trim()).filter(Boolean);
+    const query = roles.length > 1 ? { role: { $in: roles } } : { role: roles[0] };
+
     if (teamLeaderId) {
       query.teamLeaderId = teamLeaderId;
+    }
+    if (teamId) {
+      query.teamId = teamId;
     }
     const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
@@ -155,6 +267,8 @@ exports.getUsersPaginated = async (req, res) => {
       .select('-password')
       .populate('schoolId')
       .populate('teamLeaderId', 'name email')
+      .populate('teamId', 'name')
+      .populate('teamIds', 'name')
       .sort('-createdAt')
       .skip(skip)
       .limit(parseInt(limit, 10))
@@ -190,7 +304,11 @@ exports.updateUser = async (req, res) => {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    const { name, email, password, schoolId, teamLeaderId, schoolName, associationYear, classCoverage } = req.body;
+    const {
+      name, email, password, role,
+      schoolId, teamLeaderId, teamId, teamIds,
+      schoolName, associationYear, classCoverage
+    } = req.body;
 
     user.name = name || user.name;
     user.email = email || user.email;
@@ -198,9 +316,22 @@ exports.updateUser = async (req, res) => {
       user.password = password; // will be hashed in pre-save hook
     }
 
+    // Admin has master privilege — allow re-assigning the role itself.
+    if (role && User.schema.path('role').enumValues.includes(role)) {
+      user.role = role;
+    }
+
+    // Assignment fields, applied by the effective (possibly new) role.
     if (user.role === 'trainer') {
-      if (schoolId) user.schoolId = schoolId;
-      if (teamLeaderId) user.teamLeaderId = teamLeaderId;
+      if (schoolId !== undefined) user.schoolId = schoolId || null;
+      if (teamLeaderId !== undefined) user.teamLeaderId = teamLeaderId || null;
+      if (teamId !== undefined) user.teamId = teamId || null;
+    } else if (LEADER_ROLES.includes(user.role)) {
+      if (schoolId !== undefined) user.schoolId = schoolId || null;
+      if (teamId !== undefined) user.teamId = teamId || null;
+    } else if (HEAD_ROLES.includes(user.role)) {
+      if (schoolId !== undefined) user.schoolId = schoolId || null;
+      if (Array.isArray(teamIds)) user.teamIds = teamIds;
     }
 
     await user.save();
@@ -232,8 +363,8 @@ exports.deleteUser = async (req, res) => {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    if (user.role === 'team_leader') {
-      // Unlink trainers assigned to this Team Leader instead of blocking
+    if (LEADER_ROLES.includes(user.role)) {
+      // Unlink trainers assigned to this (Trainee) Team Leader instead of blocking
       await User.updateMany({ teamLeaderId: user._id }, { $set: { teamLeaderId: null } });
     }
 

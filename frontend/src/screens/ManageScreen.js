@@ -9,21 +9,25 @@ import api from '../services/api';
 import ScreenLoader from '../components/ScreenLoader';
 import CustomAlert from '../components/CustomAlert';
 import CustomDropdown from '../components/CustomDropdown';
+import TeamMultiSelectModal from '../components/TeamMultiSelectModal';
+import { HEAD_ROLES, LEADER_ROLES, roleLabel } from '../utils/roles';
 
 export default function ManageScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
   const insets = useSafeAreaInsets();
-  
-  const [activeTab, setActiveTab] = useState('Schools'); // 'Schools' | 'Trainers' | 'TeamLeaders'
-  
+
+  const [activeTab, setActiveTab] = useState('Schools'); // 'Schools' | 'Trainers' | 'TeamLeaders' | 'Heads'
+
   const [schools, setSchools] = useState([]);
   const [teamLeaders, setTeamLeaders] = useState([]);
   const [trainers, setTrainers] = useState([]);
   const [chairmen, setChairmen] = useState([]);
-  
+  const [teams, setTeams] = useState([]);
+  const [heads, setHeads] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   // Edit modals state
   const [editingUser, setEditingUser] = useState(null); // The user object being edited
   const [editForm, setEditForm] = useState({
@@ -32,10 +36,13 @@ export default function ManageScreen({ navigation }) {
     password: '',
     schoolId: '',
     teamLeaderId: '',
+    teamId: '',
+    teamIds: [],
     schoolName: '',
     associationYear: '',
     classCoverage: ''
   });
+  const [teamModalVisible, setTeamModalVisible] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
 
@@ -50,16 +57,20 @@ export default function ManageScreen({ navigation }) {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [schoolsRes, tlsRes, trainersRes, chairmenRes] = await Promise.all([
+      const [schoolsRes, tlsRes, trainersRes, chairmenRes, teamsRes, headsRes] = await Promise.all([
         api.get('/admin/schools'),
         api.get('/admin/team-leaders'),
         api.get('/admin/users?role=trainer&limit=1000'),
-        api.get('/admin/users?role=chairman&limit=1000')
+        api.get('/admin/users?role=chairman&limit=1000'),
+        api.get('/admin/teams'),
+        api.get('/admin/users?role=zonal_head,cluster_head,regional_head&limit=1000')
       ]);
       setSchools(schoolsRes.data.data);
       setTeamLeaders(tlsRes.data.data);
       setTrainers(trainersRes.data.data);
       setChairmen(chairmenRes.data.data);
+      setTeams(teamsRes.data.data);
+      setHeads(headsRes.data.data);
     } catch (err) {
       console.log('Error fetching management data', err);
       showAlert('Error', 'Failed to load entries.', 'error');
@@ -76,6 +87,9 @@ export default function ManageScreen({ navigation }) {
       password: '',
       schoolId: item.schoolId?._id || item.schoolId || '',
       teamLeaderId: item.teamLeaderId?._id || item.teamLeaderId || '',
+      teamId: item.teamId?._id || item.teamId || '',
+      // teamIds may be populated ({_id,name}) or raw ids — normalize to ids.
+      teamIds: (item.teamIds || []).map(t => t?._id || t),
       schoolName: item.schoolId?.name || '',
       associationYear: item.schoolId?.associationYear || '',
       classCoverage: item.schoolId?.classCoverage || ''
@@ -95,6 +109,8 @@ export default function ManageScreen({ navigation }) {
         email: editForm.email,
         schoolId: editForm.schoolId || undefined,
         teamLeaderId: editForm.teamLeaderId || undefined,
+        teamId: editForm.teamId || undefined,
+        teamIds: HEAD_ROLES.includes(editingUser?.role) ? editForm.teamIds : undefined,
         schoolName: editForm.schoolName || undefined,
         associationYear: editForm.associationYear || undefined,
         classCoverage: editForm.classCoverage || undefined,
@@ -183,14 +199,20 @@ export default function ManageScreen({ navigation }) {
         c.schoolId?.state?.toLowerCase().includes(q)
       );
     } else if (activeTab === 'Trainers') {
-      return trainers.filter(t => 
-        t.name?.toLowerCase().includes(q) || 
+      return trainers.filter(t =>
+        t.name?.toLowerCase().includes(q) ||
         t.email?.toLowerCase().includes(q) ||
         getSchoolName(t).toLowerCase().includes(q)
       );
+    } else if (activeTab === 'Heads') {
+      return heads.filter(h =>
+        h.name?.toLowerCase().includes(q) ||
+        h.email?.toLowerCase().includes(q) ||
+        roleLabel(h.role).toLowerCase().includes(q)
+      );
     } else {
-      return teamLeaders.filter(tl => 
-        tl.name?.toLowerCase().includes(q) || 
+      return teamLeaders.filter(tl =>
+        tl.name?.toLowerCase().includes(q) ||
         tl.email?.toLowerCase().includes(q) ||
         getSchoolName(tl).toLowerCase().includes(q)
       );
@@ -233,7 +255,8 @@ export default function ManageScreen({ navigation }) {
           {[
             { key: 'Schools', label: 'Schools & Chairmen', icon: 'business-outline' },
             { key: 'Trainers', label: 'Trainers', icon: 'person-outline' },
-            { key: 'TeamLeaders', label: 'Team Leaders', icon: 'people-outline' },
+            { key: 'TeamLeaders', label: 'Leaders', icon: 'people-outline' },
+            { key: 'Heads', label: 'Heads', icon: 'ribbon-outline' },
           ].map((tab) => {
             const isActive = activeTab === tab.key;
             return (
@@ -373,16 +396,40 @@ export default function ManageScreen({ navigation }) {
                       <Text style={[styles.thText, { color: theme.colors.textPrimary, textAlign: 'center' }]}>Actions</Text>
                     </View>
                   </>
+                ) : activeTab === 'Heads' ? (
+                  <>
+                    <View style={[styles.thContainer, { width: 140 }]}>
+                      <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Head</Text>
+                    </View>
+                    <View style={[styles.thContainer, { width: 190 }]}>
+                      <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Email</Text>
+                    </View>
+                    <View style={[styles.thContainer, { width: 130 }]}>
+                      <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Role</Text>
+                    </View>
+                    <View style={[styles.thContainer, { width: 130 }]}>
+                      <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Teams</Text>
+                    </View>
+                    <View style={[styles.thContainer, { width: 100, alignItems: 'center' }]}>
+                      <Text style={[styles.thText, { color: theme.colors.textPrimary, textAlign: 'center' }]}>Actions</Text>
+                    </View>
+                  </>
                 ) : (
                   <>
                     <View style={[styles.thContainer, { width: 130 }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Leader Name</Text>
+                    </View>
+                    <View style={[styles.thContainer, { width: 150 }]}>
+                      <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Role</Text>
                     </View>
                     <View style={[styles.thContainer, { width: 180 }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Email</Text>
                     </View>
                     <View style={[styles.thContainer, { width: 150 }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>School</Text>
+                    </View>
+                    <View style={[styles.thContainer, { width: 130 }]}>
+                      <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Team</Text>
                     </View>
                     <View style={[styles.thContainer, { width: 100, alignItems: 'center' }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary, textAlign: 'center' }]}>Face Status</Text>
@@ -468,16 +515,43 @@ export default function ManageScreen({ navigation }) {
                             )}
                           </View>
                         </>
+                      ) : activeTab === 'Heads' ? (
+                        <>
+                          <View style={[styles.tdContainer, { width: 140 }]}>
+                            <Text style={[styles.tdText, { color: theme.colors.textPrimary, fontWeight: '600' }]} numberOfLines={1}>{item.name}</Text>
+                          </View>
+                          <View style={[styles.tdContainer, { width: 190 }]}>
+                            <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{item.email}</Text>
+                          </View>
+                          <View style={[styles.tdContainer, { width: 130 }]}>
+                            <View style={[styles.badgeContainer, { backgroundColor: theme.colors.primary + '10', borderColor: theme.colors.primary + '30' }]}>
+                              <Text style={[styles.badgeText, { color: theme.colors.primary }]} numberOfLines={1}>{roleLabel(item.role)}</Text>
+                            </View>
+                          </View>
+                          <View style={[styles.tdContainer, { width: 130 }]}>
+                            <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+                              {(item.teamIds || []).map(t => t?.name || '').filter(Boolean).join(', ') || `${item.teamIds?.length || 0} team(s)`}
+                            </Text>
+                          </View>
+                        </>
                       ) : (
                         <>
                           <View style={[styles.tdContainer, { width: 130 }]}>
                             <Text style={[styles.tdText, { color: theme.colors.textPrimary, fontWeight: '600' }]} numberOfLines={1}>{item.name}</Text>
+                          </View>
+                          <View style={[styles.tdContainer, { width: 150 }]}>
+                            <View style={[styles.badgeContainer, { backgroundColor: '#8E44AD10', borderColor: '#8E44AD30' }]}>
+                              <Text style={[styles.badgeText, { color: '#8E44AD' }]} numberOfLines={1}>{roleLabel(item.role)}</Text>
+                            </View>
                           </View>
                           <View style={[styles.tdContainer, { width: 180 }]}>
                             <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{item.email}</Text>
                           </View>
                           <View style={[styles.tdContainer, { width: 150 }]}>
                             <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{getSchoolName(item)}</Text>
+                          </View>
+                          <View style={[styles.tdContainer, { width: 130 }]}>
+                            <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{item.teamId?.name || 'None'}</Text>
                           </View>
                           {/* Face Status Badge */}
                           <View style={[styles.tdContainer, { width: 100, alignItems: 'center' }]}>
@@ -591,17 +665,65 @@ export default function ManageScreen({ navigation }) {
                       onSelect={(item) => setEditForm({ ...editForm, teamLeaderId: item._id })}
                       placeholder="Select a team leader"
                     />
+                    <View style={{ height: 12 }} />
+                    <CustomDropdown
+                      label="Assign Team"
+                      data={teams}
+                      selectedValue={editForm.teamId}
+                      onSelect={(item) => setEditForm({ ...editForm, teamId: item._id })}
+                      placeholder="Select a team"
+                    />
                   </>
                 )}
 
-                {editingUser?.role === 'team_leader' && (
-                  <CustomDropdown
-                    label="Assign School"
-                    data={schools}
-                    selectedValue={editForm.schoolId}
-                    onSelect={(item) => setEditForm({ ...editForm, schoolId: item._id })}
-                    placeholder="Select a school"
-                  />
+                {LEADER_ROLES.includes(editingUser?.role) && (
+                  <>
+                    <CustomDropdown
+                      label="Assign School"
+                      data={schools}
+                      selectedValue={editForm.schoolId}
+                      onSelect={(item) => setEditForm({ ...editForm, schoolId: item._id })}
+                      placeholder="Select a school"
+                    />
+                    <View style={{ height: 12 }} />
+                    <CustomDropdown
+                      label="Assign Team"
+                      data={teams}
+                      selectedValue={editForm.teamId}
+                      onSelect={(item) => setEditForm({ ...editForm, teamId: item._id })}
+                      placeholder="Select a team"
+                    />
+                  </>
+                )}
+
+                {HEAD_ROLES.includes(editingUser?.role) && (
+                  <>
+                    <CustomDropdown
+                      label="Assign School"
+                      data={schools}
+                      selectedValue={editForm.schoolId}
+                      onSelect={(item) => setEditForm({ ...editForm, schoolId: item._id })}
+                      placeholder="Select a school"
+                    />
+                    <Text style={[styles.inputLabel, { color: theme.colors.textSecondary, marginTop: 12 }]}>Assign Team(s)</Text>
+                    <TouchableOpacity
+                      style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, justifyContent: 'center' }]}
+                      onPress={() => setTeamModalVisible(true)}
+                    >
+                      <Text style={{ color: editForm.teamIds.length ? theme.colors.textPrimary : theme.colors.placeholder }}>
+                        {editForm.teamIds.length
+                          ? teams.filter(t => editForm.teamIds.includes(t._id)).map(t => t.name).join(', ')
+                          : 'Select one or more teams'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TeamMultiSelectModal
+                      visible={teamModalVisible}
+                      teams={teams}
+                      selectedIds={editForm.teamIds}
+                      onClose={() => setTeamModalVisible(false)}
+                      onSelect={(ids) => setEditForm({ ...editForm, teamIds: ids })}
+                    />
+                  </>
                 )}
 
                 {editingUser?.role === 'chairman' && (

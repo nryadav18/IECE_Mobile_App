@@ -37,6 +37,21 @@ const activitySchema = new mongoose.Schema({
   },
   rejectionRemark: {
     type: String
+  },
+  // "Star Activity" — a head can highlight a standout activity. Once starred it
+  // is flagged everywhere the activity is shown (team members, admin, CEO).
+  isStarred: {
+    type: Boolean,
+    default: false
+  },
+  starredBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  starredAt: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true

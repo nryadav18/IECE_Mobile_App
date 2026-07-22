@@ -97,8 +97,14 @@ export default function ActivityDetailsScreen({ route, navigation }) {
         )}
 
         <View style={styles.content}>
+          {activity.isStarred && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: '#F5B30120', borderColor: '#F5B301', borderWidth: 1, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16, marginBottom: 10 }}>
+              <Ionicons name="star" size={15} color="#F5B301" />
+              <Text style={{ color: '#B07D00', fontSize: 12, fontWeight: '700', marginLeft: 5 }}>Star Activity</Text>
+            </View>
+          )}
           <Text style={[styles.title, { color: theme.colors.textPrimary }]}>{activity.name}</Text>
-          
+
           <View style={styles.metaRow}>
             <Ionicons name="calendar-outline" size={16} color={theme.colors.textSecondary} />
             <Text style={[styles.metaText, { color: theme.colors.textSecondary }]}>

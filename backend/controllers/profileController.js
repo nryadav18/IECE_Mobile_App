@@ -2,6 +2,7 @@ const User = require('../models/User');
 const Attendance = require('../models/Attendance');
 const VisitReport = require('../models/VisitReport');
 const Activity = require('../models/Activity');
+const { HEAD_ROLES, LEADER_ROLES } = require('../utils/roles');
 
 // @desc    Get detailed user profile (Admin/TL/Self)
 // @route   GET /api/profile/:id
@@ -13,23 +14,31 @@ exports.getUserProfile = async (req, res) => {
     const user = await User.findById(userId)
         .select('-password -faceEmbedding -faceEmbeddingV2')
         .populate('schoolId')
-        .populate('teamLeaderId', 'name email');
-    
+        .populate('teamLeaderId', 'name email')
+        .populate('teamId', 'name');
+
     if (!user) return res.status(404).json({ success: false, error: 'User not found' });
-    
-    // Auth Check: 
+
+    // Auth Check:
     // - creator_admin can view anyone.
-    // - chairman can view anyone in their school (skipped strict check for simplicity, can add later)
-    // - team_leader can view their assigned trainers or themselves.
-    // - trainer can view themselves.
+    // - (trainee) team_leader can view their assigned trainers or themselves.
+    // - a head can view anyone belonging to one of their teams.
+    // - everyone else can view only themselves.
     if (req.user.role !== 'creator_admin' && req.user.id !== String(userId)) {
-        // teamLeaderId is populated above, so it's a subdocument — read its _id
-        // (falling back to the raw value if it wasn't populated) before comparing.
-        const trainerTeamLeaderId = (user.teamLeaderId?._id || user.teamLeaderId)?.toString();
-        if (req.user.role === 'team_leader' && trainerTeamLeaderId !== req.user.id) {
-            return res.status(403).json({ success: false, error: 'Not authorized to view this profile' });
-        }
-        if (req.user.role === 'trainer') {
+        if (LEADER_ROLES.includes(req.user.role)) {
+            // teamLeaderId is populated above, so it's a subdocument — read its _id
+            // (falling back to the raw value if it wasn't populated) before comparing.
+            const trainerTeamLeaderId = (user.teamLeaderId?._id || user.teamLeaderId)?.toString();
+            if (trainerTeamLeaderId !== req.user.id) {
+                return res.status(403).json({ success: false, error: 'Not authorized to view this profile' });
+            }
+        } else if (HEAD_ROLES.includes(req.user.role)) {
+            const targetTeamId = (user.teamId?._id || user.teamId)?.toString();
+            const headTeamIds = (req.user.teamIds || []).map(id => id.toString());
+            if (!targetTeamId || !headTeamIds.includes(targetTeamId)) {
+                return res.status(403).json({ success: false, error: 'Not authorized to view this profile' });
+            }
+        } else {
             return res.status(403).json({ success: false, error: 'Not authorized to view this profile' });
         }
     }

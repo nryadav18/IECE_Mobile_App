@@ -23,12 +23,32 @@ import EditReportModal from '../components/EditReportModal';
 import IndiaMap from '../components/IndiaMap';
 import SidebarMenu from '../components/SidebarMenu';
 import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
+import TeamMultiSelectModal from '../components/TeamMultiSelectModal';
+import { HEAD_ROLES, roleLabel } from '../utils/roles';
+
+// Head roles as dropdown options ({ _id, name }) for CustomDropdown.
+const HEAD_ROLE_OPTIONS = HEAD_ROLES.map(r => ({ _id: r, name: roleLabel(r) }));
+// Leader roles for the Team Leader / Trainee Team Leader toggle.
+const LEADER_ROLE_OPTIONS = [
+  { _id: 'team_leader', name: 'Team Leader' },
+  { _id: 'trainee_team_leader', name: 'Trainee Team Leader' },
+];
 
 const TlSchema = Yup.object().shape({
   name: Yup.string().required('Required'),
   email: Yup.string().email('Invalid email').required('Required'),
   password: Yup.string().min(6, 'Min 6 chars').required('Required'),
   schoolId: Yup.string().required('Required'),
+  teamId: Yup.string().required('Required'),
+});
+
+const HeadSchema = Yup.object().shape({
+  name: Yup.string().required('Required'),
+  email: Yup.string().email('Invalid email').required('Required'),
+  password: Yup.string().min(6, 'Min 6 chars').required('Required'),
+  role: Yup.string().oneOf(HEAD_ROLES, 'Select a head role').required('Required'),
+  schoolId: Yup.string().required('Required'),
+  teamIds: Yup.array().of(Yup.string()).min(1, 'Assign at least one team'),
 });
 
 const ChairmanSchema = Yup.object().shape({
@@ -98,6 +118,7 @@ const TrainerSchema = Yup.object().shape({
   password: Yup.string().min(6, 'Min 6 chars').required('Required'),
   schoolId: Yup.string().required('Required'),
   teamLeaderId: Yup.string().required('Required'),
+  teamId: Yup.string().required('Required'),
 });
 
 const TAB_ITEMS = [
@@ -106,6 +127,8 @@ const TAB_ITEMS = [
   { key: 'Trainer', label: 'Create Trainer', icon: 'person-add-outline' },
   { key: 'Chairman', label: 'Create Chairman', icon: 'business-outline' },
   { key: 'TeamLeader', label: 'Create Team Leader', icon: 'person-add-outline' },
+  { key: 'Head', label: 'Create Head', icon: 'ribbon-outline' },
+  { key: 'Teams', label: 'Teams', icon: 'people-circle-outline' },
   { key: 'Reports', label: 'Reports', icon: 'document-text-outline' },
   { key: 'Holidays', label: 'School Holidays', icon: 'sunny-outline' },
   { key: 'Banners', label: 'Banners', icon: 'images-outline' },
@@ -133,6 +156,11 @@ export default function CreatorAdminPortal({ navigation, route }) {
   const [schools, setSchools] = useState([]);
   const [teamLeaders, setTeamLeaders] = useState([]);
   const [trainers, setTrainers] = useState([]);
+  const [teams, setTeams] = useState([]);
+  const [heads, setHeads] = useState([]);
+  const [newTeamName, setNewTeamName] = useState('');
+  const [creatingTeam, setCreatingTeam] = useState(false);
+  const [teamModalVisible, setTeamModalVisible] = useState(false);
   const [allActivities, setAllActivities] = useState([]);
   const [reports, setReports] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
@@ -181,13 +209,15 @@ export default function CreatorAdminPortal({ navigation, route }) {
     try {
       // Use allSettled so a single failing endpoint can't blank unrelated data
       // (e.g. the Visit Reports list staying empty just because /media failed).
-      const [schoolsRes, tlsRes, trainersRes, activitiesRes, bannerRes, reportsRes] = await Promise.allSettled([
+      const [schoolsRes, tlsRes, trainersRes, activitiesRes, bannerRes, reportsRes, teamsRes, headsRes] = await Promise.allSettled([
         api.get('/admin/schools'),
         api.get('/admin/team-leaders'),
         api.get('/admin/users?role=trainer&limit=100'),
         api.get('/activities'),
         api.get('/media'),
-        api.get('/reports')
+        api.get('/reports'),
+        api.get('/admin/teams'),
+        api.get('/admin/users?role=zonal_head,cluster_head,regional_head&limit=100')
       ]);
       if (schoolsRes.status === 'fulfilled') setSchools(schoolsRes.value.data.data);
       if (tlsRes.status === 'fulfilled') setTeamLeaders(tlsRes.value.data.data);
@@ -195,7 +225,9 @@ export default function CreatorAdminPortal({ navigation, route }) {
       if (activitiesRes.status === 'fulfilled') setAllActivities(activitiesRes.value.data.data);
       if (bannerRes.status === 'fulfilled') setBanners(bannerRes.value.data.data);
       if (reportsRes.status === 'fulfilled') setReports(reportsRes.value.data.data);
-      [schoolsRes, tlsRes, trainersRes, activitiesRes, bannerRes, reportsRes].forEach((r, i) => {
+      if (teamsRes.status === 'fulfilled') setTeams(teamsRes.value.data.data);
+      if (headsRes.status === 'fulfilled') setHeads(headsRes.value.data.data);
+      [schoolsRes, tlsRes, trainersRes, activitiesRes, bannerRes, reportsRes, teamsRes, headsRes].forEach((r, i) => {
         if (r.status === 'rejected') console.log('Admin fetchDropdownData call failed', i, r.reason?.message);
       });
     } catch (err) {
@@ -214,6 +246,49 @@ export default function CreatorAdminPortal({ navigation, route }) {
     } catch (err) {
       showAlert('Error', err.response?.data?.error || 'Creation failed', 'error');
     }
+  };
+
+  const handleCreateTeam = async () => {
+    const name = newTeamName.trim();
+    if (!name) {
+      showAlert('Error', 'Team name is required', 'error');
+      return;
+    }
+    setCreatingTeam(true);
+    try {
+      await api.post('/admin/team', { name });
+      setNewTeamName('');
+      showAlert('Success', 'Team created', 'success');
+      fetchDropdownData();
+    } catch (err) {
+      showAlert('Error', err.response?.data?.error || 'Failed to create team', 'error');
+    } finally {
+      setCreatingTeam(false);
+    }
+  };
+
+  const handleDeleteTeam = (team) => {
+    showAlert(
+      'Delete Team',
+      `Delete "${team.name}"? Its members will be unassigned and it will be removed from every head.`,
+      'warning',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.delete(`/admin/team/${team._id}`);
+              showAlert('Deleted', 'Team removed', 'success');
+              fetchDropdownData();
+            } catch (err) {
+              showAlert('Error', err.response?.data?.error || 'Failed to delete team', 'error');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const uploadToCloudinary = async (fileUri, mimeType, name) => {
@@ -251,6 +326,10 @@ export default function CreatorAdminPortal({ navigation, route }) {
   const submitBanner = async () => {
     if (!bannerImageAsset) {
       showAlert('Error', 'Please select and crop an image first', 'error');
+      return;
+    }
+    if (!bannerDesc.trim()) {
+      showAlert('Error', 'Banner description is required', 'error');
       return;
     }
 
@@ -585,7 +664,28 @@ export default function CreatorAdminPortal({ navigation, route }) {
               )}
             </View>
 
-            <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginBottom: 12 }]}>Team Leaders</Text>
+            <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginBottom: 12 }]}>Heads</Text>
+            {heads.filter(h => h.name?.toLowerCase().includes(profilesSearchQuery.toLowerCase()) || h.email?.toLowerCase().includes(profilesSearchQuery.toLowerCase())).length === 0 ? <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No Heads found.</Text> : (
+               heads.filter(h => h.name?.toLowerCase().includes(profilesSearchQuery.toLowerCase()) || h.email?.toLowerCase().includes(profilesSearchQuery.toLowerCase())).map(h => (
+                 <View key={h._id} style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12 }]}>
+                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                     <View style={{ flex: 1 }}>
+                       <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{h.name}</Text>
+                       <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{h.email}</Text>
+                       <Text style={{ color: theme.colors.primary, marginTop: 4, fontSize: 12, fontWeight: '600' }}>{roleLabel(h.role)} · {(h.teamIds?.length || 0)} team(s)</Text>
+                     </View>
+                     <TouchableOpacity
+                       style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+                       onPress={() => navigation.navigate('UserProfile', { userId: h._id })}
+                     >
+                       <Text style={{ color: '#fff', fontWeight: 'bold' }}>View Profile</Text>
+                     </TouchableOpacity>
+                   </View>
+                 </View>
+               ))
+            )}
+
+            <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginBottom: 12, marginTop: 12 }]}>Team Leaders</Text>
             {teamLeaders.filter(tl => tl.name?.toLowerCase().includes(profilesSearchQuery.toLowerCase()) || tl.email?.toLowerCase().includes(profilesSearchQuery.toLowerCase())).length === 0 ? <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No Team Leaders found.</Text> : (
                teamLeaders.filter(tl => tl.name?.toLowerCase().includes(profilesSearchQuery.toLowerCase()) || tl.email?.toLowerCase().includes(profilesSearchQuery.toLowerCase())).map(tl => (
                  <View key={tl._id} style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12 }]}>
@@ -593,8 +693,9 @@ export default function CreatorAdminPortal({ navigation, route }) {
                      <View style={{ flex: 1 }}>
                        <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{tl.name}</Text>
                        <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{tl.email}</Text>
+                       <Text style={{ color: theme.colors.textSecondary, marginTop: 4, fontSize: 12 }}>{roleLabel(tl.role)}{tl.teamId?.name ? ` · ${tl.teamId.name}` : ''}</Text>
                      </View>
-                     <TouchableOpacity 
+                     <TouchableOpacity
                        style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
                        onPress={() => navigation.navigate('UserProfile', { userId: tl._id })}
                      >
@@ -633,7 +734,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
               <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                 <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Trainer</Text>
                 <Formik
-                  initialValues={{ name: '', email: '', password: '', schoolId: '', teamLeaderId: '' }}
+                  initialValues={{ name: '', email: '', password: '', schoolId: '', teamLeaderId: '', teamId: '' }}
                   validationSchema={TrainerSchema}
                   onSubmit={(v, { resetForm }) => submitForm('/admin/trainer', v, resetForm)}
                 >
@@ -670,6 +771,15 @@ export default function CreatorAdminPortal({ navigation, route }) {
                         placeholder="Select a team leader"
                       />
                       {submitCount > 0 && errors.teamLeaderId && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.teamLeaderId}</Text>}
+
+                      <CustomDropdown
+                        label="Assign Team"
+                        data={teams}
+                        selectedValue={values.teamId}
+                        onSelect={(item) => handleChange('teamId')(item._id)}
+                        placeholder="Select a team"
+                      />
+                      {submitCount > 0 && errors.teamId && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.teamId}</Text>}
 
                       <TouchableOpacity style={[styles.submitBtn, { backgroundColor: theme.colors.primary }]} onPress={handleSubmit}>
                         <Text style={[styles.submitBtnText, { color: '#FFF' }]}>Create Trainer</Text>
@@ -775,24 +885,49 @@ export default function CreatorAdminPortal({ navigation, route }) {
             </MotiView>
           </View>
 
-          {/* Team Leader Form */}
+          {/* Team Leader / Trainee Team Leader Form */}
           <View style={{ display: activeTab === 'TeamLeader' ? 'flex' : 'none' }}>
             <MotiView from={{ opacity: 0, x: -20 }} animate={{ opacity: activeTab === 'TeamLeader' ? 1 : 0, x: activeTab === 'TeamLeader' ? 0 : -20 }}>
               <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                 <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Team Leader</Text>
                 <Formik
-                  initialValues={{ name: '', email: '', password: '', schoolId: '' }}
+                  initialValues={{ name: '', email: '', password: '', schoolId: '', teamId: '', role: 'team_leader' }}
                   validationSchema={TlSchema}
                   onSubmit={(v, { resetForm }) => submitForm('/admin/team-leader', v, resetForm)}
                 >
-                  {({ handleChange, handleSubmit, values, errors, submitCount }) => (
+                  {({ handleChange, handleSubmit, values, errors, submitCount, setFieldValue }) => (
                     <View>
+                      {/* Role toggle: Team Leader has full parity with Trainee Team Leader. */}
+                      <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Role</Text>
+                      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+                        {LEADER_ROLE_OPTIONS.map(opt => {
+                          const selected = values.role === opt._id;
+                          return (
+                            <TouchableOpacity
+                              key={opt._id}
+                              onPress={() => setFieldValue('role', opt._id)}
+                              style={{
+                                flex: 1,
+                                paddingVertical: 12,
+                                borderRadius: 10,
+                                borderWidth: 1,
+                                alignItems: 'center',
+                                backgroundColor: selected ? theme.colors.primary : theme.colors.background,
+                                borderColor: selected ? theme.colors.primary : theme.colors.border,
+                              }}
+                            >
+                              <Text style={{ color: selected ? '#FFF' : theme.colors.textPrimary, fontWeight: '600', fontSize: 13 }}>{opt.name}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+
                       <TextInput style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, color: theme.colors.textPrimary }]} placeholder="Name" placeholderTextColor={theme.colors.placeholder} onChangeText={handleChange('name')} value={values.name} />
                       {submitCount > 0 && errors.name && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.name}</Text>}
-                      
+
                       <TextInput style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, color: theme.colors.textPrimary }]} placeholder="Email" placeholderTextColor={theme.colors.placeholder} onChangeText={handleChange('email')} value={values.email} autoCapitalize="none" />
                       {submitCount > 0 && errors.email && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.email}</Text>}
-                      
+
                       <View style={[styles.passwordInputWrapper, { borderColor: theme.colors.border, backgroundColor: theme.colors.background }]}>
                         <TextInput style={[styles.passwordInput, { color: theme.colors.textPrimary }]} placeholder="Password" placeholderTextColor={theme.colors.placeholder} onChangeText={handleChange('password')} value={values.password} secureTextEntry={secureTextEntry} />
                         <TouchableOpacity onPress={() => setSecureTextEntry(!secureTextEntry)} style={styles.eyeIconContainer}>
@@ -810,14 +945,150 @@ export default function CreatorAdminPortal({ navigation, route }) {
                       />
                       {submitCount > 0 && errors.schoolId && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.schoolId}</Text>}
 
+                      <CustomDropdown
+                        label="Assign Team"
+                        data={teams}
+                        selectedValue={values.teamId}
+                        onSelect={(item) => handleChange('teamId')(item._id)}
+                        placeholder="Select a team"
+                      />
+                      {submitCount > 0 && errors.teamId && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.teamId}</Text>}
+
                       <TouchableOpacity style={[styles.submitBtn, { backgroundColor: theme.colors.primary }]} onPress={handleSubmit}>
-                        <Text style={[styles.submitBtnText, { color: '#FFF' }]}>Create Team Leader</Text>
+                        <Text style={[styles.submitBtnText, { color: '#FFF' }]}>
+                          Create {values.role === 'trainee_team_leader' ? 'Trainee Team Leader' : 'Team Leader'}
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   )}
                 </Formik>
               </View>
             </MotiView>
+          </View>
+
+          {/* Head Form (Zonal / Cluster / Regional) */}
+          <View style={{ display: activeTab === 'Head' ? 'flex' : 'none' }}>
+            <MotiView from={{ opacity: 0, x: -20 }} animate={{ opacity: activeTab === 'Head' ? 1 : 0, x: activeTab === 'Head' ? 0 : -20 }}>
+              <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Head</Text>
+                <Formik
+                  initialValues={{ name: '', email: '', password: '', role: '', schoolId: '', teamIds: [] }}
+                  validationSchema={HeadSchema}
+                  onSubmit={(v, { resetForm }) => submitForm('/admin/head', v, resetForm)}
+                >
+                  {({ handleChange, handleSubmit, values, errors, submitCount, setFieldValue }) => (
+                    <View>
+                      <CustomDropdown
+                        label="Head Role"
+                        data={HEAD_ROLE_OPTIONS}
+                        selectedValue={values.role}
+                        onSelect={(item) => setFieldValue('role', item._id)}
+                        placeholder="Select head role"
+                      />
+                      {submitCount > 0 && errors.role && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.role}</Text>}
+
+                      <TextInput style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, color: theme.colors.textPrimary }]} placeholder="Name" placeholderTextColor={theme.colors.placeholder} onChangeText={handleChange('name')} value={values.name} />
+                      {submitCount > 0 && errors.name && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.name}</Text>}
+
+                      <TextInput style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, color: theme.colors.textPrimary }]} placeholder="Email" placeholderTextColor={theme.colors.placeholder} onChangeText={handleChange('email')} value={values.email} autoCapitalize="none" keyboardType="email-address" />
+                      {submitCount > 0 && errors.email && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.email}</Text>}
+
+                      <View style={[styles.passwordInputWrapper, { borderColor: theme.colors.border, backgroundColor: theme.colors.background }]}>
+                        <TextInput style={[styles.passwordInput, { color: theme.colors.textPrimary }]} placeholder="Password" placeholderTextColor={theme.colors.placeholder} onChangeText={handleChange('password')} value={values.password} secureTextEntry={secureTextEntry} />
+                        <TouchableOpacity onPress={() => setSecureTextEntry(!secureTextEntry)} style={styles.eyeIconContainer}>
+                          <Ionicons name={secureTextEntry ? 'eye-off-outline' : 'eye-outline'} size={20} color={theme.colors.textSecondary} />
+                        </TouchableOpacity>
+                      </View>
+                      {submitCount > 0 && errors.password && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.password}</Text>}
+
+                      <CustomDropdown
+                        label="Assign School"
+                        data={schools}
+                        selectedValue={values.schoolId}
+                        onSelect={(item) => handleChange('schoolId')(item._id)}
+                        placeholder="Select a school"
+                      />
+                      {submitCount > 0 && errors.schoolId && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.schoolId}</Text>}
+
+                      {/* Assign Team (multi-select) */}
+                      <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Assign Team(s)</Text>
+                      <TouchableOpacity
+                        style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, justifyContent: 'center' }]}
+                        onPress={() => setTeamModalVisible(true)}
+                      >
+                        <Text style={{ color: values.teamIds.length ? theme.colors.textPrimary : theme.colors.placeholder }}>
+                          {values.teamIds.length
+                            ? teams.filter(t => values.teamIds.includes(t._id)).map(t => t.name).join(', ')
+                            : 'Select one or more teams'}
+                        </Text>
+                      </TouchableOpacity>
+                      {submitCount > 0 && errors.teamIds && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.teamIds}</Text>}
+
+                      <TeamMultiSelectModal
+                        visible={teamModalVisible}
+                        teams={teams}
+                        selectedIds={values.teamIds}
+                        onClose={() => setTeamModalVisible(false)}
+                        onSelect={(ids) => setFieldValue('teamIds', ids)}
+                      />
+
+                      <TouchableOpacity style={[styles.submitBtn, { backgroundColor: theme.colors.primary }]} onPress={handleSubmit}>
+                        <Text style={[styles.submitBtnText, { color: '#FFF' }]}>
+                          Create {values.role ? roleLabel(values.role) : 'Head'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </Formik>
+              </View>
+            </MotiView>
+          </View>
+
+          {/* Teams TAB — create + manage teams */}
+          <View style={{ display: activeTab === 'Teams' ? 'flex' : 'none' }}>
+            <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+              <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Team</Text>
+              <TextInput
+                style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, color: theme.colors.textPrimary }]}
+                placeholder="Team Name"
+                placeholderTextColor={theme.colors.placeholder}
+                value={newTeamName}
+                onChangeText={setNewTeamName}
+              />
+              <TouchableOpacity
+                style={[styles.submitBtn, { backgroundColor: theme.colors.primary, opacity: creatingTeam ? 0.7 : 1 }]}
+                onPress={handleCreateTeam}
+                disabled={creatingTeam}
+              >
+                {creatingTeam
+                  ? <ActivityIndicator color="#FFF" />
+                  : <Text style={[styles.submitBtnText, { color: '#FFF' }]}>Create Team</Text>}
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginTop: 8, marginBottom: 12 }]}>All Teams</Text>
+            {teams.length === 0 ? (
+              <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No teams yet. Create one above.</Text>
+            ) : (
+              teams.map(team => (
+                <View key={team._id} style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12 }]}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{team.name}</Text>
+                      <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>
+                        {typeof team.memberCount === 'number' ? `${team.memberCount} member${team.memberCount === 1 ? '' : 's'}` : ''}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{ backgroundColor: (theme.colors.error || '#e53935') + '20', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+                      onPress={() => handleDeleteTeam(team)}
+                    >
+                      <Ionicons name="trash-outline" size={18} color={theme.colors.error || '#e53935'} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
           </View>
 
           {/* School Holidays TAB */}
@@ -849,7 +1120,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
 
               {bannerImageAsset && (
                 <View>
-                  <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Step 2: Add Description (Optional)</Text>
+                  <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Step 2: Add Description (Required)</Text>
                   <TextInput
                     style={[styles.input, { borderColor: theme.colors.border, color: theme.colors.textPrimary, height: 80, textAlignVertical: 'top' }]}
                     placeholder="Enter banner description"
@@ -980,7 +1251,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
         onSelectTab={setActiveTab}
         actions={[
           { label: 'Pending Registrations', icon: 'scan-outline', onPress: () => navigation.navigate('PendingRegistrations') },
-          { label: 'Settings', icon: 'settings-outline', onPress: () => navigation.navigate('ManageScreen') },
+          { label: 'IECE Staff', icon: 'people-outline', onPress: () => navigation.navigate('ManageScreen') },
           { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
         ]}
       />

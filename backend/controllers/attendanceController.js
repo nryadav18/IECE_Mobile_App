@@ -294,7 +294,9 @@ exports.verifyFaceV2 = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Facial registration v2 is not approved yet' });
     }
 
-    if (!user.schoolId && user.role !== 'team_leader') {
+    // Only plain trainers strictly require a school; leaders/heads may mark
+    // attendance without one (same allowance the team leader already had).
+    if (!user.schoolId && user.role === 'trainer') {
       return res.status(400).json({ success: false, message: 'Trainer is not assigned to a school' });
     }
 

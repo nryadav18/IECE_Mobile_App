@@ -1,5 +1,6 @@
 const VisitReport = require('../models/VisitReport');
 const User = require('../models/User');
+const { HEAD_ROLES, LEADER_ROLES } = require('../utils/roles');
 const { sendPushNotification } = require('../utils/pushNotification');
 
 const REPORT_FIELDS = [
@@ -34,8 +35,16 @@ exports.getReports = async (req, res) => {
       const schools = await School.find({ chairmanId: req.user.id });
       const schoolIds = schools.map(s => s._id);
       query.schoolId = { $in: schoolIds };
-    } else if (req.user.role === 'team_leader') {
+    } else if (LEADER_ROLES.includes(req.user.role)) {
+      // A (trainee) team leader sees the reports they authored.
       query.teamLeaderId = req.user.id;
+    } else if (HEAD_ROLES.includes(req.user.role)) {
+      // A head sees reports authored by the leaders in the teams they oversee.
+      const leaderIds = await User.find({
+        teamId: { $in: req.user.teamIds || [] },
+        role: { $in: LEADER_ROLES }
+      }).distinct('_id');
+      query.teamLeaderId = { $in: leaderIds };
     } else if (req.user.role === 'creator_admin') {
       // Admin sees all reports, so no status filter is applied here
     }

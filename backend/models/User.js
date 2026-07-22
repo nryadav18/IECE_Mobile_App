@@ -23,7 +23,16 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['creator_admin', 'trainer', 'chairman', 'team_leader'],
+    enum: [
+      'creator_admin',
+      'trainer',
+      'chairman',
+      'team_leader',
+      'trainee_team_leader',
+      'zonal_head',
+      'cluster_head',
+      'regional_head'
+    ],
     required: [true, 'Please assign a role']
   },
   teamLeaderId: {
@@ -35,6 +44,19 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'School',
     default: null
+  },
+  // The team a member belongs to (team_leader / trainee_team_leader / trainer).
+  teamId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Team',
+    default: null
+  },
+  // The teams a head oversees (zonal / cluster / regional head). A team can be
+  // overseen by more than one head, so this is stored per-head as an array.
+  teamIds: {
+    type: [mongoose.Schema.Types.ObjectId],
+    ref: 'Team',
+    default: []
   },
   timetablePdfUrl: {
     type: String,

@@ -147,6 +147,13 @@ export default function UserProfileScreen({ route, navigation }) {
           </View>
         )}
 
+        {profile.teamId?.name && (
+          <View style={[styles.detailRow, { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.colors.border }]}>
+            <Text style={{ color: theme.colors.textSecondary, width: 80 }}>Team:</Text>
+            <Text style={{ color: theme.colors.textPrimary, flex: 1, fontWeight: '500' }}>{profile.teamId.name}</Text>
+          </View>
+        )}
+
         {profile.teamLeaderId && (
           <View style={[styles.detailRow, { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.colors.border }]}>
             <Text style={{ color: theme.colors.textSecondary, width: 80 }}>Leader:</Text>

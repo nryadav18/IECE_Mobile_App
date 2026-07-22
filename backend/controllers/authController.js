@@ -19,7 +19,10 @@ const sendTokenResponse = (user, statusCode, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      schoolId: user.schoolId
+      schoolId: user.schoolId,
+      teamLeaderId: user.teamLeaderId,
+      teamId: user.teamId,
+      teamIds: user.teamIds || []
     }
   });
 };

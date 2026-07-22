@@ -9,6 +9,7 @@ import { MotiView } from 'moti';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { HEAD_ROLES } from '../utils/roles';
 
 const width = Dimensions.get('window').width;
 
@@ -62,7 +63,9 @@ export default function DashboardScreen({ navigation }) {
     if (user.role === 'creator_admin') return 'CreatorAdminPortal';
     if (user.role === 'trainer') return 'TrainerPortal';
     if (user.role === 'chairman') return 'ChairmanPortal';
-    if (user.role === 'team_leader') return 'TeamLeaderPortal';
+    // Trainee Team Leader shares the Team Leader portal (full parity).
+    if (user.role === 'team_leader' || user.role === 'trainee_team_leader') return 'TeamLeaderPortal';
+    if (HEAD_ROLES.includes(user.role)) return 'HeadPortal';
     return null;
   };
 
@@ -185,6 +188,12 @@ export default function DashboardScreen({ navigation }) {
                         ) : (
                           <View style={[styles.eventThumbnail, { backgroundColor: theme.colors.background, justifyContent: 'center', alignItems: 'center' }]}>
                             <Ionicons name="image-outline" size={32} color={theme.colors.textSecondary} />
+                          </View>
+                        )}
+                        {activity.isStarred && (
+                          <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 14, padding: 4, flexDirection: 'row', alignItems: 'center' }}>
+                            <Ionicons name="star" size={14} color="#F5B301" />
+                            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', marginLeft: 3 }}>Star</Text>
                           </View>
                         )}
                         <View style={styles.eventInfo}>

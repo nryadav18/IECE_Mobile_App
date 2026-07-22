@@ -1,5 +1,6 @@
 const Activity = require('../models/Activity');
 const User = require('../models/User');
+const { HEAD_ROLES, LEADER_ROLES } = require('../utils/roles');
 const { sendPushNotification } = require('../utils/pushNotification');
 
 const notifyAdminForActivityApproval = async (activity, senderId) => {
@@ -31,10 +32,16 @@ exports.getActivities = async (req, res) => {
     } else if (role === 'trainer') {
       // Trainer: only their own activities.
       query.uploaderId = req.user._id;
-    } else if (role === 'team_leader') {
-      // Team Leader: their school's activities + their team members' (and own) activities.
+    } else if (LEADER_ROLES.includes(role)) {
+      // (Trainee) Team Leader: their school's activities + their team members' (and own) activities.
       const teamMemberIds = await User.find({ teamLeaderId: req.user._id }).distinct('_id');
       const orClauses = [{ uploaderId: { $in: [...teamMemberIds, req.user._id] } }];
+      if (req.user.schoolId) orClauses.push({ schoolId: req.user.schoolId });
+      query.$or = orClauses;
+    } else if (HEAD_ROLES.includes(role)) {
+      // Head: activities of everyone in the teams they oversee + their own school + self.
+      const memberIds = await User.find({ teamId: { $in: req.user.teamIds || [] } }).distinct('_id');
+      const orClauses = [{ uploaderId: { $in: [...memberIds, req.user._id] } }];
       if (req.user.schoolId) orClauses.push({ schoolId: req.user.schoolId });
       query.$or = orClauses;
     }
@@ -171,6 +178,43 @@ exports.updateActivityStatus = async (req, res) => {
     }
 
     res.status(200).json({ success: true, data: activity });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+};
+
+// @desc    Toggle "Star Activity" (heads highlight a standout activity)
+// @route   PUT /api/activities/:id/star
+// @access  Private/Heads + CreatorAdmin
+exports.toggleStarActivity = async (req, res) => {
+  try {
+    const activity = await Activity.findById(req.params.id);
+    if (!activity) {
+      return res.status(404).json({ success: false, error: 'Activity not found' });
+    }
+
+    // Default to starring; allow explicit unstar via { starred: false }.
+    const starred = req.body.starred === undefined ? true : !!req.body.starred;
+
+    activity.isStarred = starred;
+    activity.starredBy = starred ? req.user._id : null;
+    activity.starredAt = starred ? new Date() : null;
+    await activity.save();
+
+    res.status(200).json({ success: true, data: activity });
+
+    // Notify the uploader when their activity is starred.
+    if (starred) {
+      const uploader = await User.findById(activity.uploaderId);
+      if (uploader && uploader.expoPushToken) {
+        await sendPushNotification(
+          uploader.expoPushToken,
+          '⭐ Your Activity Was Starred',
+          `${req.user.name} marked your activity "${activity.name}" as a Star Activity.`,
+          { type: 'activity_starred', relatedId: activity._id.toString() }
+        );
+      }
+    }
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
