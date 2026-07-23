@@ -1333,10 +1333,11 @@ export default function CreatorAdminPortal({ navigation, route }) {
         actions={[
           { label: 'Substitution Requests', icon: 'swap-horizontal-outline', onPress: () => navigation.navigate('Substitution') },
           { label: 'Notifications', icon: 'notifications-outline', onPress: () => navigation.navigate('Notifications') },
-          // Face approvals + staff management are admin-only. CEO is read-only.
+          // Face approvals + staff management + create-admin are admin-only. CEO is read-only.
           ...(isCEO ? [] : [
             { label: 'Face Approvals', icon: 'scan-outline', onPress: () => navigation.navigate('PendingRegistrations') },
             { label: 'IECE Staff', icon: 'people-outline', onPress: () => navigation.navigate('ManageScreen') },
+            { label: 'Create Admin', icon: 'shield-checkmark-outline', onPress: () => navigation.navigate('CreateAdmin') },
           ]),
           { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
         ]}

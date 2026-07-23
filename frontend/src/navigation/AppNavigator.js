@@ -24,6 +24,7 @@ import ScreenLoader from '../components/ScreenLoader';
 import FaceRegistrationScreen from '../screens/Trainer/FaceRegistrationScreen';
 import AttendanceScreen from '../screens/Trainer/AttendanceScreen';
 import PendingRegistrationsScreen from '../screens/Admin/PendingRegistrationsScreen';
+import CreateAdminScreen from '../screens/Admin/CreateAdminScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import SubstitutionScreen from '../screens/Substitution/SubstitutionScreen';
 import RaiseSubstitutionScreen from '../screens/Substitution/RaiseSubstitutionScreen';
@@ -101,6 +102,7 @@ const AppNavigator = () => {
               <Stack.Screen name="ManageAssets" component={ManageAssetsScreen} />
               <Stack.Screen name="ManageScreen" component={ManageScreen} />
               <Stack.Screen name="PendingRegistrations" component={PendingRegistrationsScreen} />
+              <Stack.Screen name="CreateAdmin" component={CreateAdminScreen} />
             </>
           )}
           {/* CEO reuses the admin portal (create/manage options are hidden for them). */}

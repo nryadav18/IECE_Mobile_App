@@ -2,7 +2,7 @@ const SchoolHoliday = require('../models/SchoolHoliday');
 const School = require('../models/School');
 const { notifyUserById, notifyRole } = require('../utils/pushNotification');
 
-// @desc    Apply for a school holiday (goes to chairman/admin for approval)
+// @desc    Apply for a school holiday (goes to admin for approval)
 // @route   POST /api/holidays
 // @access  Private/Trainer,TeamLeader
 exports.applyHoliday = async (req, res) => {
@@ -37,16 +37,8 @@ exports.applyHoliday = async (req, res) => {
 
     res.status(201).json({ success: true, data: holiday });
 
-    // Notify the school's chairman + all admins so they can approve it.
+    // Holiday requests are reviewed by the admin only — notify all admins.
     const school = await School.findById(schoolId);
-    if (school && school.chairmanId) {
-      notifyUserById(
-        school.chairmanId,
-        '🏫 School Holiday Request',
-        `${req.user.name} requested ${date} as a school holiday. Please review it.`,
-        { type: 'holiday_approval', role: 'chairman' }
-      ).catch((e) => console.error('Holiday chairman notify error:', e.message));
-    }
     notifyRole(
       'creator_admin',
       '🏫 School Holiday Request',
@@ -72,11 +64,8 @@ exports.getHolidays = async (req, res) => {
 
     if (role === 'creator_admin') {
       if (req.query.schoolId) query.schoolId = req.query.schoolId;
-    } else if (role === 'chairman') {
-      const schoolIds = await School.find({ chairmanId: req.user.id }).distinct('_id');
-      query.schoolId = { $in: schoolIds };
     } else {
-      // trainer / team_leader → only their own school's holidays.
+      // Field staff → only their own school's holidays.
       if (!req.user.schoolId) return res.status(200).json({ success: true, data: [] });
       query.schoolId = req.user.schoolId;
     }
@@ -97,7 +86,7 @@ exports.getHolidays = async (req, res) => {
 
 // @desc    Approve / reject a holiday request
 // @route   PUT /api/holidays/:id/status
-// @access  Private/Chairman(of school),CreatorAdmin
+// @access  Private/CreatorAdmin
 exports.reviewHoliday = async (req, res) => {
   try {
     const { status, rejectionRemark } = req.body;
@@ -108,13 +97,9 @@ exports.reviewHoliday = async (req, res) => {
     const holiday = await SchoolHoliday.findById(req.params.id).populate('appliedBy', 'role');
     if (!holiday) return res.status(404).json({ success: false, message: 'Holiday request not found' });
 
-    // Authorization: admin, or the chairman who owns that school.
+    // Authorization: admin only.
     if (req.user.role !== 'creator_admin') {
-      const school = await School.findById(holiday.schoolId);
-      const chairmanId = (school && (school.chairmanId?._id || school.chairmanId))?.toString();
-      if (req.user.role !== 'chairman' || chairmanId !== req.user.id) {
-        return res.status(403).json({ success: false, message: 'Not authorized to review this holiday' });
-      }
+      return res.status(403).json({ success: false, message: 'Only an admin can review holiday requests' });
     }
 
     holiday.status = status;
@@ -151,14 +136,8 @@ exports.deleteHoliday = async (req, res) => {
 
     const isAdmin = req.user.role === 'creator_admin';
     const isApplicant = holiday.appliedBy.toString() === req.user.id;
-    let isChairman = false;
-    if (req.user.role === 'chairman') {
-      const school = await School.findById(holiday.schoolId);
-      const chairmanId = (school && (school.chairmanId?._id || school.chairmanId))?.toString();
-      isChairman = chairmanId === req.user.id;
-    }
 
-    if (!isAdmin && !isChairman && !(isApplicant && holiday.status === 'pending')) {
+    if (!isAdmin && !(isApplicant && holiday.status === 'pending')) {
       return res.status(403).json({ success: false, message: 'Not authorized to delete this holiday' });
     }
 

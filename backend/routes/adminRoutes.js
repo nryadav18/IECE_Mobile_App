@@ -14,7 +14,10 @@ const {
   deleteUser,
   getPendingFacialRegistrations,
   approveFacialRegistration,
-  deleteFacialRegistration
+  deleteFacialRegistration,
+  initiateAdminCreation,
+  verifyAndCreateAdmin,
+  resendAdminOtps
 } = require('../controllers/adminController');
 const { protect, authorize } = require('../middleware/auth');
 const { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES } = require('../utils/roles');
@@ -48,6 +51,11 @@ router.post('/head', authorize('creator_admin'), createHead);
 
 router.put('/user/:id', authorize('creator_admin'), updateUser);
 router.delete('/user/:id', authorize('creator_admin'), deleteUser);
+
+// Create Admin — dual-OTP verified (existing admin + new admin emails).
+router.post('/create-admin/initiate', authorize('creator_admin'), initiateAdminCreation);
+router.post('/create-admin/verify', authorize('creator_admin'), verifyAndCreateAdmin);
+router.post('/create-admin/resend', authorize('creator_admin'), resendAdminOtps);
 
 router.get('/pending-face-registrations', authorize('creator_admin'), getPendingFacialRegistrations);
 router.put('/approve-face-registration/:id/:schoolId', authorize('creator_admin'), approveFacialRegistration);

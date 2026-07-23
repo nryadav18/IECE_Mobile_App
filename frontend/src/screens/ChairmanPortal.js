@@ -11,7 +11,6 @@ import Avatar from '../components/Avatar';
 import CustomAlert from '../components/CustomAlert';
 import SidebarMenu from '../components/SidebarMenu';
 import NotificationBell from '../components/NotificationBell';
-import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
 import VisitReportDetail from '../components/VisitReportDetail';
 import { SectionSkeleton } from '../components/Skeleton';
 import { useSectionTransition } from '../hooks/useSectionTransition';
@@ -20,11 +19,10 @@ const TAB_ITEMS = [
   { key: 'Overview', label: 'Overview', icon: 'home-outline' },
   { key: 'Pending', label: 'Pending Approvals', icon: 'time-outline' },
   { key: 'Completed', label: 'Completed Activities', icon: 'checkmark-done-outline' },
-  { key: 'Holidays', label: 'School Holidays', icon: 'sunny-outline' },
 ];
 
 // Skeleton shape per section — matches the real layout that follows.
-const SECTION_SKELETON = { Overview: 'stats', Pending: 'list', Completed: 'list', Holidays: 'list' };
+const SECTION_SKELETON = { Overview: 'stats', Pending: 'list', Completed: 'list' };
 
 export default function ChairmanPortal({ navigation, route }) {
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Overview');
@@ -471,17 +469,6 @@ export default function ChairmanPortal({ navigation, route }) {
       {!tabLoading && activeTab === 'Overview' && renderOverview()}
 
       {!tabLoading && activeTab === 'Completed' && renderCompleted()}
-
-      {!tabLoading && activeTab === 'Holidays' && (
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={refreshControl}
-        >
-          <SchoolHolidayApprovals />
-        </ScrollView>
-      )}
 
       {!tabLoading && activeTab === 'Pending' && (
       <FlatList

@@ -48,6 +48,14 @@ const email = (local) => `${local}@${DOMAIN}`.toLowerCase();
 
 const STATES = ['Kerala', 'Tamil Nadu', 'Karnataka', 'Andhra Pradesh', 'Telangana', 'Maharashtra'];
 const ASSOC_YEARS = ['1st-year', '2nd-year', '3rd-year'];
+// Neutral school-name pool — NO team names / "shared" wording, since chairman
+// (school) logins can see school names and must never see team terminology.
+const SCHOOL_NAMES = [
+  'Green Valley', 'Sunrise', 'Riverside', 'Silver Oak', 'Maple Grove', 'Lotus',
+  'Blue Ridge', 'Hillside', 'Cedar Park', 'Meadow Brook', 'Pinewood', 'Crescent',
+  'Harmony', 'Evergreen', 'Bright Future', 'Unity', 'Horizon', 'Springfield',
+  'Lakeview', 'Grand Vista', 'Rosewood', 'Golden Gate', 'Whitefield', 'Eastwood',
+];
 
 // Little ANSI helpers for a readable console report.
 const A = {
@@ -82,7 +90,7 @@ async function seed() {
   // --- Clean previous sample data so re-runs stay idempotent ---
   const delUsers = await User.deleteMany({ email: /^sample_/i });
   const delTeams = await Team.deleteMany({ name: /^Sample Team/i });
-  const delSchools = await School.deleteMany({ name: /^Sample School/i });
+  const delSchools = await School.deleteMany({ name: /^Sample /i });
   console.log(paint(A.gray, `  cleaned previous sample data → ${delUsers.deletedCount} users, ${delTeams.deletedCount} teams, ${delSchools.deletedCount} schools`));
 
   // --- School factory (needs a chairman; assigns round-robin) ---
@@ -93,11 +101,14 @@ async function seed() {
 
   let schoolCount = 0;
   let chairIdx = 0;
-  const createSchool = async (label) => {
-    schoolCount += 1;
+  // Neutral, unique school name — no team/allocation terminology. The `label`
+  // argument is intentionally ignored (kept for call-site readability only).
+  const createSchool = async () => {
     const chairman = chairmen[chairIdx++ % chairmen.length];
+    const base = SCHOOL_NAMES[schoolCount % SCHOOL_NAMES.length];
+    schoolCount += 1;
     return School.create({
-      name: `Sample School ${schoolCount} · ${label}`,
+      name: `Sample ${base} Public School ${schoolCount}`,
       chairmanId: chairman._id,
       associationYear: ASSOC_YEARS[schoolCount % ASSOC_YEARS.length],
       classCoverage: '8th to 10th',
@@ -135,7 +146,7 @@ async function seed() {
     const team = await Team.create({ name: plan.name, createdBy: admin._id });
 
     // A school for the team's leaders (and, for "shared" teams, all trainers too).
-    const leaderSchool = await createSchool(plan.model === 'shared' ? `${plan.name} — shared` : `${plan.name} — leaders`);
+    const leaderSchool = await createSchool();
 
     const teamLeader = await createUser({
       name: `Sample Team Leader ${teamNo}`, email: email(`sample_teamleader${teamNo}`),
@@ -158,12 +169,12 @@ async function seed() {
       } else if (plan.special && i === 3) {
         // The ONE trainer mapped to multiple schools.
         schools = [
-          await createSchool(`${plan.name} — Trainer ${i + 1} (A)`),
-          await createSchool(`${plan.name} — Trainer ${i + 1} (B)`),
-          await createSchool(`${plan.name} — Trainer ${i + 1} (C)`),
+          await createSchool(),
+          await createSchool(),
+          await createSchool(),
         ];
       } else {
-        schools = [await createSchool(`${plan.name} — Trainer ${i + 1}`)];
+        schools = [await createSchool()];
       }
 
       const trainer = await createUser({

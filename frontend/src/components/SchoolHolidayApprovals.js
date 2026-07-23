@@ -12,9 +12,9 @@ const STATUS_COLORS = {
 };
 
 /**
- * "School Holiday Section" — lists holiday requests and lets a chairman / admin
- * approve or reject them. Used inside the Chairman & Admin portals. Self-contained:
- * fetches /holidays and refreshes itself after each action.
+ * "School Holiday Section" — lists holiday requests and lets an admin approve or
+ * reject them. Used inside the Admin portal only (holiday review is admin-only).
+ * Self-contained: fetches /holidays and refreshes itself after each action.
  */
 export default function SchoolHolidayApprovals({ refreshKey }) {
   const { theme } = useContext(ThemeContext);

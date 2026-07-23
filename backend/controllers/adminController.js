@@ -1,8 +1,21 @@
 const User = require('../models/User');
 const School = require('../models/School');
 const Team = require('../models/Team');
+const PendingAdminRequest = require('../models/PendingAdminRequest');
 const { HEAD_ROLES, LEADER_ROLES, TEAM_MEMBER_ROLES } = require('../utils/roles');
 const { notifyUser, notifyUserById } = require('../utils/pushNotification');
+const { sendOtp, generateOtp } = require('../utils/email');
+
+const EMAIL_RE = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
+const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+// Mask an email for display: joh****@example.com
+const maskEmail = (e) => {
+  const [local, domain] = String(e || '').split('@');
+  if (!domain) return e;
+  const shown = local.slice(0, 2);
+  return `${shown}${'*'.repeat(Math.max(2, local.length - shown.length))}@${domain}`;
+};
 
 // Normalize the schools sent from the client into a de-duplicated array.
 // Accepts the new `schoolIds` array or falls back to a single legacy `schoolId`.
@@ -562,6 +575,176 @@ exports.deleteFacialRegistration = async (req, res) => {
       `Your facial registration for ${schoolName} was removed. Please register your face again there to mark attendance.`,
       { type: 'face_removed' }
     ).catch(err => console.error('Face-removed notification error:', err.message));
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ===========================================================================
+//  Create Admin — dual-OTP verified (existing admin's email + new admin's email)
+// ===========================================================================
+
+// @desc    Step 1 — validate the new admin's details and send both OTPs
+// @route   POST /api/admin/create-admin/initiate
+// @access  Private/CreatorAdmin
+exports.initiateAdminCreation = async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, error: 'Full name is required' });
+    }
+    if (!email || !EMAIL_RE.test(email.trim())) {
+      return res.status(400).json({ success: false, error: 'A valid email is required' });
+    }
+    if (!password || password.length < 6) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+    }
+
+    const newEmail = email.trim().toLowerCase();
+    const requesterEmail = (req.user.email || '').trim();
+
+    if (!requesterEmail) {
+      return res.status(400).json({ success: false, error: 'Your account has no email on file to receive an OTP' });
+    }
+    if (newEmail === requesterEmail.toLowerCase()) {
+      return res.status(400).json({ success: false, error: "The new admin's email must be different from yours" });
+    }
+
+    const exists = await User.findOne({ email: newEmail });
+    if (exists) {
+      return res.status(400).json({ success: false, error: 'A user with this email already exists' });
+    }
+
+    // Only one in-flight request per admin at a time.
+    await PendingAdminRequest.deleteMany({ requestedBy: req.user._id });
+
+    const requesterOtp = generateOtp();
+    const newAdminOtp = generateOtp();
+
+    const pending = await PendingAdminRequest.create({
+      requestedBy: req.user._id,
+      requesterEmail,
+      name: name.trim(),
+      email: newEmail,
+      password,
+      requesterOtp,
+      newAdminOtp,
+      expiresAt: new Date(Date.now() + OTP_TTL_MS),
+    });
+
+    const [sentRequester, sentNew] = await Promise.all([
+      sendOtp(requesterEmail, requesterOtp),
+      sendOtp(newEmail, newAdminOtp),
+    ]);
+
+    if (!sentRequester || !sentNew) {
+      await pending.deleteOne();
+      return res.status(500).json({ success: false, error: 'Could not send the verification emails. Please try again.' });
+    }
+
+    res.status(200).json({
+      success: true,
+      requestId: pending._id,
+      requesterEmailMasked: maskEmail(requesterEmail),
+      newAdminEmailMasked: maskEmail(newEmail),
+      expiresInSec: Math.floor(OTP_TTL_MS / 1000),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// @desc    Step 2 — verify BOTH OTPs, then create the admin
+// @route   POST /api/admin/create-admin/verify
+// @access  Private/CreatorAdmin
+exports.verifyAndCreateAdmin = async (req, res) => {
+  try {
+    const { requestId, requesterOtp, newAdminOtp } = req.body;
+
+    if (!requestId || !requesterOtp || !newAdminOtp) {
+      return res.status(400).json({ success: false, error: 'The request id and both OTPs are required' });
+    }
+
+    const pending = await PendingAdminRequest.findById(requestId);
+    if (!pending) {
+      return res.status(400).json({ success: false, error: 'Verification session not found or expired. Please start again.' });
+    }
+    if (String(pending.requestedBy) !== String(req.user._id)) {
+      return res.status(403).json({ success: false, error: 'You are not authorized for this request' });
+    }
+    if (pending.expiresAt < new Date()) {
+      await pending.deleteOne();
+      return res.status(400).json({ success: false, error: 'The verification codes have expired. Please start again.' });
+    }
+    if (pending.attempts >= 5) {
+      await pending.deleteOne();
+      return res.status(429).json({ success: false, error: 'Too many incorrect attempts. Please start again.' });
+    }
+
+    const okRequester = String(requesterOtp).trim() === pending.requesterOtp;
+    const okNew = String(newAdminOtp).trim() === pending.newAdminOtp;
+
+    if (!okRequester || !okNew) {
+      pending.attempts += 1;
+      await pending.save();
+      const left = Math.max(0, 5 - pending.attempts);
+      const which = !okRequester && !okNew
+        ? 'Both OTPs are incorrect'
+        : !okRequester ? 'Your OTP is incorrect' : "The new admin's OTP is incorrect";
+      return res.status(400).json({ success: false, error: `${which}. ${left} attempt${left === 1 ? '' : 's'} left.` });
+    }
+
+    // Re-check the email is still free before creating.
+    const exists = await User.findOne({ email: pending.email });
+    if (exists) {
+      await pending.deleteOne();
+      return res.status(400).json({ success: false, error: 'A user with this email already exists' });
+    }
+
+    const newAdmin = await User.create({
+      name: pending.name,
+      email: pending.email,
+      password: pending.password, // hashed by the User pre-save hook
+      role: 'creator_admin',
+    });
+
+    await pending.deleteOne();
+
+    const safe = newAdmin.toObject();
+    delete safe.password;
+    res.status(201).json({ success: true, data: safe });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// @desc    Resend both OTPs for an in-flight admin-creation request
+// @route   POST /api/admin/create-admin/resend
+// @access  Private/CreatorAdmin
+exports.resendAdminOtps = async (req, res) => {
+  try {
+    const { requestId } = req.body;
+    const pending = await PendingAdminRequest.findById(requestId);
+    if (!pending || String(pending.requestedBy) !== String(req.user._id)) {
+      return res.status(404).json({ success: false, error: 'Verification session not found. Please start again.' });
+    }
+
+    pending.requesterOtp = generateOtp();
+    pending.newAdminOtp = generateOtp();
+    pending.attempts = 0;
+    pending.expiresAt = new Date(Date.now() + OTP_TTL_MS);
+    await pending.save();
+
+    const [s1, s2] = await Promise.all([
+      sendOtp(pending.requesterEmail, pending.requesterOtp),
+      sendOtp(pending.email, pending.newAdminOtp),
+    ]);
+    if (!s1 || !s2) {
+      return res.status(500).json({ success: false, error: 'Could not resend the verification emails.' });
+    }
+
+    res.status(200).json({ success: true, expiresInSec: Math.floor(OTP_TTL_MS / 1000) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

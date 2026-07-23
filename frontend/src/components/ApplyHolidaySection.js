@@ -111,7 +111,7 @@ export default function ApplyHolidaySection({ onChanged }) {
         </View>
 
         <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 12 }}>
-          Request a date as a holiday for your school. It needs approval from your school/admin. Once approved it is marked on the calendar and check-in/out is disabled that day.
+          Request a date as a holiday for your school. It needs admin approval. Once approved it is marked on the calendar and check-in/out is disabled that day.
         </Text>
 
         <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 6 }}>Date</Text>

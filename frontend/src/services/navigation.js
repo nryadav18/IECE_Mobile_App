@@ -80,14 +80,10 @@ function resolveTarget(data = {}) {
         params: { initialTab: 'Attendance' },
       };
 
-    // A holiday request needs review → open the recipient's portal directly on
-    // its "School Holidays" tab (the approval / pending list). Recipients are the
-    // school's chairman and the creator admins; `role` (set by the backend) picks
-    // the right portal.
+    // A holiday request needs review → admins only. Open the admin portal on its
+    // "School Holidays" tab (the approval / pending list).
     case 'holiday_approval':
-      return data.role === 'creator_admin'
-        ? { screen: 'CreatorAdminPortal', params: { initialTab: 'Holidays' } }
-        : { screen: 'ChairmanPortal', params: { initialTab: 'Holidays' } };
+      return { screen: 'CreatorAdminPortal', params: { initialTab: 'Holidays' } };
 
     // A holiday request was approved/rejected → open the applicant's portal on
     // its "Apply School Holiday" tab so they see the decision. Applicants are

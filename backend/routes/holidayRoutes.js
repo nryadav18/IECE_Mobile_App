@@ -16,7 +16,7 @@ router.route('/')
   .get(getHolidays)
   .post(authorize(...FIELD_STAFF), applyHoliday);
 
-router.put('/:id/status', authorize('chairman', 'creator_admin'), reviewHoliday);
+router.put('/:id/status', authorize('creator_admin'), reviewHoliday);
 router.delete('/:id', deleteHoliday);
 
 module.exports = router;
