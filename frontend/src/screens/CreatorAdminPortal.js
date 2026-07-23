@@ -576,16 +576,15 @@ export default function CreatorAdminPortal({ navigation, route }) {
                   <Text style={{ color: theme.colors.textSecondary }}>Class Coverage: {selectedSchool.classCoverage}</Text>
                   <Text style={{ color: theme.colors.textSecondary, marginBottom: 16 }}>Total Strength: {selectedSchool.totalStrength || 0}</Text>
                   
-                  {/* Quota Progress visualization for this school */}
+                  {/* Activities summary for this school — counts only, no fixed target */}
                   {(() => {
                     const approvedCount = schoolActivities.filter(a => a.status === 'approved').length;
-                    const remainingCount = Math.max(0, 30 - approvedCount);
-                    const progressPercent = Math.min(100, (approvedCount / 30) * 100);
+                    const totalCount = schoolActivities.length;
                     return (
                       <View style={[styles.progressCard, { backgroundColor: theme.colors.background, borderColor: theme.colors.border, borderWidth: 1, padding: 16, borderRadius: 12, marginBottom: 20 }]}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
                           <Ionicons name="ribbon-outline" size={20} color={theme.colors.primary} style={{ marginRight: 8 }} />
-                          <Text style={{ fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary }}>School Activities Quota</Text>
+                          <Text style={{ fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary }}>School Activities</Text>
                         </View>
                         <View style={styles.quotaRow}>
                           <View style={styles.quotaBlock}>
@@ -594,22 +593,9 @@ export default function CreatorAdminPortal({ navigation, route }) {
                           </View>
                           <View style={[styles.quotaDivider, { backgroundColor: theme.colors.border }]} />
                           <View style={styles.quotaBlock}>
-                            <Text style={[styles.quotaNumber, { color: theme.colors.textPrimary }]}>{remainingCount}</Text>
-                            <Text style={[styles.quotaLabel, { color: theme.colors.textSecondary }]}>Remaining</Text>
+                            <Text style={[styles.quotaNumber, { color: theme.colors.textPrimary }]}>{totalCount}</Text>
+                            <Text style={[styles.quotaLabel, { color: theme.colors.textSecondary }]}>Total</Text>
                           </View>
-                          <View style={[styles.quotaDivider, { backgroundColor: theme.colors.border }]} />
-                          <View style={styles.quotaBlock}>
-                            <Text style={[styles.quotaNumber, { color: theme.colors.textSecondary }]}>30</Text>
-                            <Text style={[styles.quotaLabel, { color: theme.colors.textSecondary }]}>Target</Text>
-                          </View>
-                        </View>
-                        <View style={styles.progressBarWrapper}>
-                          <View style={[styles.progressBarBackground, { backgroundColor: theme.colors.border }]}>
-                            <View style={[styles.progressBarFill, { width: `${progressPercent}%`, backgroundColor: theme.colors.primary }]} />
-                          </View>
-                          <Text style={[styles.progressPercentText, { color: theme.colors.textSecondary }]}>
-                            {Math.floor(progressPercent)}% of target met
-                          </Text>
                         </View>
                       </View>
                     );

@@ -250,9 +250,6 @@ export default function ChairmanPortal({ navigation, route }) {
 
   // ---- Overview tab: school profile/progress + faculty roster ----
   const renderOverview = () => {
-    const remainingCount = Math.max(0, 30 - approvedCount);
-    const progressPercent = Math.min(100, (approvedCount / 30) * 100);
-
     return (
       <ScrollView
         style={{ flex: 1 }}
@@ -261,69 +258,110 @@ export default function ChairmanPortal({ navigation, route }) {
         refreshControl={refreshControl}
       >
         {school && (
-          <MotiView 
-            style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} 
-            from={{ opacity: 0, scale: 0.98 }} 
-            animate={{ opacity: 1, scale: 1 }}
+          <MotiView
+            style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+            from={{ opacity: 0, translateY: 8 }}
+            animate={{ opacity: 1, translateY: 0 }}
           >
-            <View style={styles.cardHeader}>
-              <Ionicons name="business-outline" size={20} color={theme.colors.primary} />
-              <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>School Profile & Progress</Text>
+            {/* Hero header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={[styles.schoolIcon, { backgroundColor: theme.colors.primary + '15' }]}>
+                <Ionicons name="business" size={22} color={theme.colors.primary} />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={[styles.schoolName, { color: theme.colors.textPrimary }]} numberOfLines={2}>{school.name}</Text>
+                {!!school.state && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
+                    <Ionicons name="location-outline" size={13} color={theme.colors.textSecondary} />
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginLeft: 3 }}>{school.state}</Text>
+                  </View>
+                )}
+              </View>
             </View>
-            <View style={styles.cardBody}>
-              <Text style={[styles.profileText, { color: theme.colors.textSecondary }]}>
-                Schools: <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>{schools.map(s => s.name).join(', ')}</Text>
-              </Text>
-              <Text style={[styles.profileText, { color: theme.colors.textSecondary }]}>
-                Association Year: <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>{schools.length > 0 ? schools[0].associationYear : 'N/A'}</Text>
-              </Text>
-              
-              {/* Quota Progress */}
-              <View style={[styles.quotaContainer, { borderColor: theme.colors.border }]}>
-                <View style={styles.quotaHeader}>
-                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 13 }}>Activities Completed</Text>
-                  <Text style={{ color: theme.colors.primary, fontWeight: '800', fontSize: 13 }}>{approvedCount} / 30</Text>
+
+            {/* When the chairman owns more than one school */}
+            {schools.length > 1 && (
+              <View style={{ marginTop: 14 }}>
+                <Text style={[styles.miniLabel, { color: theme.colors.textSecondary }]}>YOUR SCHOOLS</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 }}>
+                  {schools.map((s) => (
+                    <View key={s._id} style={[styles.schoolChip, { backgroundColor: theme.colors.background, borderColor: theme.colors.border }]}>
+                      <Text style={{ color: theme.colors.textPrimary, fontSize: 12, fontWeight: '600' }}>{s.name}</Text>
+                    </View>
+                  ))}
                 </View>
-                <View style={[styles.progressBarBackground, { backgroundColor: theme.colors.background }]}>
-                  <View style={[styles.progressBarFill, { width: `${progressPercent}%`, backgroundColor: theme.colors.primary }]} />
+              </View>
+            )}
+
+            {/* Responsive info grid */}
+            <View style={styles.infoGrid}>
+              {[
+                { icon: 'calendar-outline', label: 'Association', value: school.associationYear || 'N/A' },
+                { icon: 'library-outline', label: 'Class Coverage', value: school.classCoverage || 'N/A' },
+                { icon: 'people-outline', label: 'Total Strength', value: String(school.totalStrength || 0) },
+                { icon: 'person-outline', label: 'Faculty', value: String(faculty.length) },
+              ].map((info) => (
+                <View key={info.label} style={[styles.infoTile, { backgroundColor: theme.colors.background, borderColor: theme.colors.border }]}>
+                  <Ionicons name={info.icon} size={16} color={theme.colors.primary} />
+                  <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]} numberOfLines={1}>{info.value}</Text>
+                  <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>{info.label}</Text>
                 </View>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 4 }}>
-                  {remainingCount} more activities needed to meet yearly target.
+              ))}
+            </View>
+
+            {/* Activities completed — count only (no fixed target) */}
+            <View style={[styles.progressPanel, { backgroundColor: theme.colors.primary + '0D', borderColor: theme.colors.primary + '22', flexDirection: 'row', alignItems: 'center' }]}>
+              <View style={[styles.schoolIcon, { backgroundColor: theme.colors.primary + '18' }]}>
+                <Ionicons name="ribbon" size={22} color={theme.colors.primary} />
+              </View>
+              <View style={{ marginLeft: 12, flex: 1 }}>
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' }}>Activities Completed</Text>
+                <Text style={{ color: theme.colors.textPrimary, fontSize: 24, fontWeight: '800', marginTop: 2 }}>
+                  {approvedCount}
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.textSecondary }}>  approved</Text>
                 </Text>
               </View>
-
-              {school.mouPdfUrl && (
-                <TouchableOpacity 
-                  style={[styles.mouBtn, { backgroundColor: theme.colors.primary }]}
-                  onPress={() => Linking.openURL(school.mouPdfUrl)}
-                >
-                  <Ionicons name="document-text-outline" size={18} color="#fff" />
-                  <Text style={styles.mouBtnText}>View MOU PDF</Text>
-                </TouchableOpacity>
-              )}
             </View>
+
+            {school.mouPdfUrl && (
+              <TouchableOpacity
+                style={[styles.mouBtn, { backgroundColor: theme.colors.primary }]}
+                onPress={() => Linking.openURL(school.mouPdfUrl)}
+              >
+                <Ionicons name="document-text-outline" size={18} color="#fff" />
+                <Text style={styles.mouBtnText}>View MOU PDF</Text>
+              </TouchableOpacity>
+            )}
           </MotiView>
         )}
 
-        <Text style={[styles.subtitle, { color: theme.colors.textPrimary, marginTop: 16 }]}>Faculty Roster</Text>
-        <FlatList
-          data={faculty}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          keyExtractor={(item) => item._id}
-          renderItem={({ item }) => (
-            <View style={[styles.facultyChip, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-              <Avatar name={item.name} size={20} style={{ marginRight: 6 }} />
-              <Text style={[styles.facultyText, { color: theme.colors.textPrimary }]}>{item.name}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, marginBottom: 12 }}>
+          <Text style={[styles.subtitle, { color: theme.colors.textPrimary, marginBottom: 0 }]}>Faculty Roster</Text>
+          {faculty.length > 0 && (
+            <View style={{ backgroundColor: theme.colors.primary + '15', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 }}>
+              <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>{faculty.length}</Text>
             </View>
           )}
-          contentContainerStyle={{ paddingVertical: 4 }}
-          ListEmptyComponent={
-            <Text style={{ color: theme.colors.textSecondary, marginBottom: 16, fontSize: 14, fontWeight: '500' }}>
-              No faculty found.
-            </Text>
-          }
-        />
+        </View>
+        {faculty.length === 0 ? (
+          <Text style={{ color: theme.colors.textSecondary, marginBottom: 16, fontSize: 14, fontWeight: '500' }}>
+            No faculty found.
+          </Text>
+        ) : (
+          <View style={styles.facultyGrid}>
+            {faculty.map((item) => (
+              <View key={item._id} style={[styles.facultyCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                <Avatar name={item.name} size={34} />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={[styles.facultyName, { color: theme.colors.textPrimary }]} numberOfLines={1}>{item.name}</Text>
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 1 }} numberOfLines={1}>
+                    {item.email || 'Trainer'}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
       </ScrollView>
     );
   };
@@ -816,24 +854,86 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 4,
   },
+  schoolIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  schoolName: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  miniLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  schoolChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  infoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginTop: 16,
+  },
+  infoTile: {
+    width: '48.5%',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+  },
+  infoValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    marginTop: 8,
+  },
+  infoLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  progressPanel: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 6,
+    marginBottom: 4,
+  },
   subtitle: { 
     fontSize: 18, 
     fontWeight: '700', 
     marginBottom: 12,
     letterSpacing: -0.3,
   },
-  facultyChip: { 
+  facultyGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  facultyCard: {
+    width: '48.5%',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12, 
-    paddingVertical: 8, 
-    borderRadius: 20, 
-    marginRight: 8, 
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
     borderWidth: 1,
+    marginBottom: 10,
   },
-  facultyText: {
+  facultyName: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   reportItem: { 
     padding: 16, 
