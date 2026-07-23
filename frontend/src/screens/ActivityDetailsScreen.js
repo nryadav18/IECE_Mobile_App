@@ -8,6 +8,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { Image } from 'react-native';
 import api from '../services/api';
 import Avatar from '../components/Avatar';
+import { Skeleton, SkeletonCircle, SkeletonDetail } from '../components/Skeleton';
 
 const { width } = Dimensions.get('window');
 
@@ -36,8 +37,12 @@ export default function ActivityDetailsScreen({ route, navigation }) {
 
   if (loading || !activity) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <Text style={{ color: theme.colors.textPrimary }}>Loading activity...</Text>
+      <View style={{ flex: 1, backgroundColor: theme.colors.background, paddingTop: insets.top }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 }}>
+          <SkeletonCircle plain size={36} style={{ marginRight: 12 }} />
+          <Skeleton plain width={'55%'} height={18} radius={8} />
+        </View>
+        <SkeletonDetail style={{ paddingHorizontal: 16 }} />
       </View>
     );
   }

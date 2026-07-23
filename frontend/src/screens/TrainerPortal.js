@@ -11,12 +11,15 @@ import { Ionicons } from '@expo/vector-icons';
 import CustomAlert from '../components/CustomAlert';
 import CreateActivityForm from '../components/CreateActivityForm';
 import EditActivityModal from '../components/EditActivityModal';
-import ScreenLoader from '../components/ScreenLoader';
 import SidebarMenu from '../components/SidebarMenu';
+import NotificationBell from '../components/NotificationBell';
 import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
 import { dayKey, isOffToday, buildHolidayMarks } from '../utils/holiday';
+import { buildSubstitutionMarks, SUBSTITUTION_MARK_COLOR } from '../utils/substitutionMarks';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
+import { SectionSkeleton } from '../components/Skeleton';
+import { useSectionTransition } from '../hooks/useSectionTransition';
 
 const TAB_ITEMS = [
   { key: 'Progress', label: 'Progress', icon: 'ribbon-outline' },
@@ -26,6 +29,15 @@ const TAB_ITEMS = [
   { key: 'ManageActivities', label: 'Manage Activities', icon: 'list-outline' },
 ];
 
+// Skeleton shape per section — matches the real layout that follows.
+const SECTION_SKELETON = {
+  Progress: 'stats',
+  Attendance: 'calendar',
+  SchoolHoliday: 'form',
+  PublishActivity: 'form',
+  ManageActivities: 'list',
+};
+
 export default function TrainerPortal({ navigation, route }) {
   const [school, setSchool] = useState(null);
   const [myActivities, setMyActivities] = useState([]);
@@ -33,8 +45,10 @@ export default function TrainerPortal({ navigation, route }) {
   const [myApprovedCount, setMyApprovedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Progress');
+  const { tabLoading, selectTab } = useSectionTransition(activeTab, setActiveTab);
   const [activityToEdit, setActivityToEdit] = useState(null);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [substitutionLeaves, setSubstitutionLeaves] = useState([]);
   const [faceStatus, setFaceStatus] = useState('none'); // aggregate: 'none' | 'pending' | 'approved'
   const [mySchools, setMySchools] = useState([]);        // [{ _id, name }] assigned schools
   const [faceRegs, setFaceRegs] = useState([]);          // per-school face registrations
@@ -131,6 +145,7 @@ export default function TrainerPortal({ navigation, route }) {
     try {
       const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
+      setSubstitutionLeaves(attendanceRes.data.substitutionLeaves || []);
     } catch (error) {
       console.log('Error fetching attendance', error);
     }
@@ -169,6 +184,7 @@ export default function TrainerPortal({ navigation, route }) {
 
       const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
+      setSubstitutionLeaves(attendanceRes.data.substitutionLeaves || []);
       await loadFaceStatus();
       fetchHolidays();
     } catch (error) {
@@ -207,7 +223,11 @@ export default function TrainerPortal({ navigation, route }) {
   };
 
   if (loading) {
-    return <ScreenLoader message="Loading Trainer Portal..." />;
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.colors.background, paddingTop: insets.top }}>
+        <SectionSkeleton kind={SECTION_SKELETON[activeTab] || 'list'} />
+      </View>
+    );
   }
 
   // During logout the user is cleared before the navigator swaps stacks; bail
@@ -238,7 +258,7 @@ export default function TrainerPortal({ navigation, route }) {
     return (
       <ScrollView
         style={styles.flex1}
-        contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
+        contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
@@ -370,13 +390,16 @@ export default function TrainerPortal({ navigation, route }) {
               <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 1 }}>Trainer Portal</Text>
             </View>
           </View>
+          <NotificationBell navigation={navigation} />
         </View>
       </View>
 
-      {activeTab === 'Progress' && renderProgressTab()}
+      {tabLoading && <SectionSkeleton kind={SECTION_SKELETON[activeTab] || 'list'} />}
 
-      {activeTab === 'Attendance' && (
-        <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }} keyboardShouldPersistTaps="handled">
+      {!tabLoading && activeTab === 'Progress' && renderProgressTab()}
+
+      {!tabLoading && activeTab === 'Attendance' && (
+        <ScrollView style={styles.flex1} contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }} keyboardShouldPersistTaps="handled">
           {/* School selector — shown when the person works under multiple schools */}
           {mySchools.length > 1 && (
             <View style={{ marginBottom: 14 }}>
@@ -514,7 +537,9 @@ export default function TrainerPortal({ navigation, route }) {
                       text: { color: theme.colors.textPrimary, fontWeight: 'bold' }
                     }
                   }
-                })
+                }),
+                // On-substitution leave days win over everything else for the period.
+                ...buildSubstitutionMarks(substitutionLeaves),
               }}
               markingType={'custom'}
               theme={{
@@ -533,18 +558,19 @@ export default function TrainerPortal({ navigation, route }) {
             <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#FFC107', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Leave</Text></View>
             <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#87CEEB', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Holiday</Text></View>
             <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#E0E0E0', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Blank</Text></View>
+            <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: SUBSTITUTION_MARK_COLOR, borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Substituted</Text></View>
           </View>
         </ScrollView>
       )}
 
-      {activeTab === 'SchoolHoliday' && (
-        <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
+      {!tabLoading && activeTab === 'SchoolHoliday' && (
+        <ScrollView style={styles.flex1} contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
           <ApplyHolidaySection onChanged={fetchHolidays} />
         </ScrollView>
       )}
 
-      {activeTab === 'PublishActivity' && (
-        <ScrollView style={styles.flex1} contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
+      {!tabLoading && activeTab === 'PublishActivity' && (
+        <ScrollView style={styles.flex1} contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
           <CreateActivityForm onActivityCreated={() => {
             fetchData();
             setActiveTab('Progress');
@@ -552,12 +578,12 @@ export default function TrainerPortal({ navigation, route }) {
         </ScrollView>
       )}
 
-      {activeTab === 'ManageActivities' && (
+      {!tabLoading && activeTab === 'ManageActivities' && (
         <FlatList
           data={myActivities}
           keyExtractor={(item) => item._id}
           style={styles.flex1}
-          contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
+          contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           refreshControl={
@@ -642,9 +668,10 @@ export default function TrainerPortal({ navigation, route }) {
         subtitle={user?.name || 'Trainer'}
         tabs={TAB_ITEMS}
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={selectTab}
         actions={[
           { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
+          { label: 'Notifications', icon: 'notifications-outline', onPress: () => navigation.navigate('Notifications') },
           { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
           { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
         ]}

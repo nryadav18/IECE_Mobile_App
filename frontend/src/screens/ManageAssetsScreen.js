@@ -9,6 +9,7 @@ import api from '../services/api';
 import Avatar from '../components/Avatar';
 import CustomAlert from '../components/CustomAlert';
 import EditUserModal from '../components/EditUserModal';
+import { SkeletonList } from '../components/Skeleton';
 
 export default function ManageAssetsScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
@@ -166,8 +167,8 @@ export default function ManageAssetsScreen({ navigation }) {
       </View>
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
+        <View style={{ flex: 1, padding: 16 }}>
+          <SkeletonList count={6} />
         </View>
       ) : (
         <FlatList
@@ -245,7 +246,7 @@ const styles = StyleSheet.create({
   tabsContainer: { flexDirection: 'row', paddingHorizontal: 20 },
   tabBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 2 },
   tabText: { fontWeight: '600' },
-  listContent: { padding: 20 },
+  listContent: { flexGrow: 1, padding: 20 },
   card: { padding: 16, borderRadius: 12, borderWidth: 1, marginBottom: 16 },
   cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   cardInfo: { marginLeft: 12, flex: 1 },

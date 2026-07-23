@@ -18,15 +18,17 @@ import Avatar from '../components/Avatar';
 import CustomAlert from '../components/CustomAlert';
 import CustomDropdown from '../components/CustomDropdown';
 import EditActivityModal from '../components/EditActivityModal';
-import ScreenLoader from '../components/ScreenLoader';
 import EditReportModal from '../components/EditReportModal';
 import VisitReportDetail from '../components/VisitReportDetail';
 import VisitReportForm from '../components/VisitReportForm';
 import IndiaMap from '../components/IndiaMap';
 import SidebarMenu from '../components/SidebarMenu';
+import NotificationBell from '../components/NotificationBell';
 import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
 import TeamMultiSelectModal from '../components/TeamMultiSelectModal';
 import MultiSelectField from '../components/MultiSelectField';
+import { SectionSkeleton } from '../components/Skeleton';
+import { useSectionTransition } from '../hooks/useSectionTransition';
 import { HEAD_ROLES, roleLabel } from '../utils/roles';
 
 // Head roles as dropdown options ({ _id, name }) for CustomDropdown.
@@ -139,6 +141,23 @@ const TAB_ITEMS = [
   { key: 'ManageEvents', label: 'Activities', icon: 'calendar-outline' },
 ];
 
+// Which skeleton shape each section shows while it loads — mirrors the real
+// content so the loader "predicts" the layout that's about to appear.
+const SECTION_SKELETON = {
+  Monitoring: 'monitoring',
+  Profiles: 'list',
+  Trainer: 'form',
+  Chairman: 'form',
+  TeamLeader: 'form',
+  Head: 'form',
+  Teams: 'form',
+  Reports: 'list',
+  LogVisit: 'form',
+  Holidays: 'list',
+  Banners: 'form',
+  ManageEvents: 'list',
+};
+
 // The CEO is a read-only super-viewer: no create/manage, no holidays. They keep
 // Monitoring, Profiles, Reports and can log their own visit reports.
 const CEO_TABS = ['Monitoring', 'Profiles', 'Reports', 'LogVisit'];
@@ -152,6 +171,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
   const visibleTabs = isCEO ? TAB_ITEMS.filter(t => CEO_TABS.includes(t.key)) : TAB_ITEMS;
 
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Monitoring');
+  const { tabLoading, selectTab } = useSectionTransition(activeTab, setActiveTab);
 
   // Honor an `initialTab` passed via navigation (e.g. from a tapped report
   // notification) even if the portal is already mounted.
@@ -177,9 +197,9 @@ export default function CreatorAdminPortal({ navigation, route }) {
   // Everyone a visit report can be logged on (all field staff).
   const reportTargets = [...teamLeaders, ...trainers, ...heads];
   const myId = user?._id || user?.id;
-  const myReports = reports.filter(r => (r.teamLeaderId?._id || r.teamLeaderId) === myId);
   const [allActivities, setAllActivities] = useState([]);
   const [reports, setReports] = useState([]);
+  const myReports = reports.filter(r => (r.teamLeaderId?._id || r.teamLeaderId) === myId);
   const [loadingData, setLoadingData] = useState(true);
   const [activityToEdit, setActivityToEdit] = useState(null);
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info' });
@@ -466,11 +486,14 @@ export default function CreatorAdminPortal({ navigation, route }) {
             <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>IECE Management</Text>
           </View>
         </View>
-        <Ionicons name="shield-checkmark" size={24} color={theme.colors.primary} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+          <NotificationBell navigation={navigation} />
+          <Ionicons name="shield-checkmark" size={24} color={theme.colors.primary} />
+        </View>
       </View>
 
-      {loadingData ? (
-        <ScreenLoader message="Loading Admin Dashboard..." />
+      {loadingData || tabLoading ? (
+        <SectionSkeleton kind={SECTION_SKELETON[activeTab] || 'list'} />
       ) : (
         <ScrollView
           style={styles.scroll}
@@ -1320,8 +1343,10 @@ export default function CreatorAdminPortal({ navigation, route }) {
         subtitle={isCEO ? 'Executive Portal' : 'Management Portal'}
         tabs={visibleTabs}
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={selectTab}
         actions={[
+          { label: 'Substitution Requests', icon: 'swap-horizontal-outline', onPress: () => navigation.navigate('Substitution') },
+          { label: 'Notifications', icon: 'notifications-outline', onPress: () => navigation.navigate('Notifications') },
           // Face approvals + staff management are admin-only. CEO is read-only.
           ...(isCEO ? [] : [
             { label: 'Face Approvals', icon: 'scan-outline', onPress: () => navigation.navigate('PendingRegistrations') },

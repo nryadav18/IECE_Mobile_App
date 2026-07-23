@@ -39,6 +39,8 @@ const uploadRoutes = require('./routes/uploadRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const profileRoutes = require('./routes/profileRoutes');
 const holidayRoutes = require('./routes/holidayRoutes');
+const substitutionRoutes = require('./routes/substitutionRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 // Mount routers
 
@@ -54,6 +56,8 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/holidays', holidayRoutes);
+app.use('/api/substitutions', substitutionRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 const PORT = process.env.PORT || 3000;
 

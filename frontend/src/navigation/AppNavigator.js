@@ -24,7 +24,11 @@ import ScreenLoader from '../components/ScreenLoader';
 import FaceRegistrationScreen from '../screens/Trainer/FaceRegistrationScreen';
 import AttendanceScreen from '../screens/Trainer/AttendanceScreen';
 import PendingRegistrationsScreen from '../screens/Admin/PendingRegistrationsScreen';
-import { HEAD_ROLES } from '../utils/roles';
+import NotificationsScreen from '../screens/NotificationsScreen';
+import SubstitutionScreen from '../screens/Substitution/SubstitutionScreen';
+import RaiseSubstitutionScreen from '../screens/Substitution/RaiseSubstitutionScreen';
+import SubstitutionApprovalScreen from '../screens/Substitution/SubstitutionApprovalScreen';
+import { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES } from '../utils/roles';
 
 const Stack = createStackNavigator();
 
@@ -53,6 +57,20 @@ const AppNavigator = () => {
           <Stack.Screen name="Dashboard" component={DashboardScreen} />
           <Stack.Screen name="ActivityDetails" component={ActivityDetailsScreen} />
           <Stack.Screen name="UserProfile" component={UserProfileScreen} />
+          {/* Notification inbox — every authenticated user has one. */}
+          <Stack.Screen name="Notifications" component={NotificationsScreen} />
+
+          {/* Substitution feature — raisers (leaders/heads) + approvers (CEO/Admin). */}
+          {[...LEADER_ROLES, ...HEAD_ROLES, ...ADMIN_ROLES].includes(user.role) && (
+            <>
+              <Stack.Screen name="Substitution" component={SubstitutionScreen} />
+              <Stack.Screen name="RaiseSubstitution" component={RaiseSubstitutionScreen} />
+            </>
+          )}
+          {/* Only CEO/Admin can open the approval screen. */}
+          {ADMIN_ROLES.includes(user.role) && (
+            <Stack.Screen name="SubstitutionApproval" component={SubstitutionApprovalScreen} />
+          )}
 
           {user.role === 'trainer' && (
             <>

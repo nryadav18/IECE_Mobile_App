@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useContext, useCallback } from 'react';
 import { 
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Modal, KeyboardAvoidingView, Platform, FlatList
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Modal, KeyboardAvoidingView, Platform, FlatList, RefreshControl
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemeContext } from '../context/ThemeContext';
 import api from '../services/api';
-import ScreenLoader from '../components/ScreenLoader';
+import { Skeleton, ShineSweep } from '../components/Skeleton';
 import CustomAlert from '../components/CustomAlert';
 import CustomDropdown from '../components/CustomDropdown';
 import MultiSelectField from '../components/MultiSelectField';
@@ -27,6 +27,7 @@ export default function ManageScreen({ navigation }) {
   const [heads, setHeads] = useState([]);
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Edit modals state
@@ -55,8 +56,10 @@ export default function ManageScreen({ navigation }) {
     fetchData();
   }, []);
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (isRefresh = false) => {
+    // On pull-to-refresh keep the list visible and show only the pull spinner;
+    // don't flip the whole screen back to the full-screen ScreenLoader.
+    if (!isRefresh) setLoading(true);
     try {
       const [schoolsRes, tlsRes, trainersRes, chairmenRes, teamsRes, headsRes] = await Promise.all([
         api.get('/admin/schools'),
@@ -77,8 +80,14 @@ export default function ManageScreen({ navigation }) {
       showAlert('Error', 'Failed to load entries.', 'error');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchData(true);
+  }, []);
 
   const handleEditPress = (item) => {
     setEditingUser(item);
@@ -243,66 +252,141 @@ export default function ManageScreen({ navigation }) {
   const activePage = Math.min(currentPage, totalPages);
   const paginatedData = filteredData.slice((activePage - 1) * itemsPerPage, activePage * itemsPerPage);
 
-  if (loading) {
-    return <ScreenLoader message="Loading directory..." />;
-  }
+  // Show the skeleton on the very first load and whenever we're refreshing data,
+  // so a data update animates in cleanly instead of flashing stale content.
+  const showSkeleton = loading || refreshing;
+
+  // Column widths per tab — kept in sync with the real header/rows below so the
+  // skeleton rows line up perfectly with the loaded table (feels seamless).
+  const skeletonColumns = {
+    Schools: [60, 140, 120, 170, 90, 85, 85],
+    Trainers: [60, 120, 170, 140, 120, 100],
+    Heads: [60, 140, 190, 130, 130],
+    TeamLeaders: [60, 130, 150, 180, 150, 130, 100],
+  }[activeTab] || [60, 140, 170, 130, 120];
+
+  const renderSkeletonTable = () => (
+    <ScrollView key={`sk-${activeTab}`} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, paddingVertical: 10 }}>
+      {/* Static bars mount instantly; a SINGLE ShineSweep animates the whole card. */}
+      <View style={[styles.tableContainer, { borderColor: theme.colors.border }]}>
+        {/* Skeleton header row */}
+        <View style={[styles.tableHeaderRow, { backgroundColor: theme.colors.primary + '10', borderBottomColor: theme.colors.border }]}>
+          {skeletonColumns.map((w, i) => (
+            <View key={i} style={[styles.thContainer, { width: w }]}>
+              <Skeleton plain width={i === 0 ? 28 : w * 0.55} height={10} radius={4} />
+            </View>
+          ))}
+          <View style={[styles.thContainer, { width: 100, alignItems: 'center' }]}>
+            <Skeleton plain width={44} height={10} radius={4} />
+          </View>
+        </View>
+
+        {/* Skeleton body rows */}
+        {Array.from({ length: itemsPerPage }).map((_, r) => (
+          <View key={r} style={[styles.tableRow, { backgroundColor: r % 2 === 0 ? theme.colors.surface : theme.colors.background, borderBottomColor: theme.colors.border }]}>
+            {skeletonColumns.map((w, i) => (
+              <View key={i} style={[styles.tdContainer, { width: w }]}>
+                <Skeleton
+                  plain
+                  width={i === 0 ? 22 : Math.max(30, w * (0.5 + ((r + i) % 3) * 0.15))}
+                  height={i === 0 ? 12 : 13}
+                  radius={i === 0 ? 6 : 7}
+                />
+              </View>
+            ))}
+            {/* Action buttons placeholder */}
+            <View style={[styles.tdActions, { width: 100 }]}>
+              <Skeleton plain width={28} height={28} radius={7} />
+              <Skeleton plain width={28} height={28} radius={7} />
+            </View>
+          </View>
+        ))}
+
+        {/* One shared shine band sweeping the whole skeleton card. */}
+        <ShineSweep />
+      </View>
+    </ScrollView>
+  );
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
         
         {/* Header */}
-        <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+        <View style={styles.header}>
           <View style={styles.headerTitleContainer}>
             <TouchableOpacity onPress={() => navigation.goBack()} style={[styles.backBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
               <Ionicons name="arrow-back" size={20} color={theme.colors.textPrimary} />
             </TouchableOpacity>
-            <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>Manage Directory</Text>
+            <View>
+              <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>Manage Directory</Text>
+              <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>IEC staff & schools</Text>
+            </View>
+          </View>
+          <View style={[styles.headerCountPill, { backgroundColor: theme.colors.primary + '15' }]}>
+            <Ionicons name="people" size={14} color={theme.colors.primary} style={{ marginRight: 5 }} />
+            <Text style={[styles.headerCountText, { color: theme.colors.primary }]}>
+              {chairmen.length + trainers.length + teamLeaders.length + heads.length}
+            </Text>
           </View>
         </View>
 
-        {/* Tab Selection */}
-        <View style={[styles.tabs, { borderBottomColor: theme.colors.border }]}>
+        {/* Tab Selection — modern scrollable pills with live counts */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabsScroll}
+          contentContainerStyle={styles.tabs}
+        >
           {[
-            { key: 'Schools', label: 'Schools & Chairmen', icon: 'business-outline' },
-            { key: 'Trainers', label: 'Trainers', icon: 'person-outline' },
-            { key: 'TeamLeaders', label: 'Leaders', icon: 'people-outline' },
-            { key: 'Heads', label: 'Heads', icon: 'ribbon-outline' },
+            { key: 'Schools', label: 'Schools & Chairmen', icon: 'business', count: chairmen.length },
+            { key: 'Trainers', label: 'Trainers', icon: 'person', count: trainers.length },
+            { key: 'TeamLeaders', label: 'Leaders', icon: 'people', count: teamLeaders.length },
+            { key: 'Heads', label: 'Heads', icon: 'ribbon', count: heads.length },
           ].map((tab) => {
             const isActive = activeTab === tab.key;
             return (
-              <TouchableOpacity 
+              <TouchableOpacity
                 key={tab.key}
-                activeOpacity={0.8}
+                activeOpacity={0.85}
                 style={[
                   styles.tab,
                   {
-                    borderBottomColor: isActive ? theme.colors.primary : 'transparent',
-                    borderBottomWidth: isActive ? 3 : 0,
-                  }
+                    backgroundColor: isActive ? theme.colors.primary : theme.colors.surface,
+                    borderColor: isActive ? theme.colors.primary : theme.colors.border,
+                  },
+                  isActive && styles.tabActiveShadow,
                 ]}
                 onPress={() => {
                   setActiveTab(tab.key);
                   setSearchQuery('');
                 }}
               >
-                <Ionicons 
-                  name={tab.icon} 
-                  size={16} 
-                  color={isActive ? theme.colors.primary : theme.colors.textSecondary} 
-                  style={{ marginRight: 6 }}
+                <Ionicons
+                  name={tab.icon}
+                  size={15}
+                  color={isActive ? '#FFF' : theme.colors.textSecondary}
+                  style={{ marginRight: 7 }}
                 />
                 <Text style={[
                   styles.tabText,
-                  { color: isActive ? theme.colors.primary : theme.colors.textSecondary },
-                  isActive && { fontWeight: '700' }
+                  { color: isActive ? '#FFF' : theme.colors.textSecondary },
+                  isActive && { fontWeight: '800' }
                 ]}>
                   {tab.label}
                 </Text>
+                <View style={[
+                  styles.tabCount,
+                  { backgroundColor: isActive ? 'rgba(255,255,255,0.25)' : theme.colors.primary + '15' }
+                ]}>
+                  <Text style={[styles.tabCountText, { color: isActive ? '#FFF' : theme.colors.primary }]}>
+                    {tab.count}
+                  </Text>
+                </View>
               </TouchableOpacity>
             );
           })}
-        </View>
+        </ScrollView>
 
         {/* Search Bar */}
         <View style={styles.searchContainer}>
@@ -326,9 +410,13 @@ export default function ManageScreen({ navigation }) {
 
         {/* Top Pagination Paginator */}
         <View style={[styles.paginationHeader, { borderBottomColor: theme.colors.border }]}>
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' }}>
-            Showing {filteredData.length > 0 ? (activePage - 1) * itemsPerPage + 1 : 0}-{Math.min(filteredData.length, activePage * itemsPerPage)} of {filteredData.length} entries
-          </Text>
+          {loading ? (
+            <Skeleton width={150} height={13} radius={6} />
+          ) : (
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' }}>
+              Showing {filteredData.length > 0 ? (activePage - 1) * itemsPerPage + 1 : 0}-{Math.min(filteredData.length, activePage * itemsPerPage)} of {filteredData.length} entries
+            </Text>
+          )}
           <View style={styles.paginationButtons}>
             <TouchableOpacity 
               disabled={activePage === 1} 
@@ -353,10 +441,23 @@ export default function ManageScreen({ navigation }) {
         </View>
 
         {/* Scrollable Responsive Table */}
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: insets.bottom + 20 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.colors.primary}
+              colors={[theme.colors.primary]}
+              progressBackgroundColor={theme.colors.surface}
+            />
+          }
+        >
+          {showSkeleton ? renderSkeletonTable() : (
           <ScrollView key={activeTab} horizontal showsHorizontalScrollIndicator={true} contentContainerStyle={{ paddingHorizontal: 20, paddingVertical: 10 }}>
             <View style={[styles.tableContainer, { borderColor: theme.colors.border }]}>
-              
+
               {/* Table Header Row */}
               <View style={[styles.tableHeaderRow, { backgroundColor: theme.colors.primary + '15', borderBottomColor: theme.colors.border }]}>
                 <View style={[styles.thContainer, { width: 60, alignItems: 'center' }]}>
@@ -614,6 +715,7 @@ export default function ManageScreen({ navigation }) {
 
             </View>
           </ScrollView>
+          )}
         </ScrollView>
 
         {/* Edit Modal */}
@@ -810,8 +912,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1
+    paddingBottom: 8,
   },
   headerTitleContainer: { flexDirection: 'row', alignItems: 'center' },
   backBtn: {
@@ -824,20 +925,51 @@ const styles = StyleSheet.create({
     marginRight: 12
   },
   headerTitle: { fontSize: 20, fontWeight: 'bold' },
+  headerSubtitle: { fontSize: 12, fontWeight: '500', marginTop: 1 },
+  headerCountPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    height: 32,
+    borderRadius: 16,
+  },
+  headerCountText: { fontSize: 14, fontWeight: '800' },
+  tabsScroll: { flexGrow: 0, flexShrink: 0 },
   tabs: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    paddingHorizontal: 10
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 10,
   },
   tab: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 22,
+    borderWidth: 1,
   },
+  tabActiveShadow: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  tabCount: {
+    marginLeft: 8,
+    minWidth: 22,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabCountText: { fontSize: 11, fontWeight: '800' },
   tabText: { fontSize: 13, fontWeight: '600' },
-  searchContainer: { paddingHorizontal: 20, paddingTop: 16 },
+  searchContainer: { paddingHorizontal: 20, paddingTop: 8 },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',

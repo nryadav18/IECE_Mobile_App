@@ -10,7 +10,6 @@ import { MotiView } from 'moti';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import CustomAlert from '../components/CustomAlert';
-import ScreenLoader from '../components/ScreenLoader';
 import CustomDropdown from '../components/CustomDropdown';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import CreateActivityForm from '../components/CreateActivityForm';
@@ -18,11 +17,15 @@ import EditActivityModal from '../components/EditActivityModal';
 import VisitReportForm from '../components/VisitReportForm';
 import VisitReportDetail from '../components/VisitReportDetail';
 import SidebarMenu from '../components/SidebarMenu';
+import NotificationBell from '../components/NotificationBell';
 import { Image } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
 import { dayKey, isOffToday, buildHolidayMarks } from '../utils/holiday';
+import { buildSubstitutionMarks, SUBSTITUTION_MARK_COLOR } from '../utils/substitutionMarks';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
+import { SectionSkeleton } from '../components/Skeleton';
+import { useSectionTransition } from '../hooks/useSectionTransition';
 
 const TAB_ITEMS = [
   { key: 'Reports', label: 'Log Visit', icon: 'document-text-outline' },
@@ -33,6 +36,17 @@ const TAB_ITEMS = [
   { key: 'Events', label: 'Publish Activity', icon: 'add-circle-outline' },
   { key: 'ManageEvents', label: 'Manage Activities', icon: 'list-outline' },
 ];
+
+// Skeleton shape per section — matches the real layout that follows.
+const SECTION_SKELETON = {
+  Reports: 'form',
+  MyReports: 'list',
+  MyTeam: 'list',
+  Attendance: 'calendar',
+  SchoolHoliday: 'form',
+  Events: 'form',
+  ManageEvents: 'list',
+};
 
 const VisitSchema = Yup.object().shape({
   personMet: Yup.string().required('Met person name is required'),
@@ -52,6 +66,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
   const [trainers, setTrainers] = useState([]);
   const [myActivities, setMyActivities] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [substitutionLeaves, setSubstitutionLeaves] = useState([]);
   const [faceStatus, setFaceStatus] = useState('none'); // aggregate: 'none' | 'pending' | 'approved'
   const [mySchools, setMySchools] = useState([]);        // [{ _id, name }] assigned schools
   const [faceRegs, setFaceRegs] = useState([]);          // per-school face registrations
@@ -59,6 +74,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
   const [holidays, setHolidays] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Reports');
+  const { tabLoading, selectTab } = useSectionTransition(activeTab, setActiveTab);
 
   // Honor an `initialTab` passed via navigation (e.g. from a tapped report
   // notification) even if the portal is already mounted.
@@ -131,6 +147,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
     try {
       const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
+      setSubstitutionLeaves(attendanceRes.data.substitutionLeaves || []);
     } catch (err) {
       console.log('Error fetching attendance', err);
     }
@@ -161,7 +178,10 @@ export default function TeamLeaderPortal({ navigation, route }) {
       if (reportsRes.status === 'fulfilled') setReports(reportsRes.value.data.data);
       if (trainersRes.status === 'fulfilled') setTrainers(trainersRes.value.data.data);
       if (activitiesRes.status === 'fulfilled') setMyActivities(activitiesRes.value.data.data);
-      if (attendanceRes.status === 'fulfilled') setAttendanceRecords(attendanceRes.value.data.data || []);
+      if (attendanceRes.status === 'fulfilled') {
+        setAttendanceRecords(attendanceRes.value.data.data || []);
+        setSubstitutionLeaves(attendanceRes.value.data.substitutionLeaves || []);
+      }
       // Log any individual failures without discarding the successful results.
       [reportsRes, trainersRes, activitiesRes, attendanceRes].forEach((r, i) => {
         if (r.status === 'rejected') console.log('TeamLeader fetchData call failed', i, r.reason?.message);
@@ -198,7 +218,11 @@ export default function TeamLeaderPortal({ navigation, route }) {
   };
 
   if (loading) {
-    return <ScreenLoader message="Loading Team Leader Portal..." />;
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.colors.background, paddingTop: insets.top }}>
+        <SectionSkeleton kind={SECTION_SKELETON[activeTab] || 'list'} />
+      </View>
+    );
   }
 
   // During logout the user is cleared before the navigator swaps stacks; bail
@@ -308,13 +332,17 @@ export default function TeamLeaderPortal({ navigation, route }) {
                 <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 1 }}>Team Leader Portal</Text>
               </View>
             </View>
+            <NotificationBell navigation={navigation} />
           </View>
         </View>
       </View>
 
+      {tabLoading ? (
+        <SectionSkeleton kind={SECTION_SKELETON[activeTab] || 'list'} />
+      ) : (
       <ScrollView
         style={[styles.container, { backgroundColor: theme.colors.background }]}
-        contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 40 }}
+        contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 40 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
@@ -606,7 +634,9 @@ export default function TeamLeaderPortal({ navigation, route }) {
                     text: { color: theme.colors.textPrimary, fontWeight: 'bold' }
                   }
                 }
-              })
+              }),
+              // On-substitution leave days win over everything else for the period.
+              ...buildSubstitutionMarks(substitutionLeaves),
             }}
             markingType={'custom'}
             theme={{
@@ -624,6 +654,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
           <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#F44336', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Absent</Text></View>
           <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#FFC107', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Leave</Text></View>
           <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#87CEEB', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Holiday</Text></View>
+          <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: SUBSTITUTION_MARK_COLOR, borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Substituted</Text></View>
           <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#E0E0E0', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Blank</Text></View>
         </View>
       </View>
@@ -676,6 +707,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
       </View>
 
     </ScrollView>
+      )}
 
     <SidebarMenu
       ref={sidebarRef}
@@ -683,9 +715,11 @@ export default function TeamLeaderPortal({ navigation, route }) {
       subtitle={user?.name || 'Team Leader'}
       tabs={TAB_ITEMS}
       activeTab={activeTab}
-      onSelectTab={setActiveTab}
+      onSelectTab={selectTab}
       actions={[
         { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
+        { label: 'Substitution Requests', icon: 'swap-horizontal-outline', onPress: () => navigation.navigate('Substitution') },
+        { label: 'Notifications', icon: 'notifications-outline', onPress: () => navigation.navigate('Notifications') },
         { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
         { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
       ]}

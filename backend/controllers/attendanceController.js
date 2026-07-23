@@ -6,6 +6,11 @@ const FormData = require('form-data');
 const cloudinary = require('cloudinary').v2;
 const { notifyRole } = require('../utils/pushNotification');
 const { isSchoolOffDay } = require('../utils/holiday');
+const {
+  getActiveSubstituteAssignment,
+  getActiveSubjectLeave,
+  getSubjectLeaveWindows,
+} = require('../utils/substitutionStatus');
 
 // Keep the coarse legacy aggregate face status in sync with the per-school
 // registrations, so older reads and the app's faceStatus gate stay meaningful.
@@ -205,13 +210,19 @@ exports.verifyFace = async (req, res) => {
 
 exports.getMyAttendance = async (req, res) => {
   try {
-    const attendanceRecords = await Attendance.find({ trainerId: req.user._id })
-      .populate('schoolId', 'name state')
-      .sort({ date: -1 });
+    const [attendanceRecords, substitutionLeaves] = await Promise.all([
+      Attendance.find({ trainerId: req.user._id })
+        .populate('schoolId', 'name state')
+        .sort({ date: -1 }),
+      // Approved windows where this user is the substituted person — the client
+      // paints these dates as "On Substitution" leave in a distinct colour.
+      getSubjectLeaveWindows(req.user._id),
+    ]);
 
     res.status(200).json({
       success: true,
-      data: attendanceRecords
+      data: attendanceRecords,
+      substitutionLeaves
     });
   } catch (error) {
     console.error(error);
@@ -356,6 +367,26 @@ exports.verifyFaceV2 = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
+    // Substitution leave: if this user is currently BEING substituted (they
+    // opted for leave for this window), attendance is paused for them until the
+    // window ends — they are marked "On Substitution" on their calendar.
+    const subjectLeave = await getActiveSubjectLeave(user._id, new Date());
+    if (subjectLeave) {
+      return res.status(400).json({
+        success: false,
+        message: `You are on substitution leave until ${new Date(
+          subjectLeave.approvedToDate || subjectLeave.toDate
+        ).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}. Attendance is paused until then.`,
+      });
+    }
+
+    // Substitution duty: if this user is an approved SUBSTITUTE whose window
+    // covers today, they are temporarily deployed away from their registered
+    // school, so the geofence check is skipped (identity is still verified via
+    // their existing face registration for the school they pick).
+    const substituteAssignment = await getActiveSubstituteAssignment(user._id, new Date());
+    const geofenceBypassed = Boolean(substituteAssignment);
+
     // Resolve the per-school registration for the selected school. Everything
     // downstream (geofence anchor, face embedding) is scoped to THIS school.
     const reg = (user.faceRegistrations || []).find(
@@ -374,20 +405,24 @@ exports.verifyFaceV2 = async (req, res) => {
     }
 
     // 1. Location check against this school's own registration anchor (50 m).
-    const registeredLat = reg.registrationLocation && reg.registrationLocation.lat;
-    const registeredLng = reg.registrationLocation && reg.registrationLocation.lng;
+    //    Skipped entirely for an active substitute — they may check in/out
+    //    anywhere for the duration of their approved window.
+    if (!geofenceBypassed) {
+      const registeredLat = reg.registrationLocation && reg.registrationLocation.lat;
+      const registeredLng = reg.registrationLocation && reg.registrationLocation.lng;
 
-    if (registeredLat == null || registeredLng == null) {
-      return res.status(400).json({ success: false, message: 'Registration location not found for this school.' });
-    }
+      if (registeredLat == null || registeredLng == null) {
+        return res.status(400).json({ success: false, message: 'Registration location not found for this school.' });
+      }
 
-    const distance = getDistanceFromLatLonInM(parseFloat(lat), parseFloat(lng), registeredLat, registeredLng);
+      const distance = getDistanceFromLatLonInM(parseFloat(lat), parseFloat(lng), registeredLat, registeredLng);
 
-    if (distance > 50) {
-      return res.status(400).json({
-        success: false,
-        message: `Location verification failed. You are ${Math.round(distance)} meters away from this school's registered location. Must be within 50 meters.`
-      });
+      if (distance > 50) {
+        return res.status(400).json({
+          success: false,
+          message: `Location verification failed. You are ${Math.round(distance)} meters away from this school's registered location. Must be within 50 meters.`
+        });
+      }
     }
 
     // 2. Face verification against this school's embedding.
@@ -480,7 +515,9 @@ exports.verifyFaceV2 = async (req, res) => {
         status: 'Partially Present',
         checkInTime: new Date(),
         checkInLocation: { lat: parseFloat(lat), lng: parseFloat(lng) },
-        verifiedViaFace: true
+        verifiedViaFace: true,
+        geofenceBypassed,
+        substitutionRequestId: substituteAssignment ? substituteAssignment._id : null
       });
 
       return res.status(200).json({

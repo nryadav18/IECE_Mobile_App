@@ -9,8 +9,11 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import CustomAlert from '../components/CustomAlert';
 import SidebarMenu from '../components/SidebarMenu';
+import NotificationBell from '../components/NotificationBell';
 import VisitReportForm from '../components/VisitReportForm';
 import VisitReportDetail from '../components/VisitReportDetail';
+import { SectionSkeleton } from '../components/Skeleton';
+import { useSectionTransition } from '../hooks/useSectionTransition';
 import { roleLabel } from '../utils/roles';
 
 const TAB_ITEMS = [
@@ -18,6 +21,9 @@ const TAB_ITEMS = [
   { key: 'MyTeams', label: 'My Teams', icon: 'people-outline' },
   { key: 'LogVisit', label: 'Log Visit', icon: 'document-text-outline' },
 ];
+
+// Skeleton shape per section — matches the real layout that follows.
+const SECTION_SKELETON = { Home: 'list', MyTeams: 'list', LogVisit: 'form' };
 
 // Members of a team, grouped by seniority for a clean drill-in view.
 const MEMBER_ROLE_QUERY = 'team_leader,trainee_team_leader,trainer';
@@ -35,6 +41,7 @@ export default function HeadPortal({ navigation, route }) {
   const sidebarRef = React.useRef(null);
 
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Home');
+  const { tabLoading, selectTab } = useSectionTransition(activeTab, setActiveTab);
   const [activities, setActivities] = useState([]);
   const [teams, setTeams] = useState([]);
   const [selectedTeam, setSelectedTeam] = useState(null);
@@ -164,18 +171,17 @@ export default function HeadPortal({ navigation, route }) {
                 <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 1 }}>{roleLabel(user?.role)} Portal</Text>
               </View>
             </View>
+            <NotificationBell navigation={navigation} />
           </View>
         </View>
       </View>
 
-      {loading ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-        </View>
+      {loading || tabLoading ? (
+        <SectionSkeleton kind={SECTION_SKELETON[activeTab] || 'list'} />
       ) : (
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 40 }}
+          contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 40 }}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} colors={[theme.colors.primary]} progressBackgroundColor={theme.colors.surface} />
@@ -375,9 +381,11 @@ export default function HeadPortal({ navigation, route }) {
         subtitle={user?.name || 'Head'}
         tabs={TAB_ITEMS}
         activeTab={activeTab}
-        onSelectTab={(t) => { setActiveTab(t); setSelectedTeam(null); setMembers([]); }}
+        onSelectTab={(t) => { setSelectedTeam(null); setMembers([]); selectTab(t); }}
         actions={[
           { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
+          { label: 'Substitution Requests', icon: 'swap-horizontal-outline', onPress: () => navigation.navigate('Substitution') },
+          { label: 'Notifications', icon: 'notifications-outline', onPress: () => navigation.navigate('Notifications') },
           { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
           { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
         ]}

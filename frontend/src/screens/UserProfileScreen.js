@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Calendar } from 'react-native-calendars';
 import VisitReportDetail from '../components/VisitReportDetail';
+import { Skeleton, SkeletonProfile, SkeletonCard, SkeletonText, SkeletonStatCards, ShineSweep } from '../components/Skeleton';
 
 const { width } = Dimensions.get('window');
 
@@ -45,8 +46,20 @@ export default function UserProfileScreen({ route, navigation }) {
 
   if (loading) {
     return (
-      <View style={[styles.center, { backgroundColor: theme.colors.background }]}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
+      <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+        <SkeletonProfile style={{ margin: 16, marginTop: insets.top + 16 }} />
+        <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginBottom: 12, overflow: 'hidden' }}>
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} plain height={34} radius={17} style={{ flex: 1 }} />
+          ))}
+          <ShineSweep />
+        </View>
+        <View style={{ paddingHorizontal: 16 }}>
+          <SkeletonCard style={{ marginBottom: 12 }}>
+            <SkeletonText plain lines={3} />
+          </SkeletonCard>
+          <SkeletonStatCards count={2} />
+        </View>
       </View>
     );
   }
@@ -438,7 +451,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
   },
-  scrollContent: { padding: 16, paddingBottom: 40 },
+  scrollContent: { flexGrow: 1, padding: 16, paddingBottom: 40 },
   card: { 
     padding: 16, 
     borderRadius: 16, 

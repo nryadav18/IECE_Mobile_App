@@ -35,6 +35,18 @@ function resolveTarget(data = {}) {
   const { type, relatedId } = data;
 
   switch (type) {
+    // A substitution request was raised → approvers/heads review it in the
+    // substitution hub. The hub validates the tab per role (heads have no
+    // Approvals tab and fall back to their first tab).
+    case 'substitution_request':
+      return { screen: 'Substitution', params: { initialTab: 'approvals' } };
+
+    // A substitution was approved/rejected → informational for a mixed audience
+    // (including trainers who have no substitution screen). Land on the inbox.
+    case 'substitution_approved':
+    case 'substitution_rejected':
+      return { screen: 'Notifications' };
+
     // An activity needs review (admin) or its status changed (uploader).
     case 'activity_approval':
     case 'activity_status_update':

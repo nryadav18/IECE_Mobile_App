@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { HEAD_ROLES } from '../utils/roles';
+import { Skeleton, SkeletonCard, SkeletonList } from '../components/Skeleton';
 
 const width = Dimensions.get('window').width;
 
@@ -112,8 +113,12 @@ export default function DashboardScreen({ navigation }) {
       </View>
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
+        <View style={{ flex: 1, padding: 16 }}>
+          <SkeletonCard padding={0} style={{ marginBottom: 16 }}>
+            <Skeleton plain width={'100%'} height={width * 0.56} radius={0} />
+          </SkeletonCard>
+          <Skeleton plain width={'45%'} height={16} radius={8} style={{ marginBottom: 12 }} />
+          <SkeletonList count={3} avatar={false} lines={2} />
         </View>
       ) : (
         <ScrollView 

@@ -17,8 +17,20 @@ const attendanceSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Present', 'Partially Present', 'Absent', 'Leave'],
+    enum: ['Present', 'Partially Present', 'Absent', 'Leave', 'On Substitution'],
     default: 'Partially Present'
+  },
+  // When this check-in was marked by a temporary substitute, the geofence is
+  // skipped (they are deployed away from their registered school). These fields
+  // record that for auditing / reporting.
+  substitutionRequestId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SubstitutionRequest',
+    default: null
+  },
+  geofenceBypassed: {
+    type: Boolean,
+    default: false
   },
   checkInTime: {
     type: Date,

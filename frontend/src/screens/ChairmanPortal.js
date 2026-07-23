@@ -10,8 +10,11 @@ import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../components/Avatar';
 import CustomAlert from '../components/CustomAlert';
 import SidebarMenu from '../components/SidebarMenu';
+import NotificationBell from '../components/NotificationBell';
 import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
 import VisitReportDetail from '../components/VisitReportDetail';
+import { SectionSkeleton } from '../components/Skeleton';
+import { useSectionTransition } from '../hooks/useSectionTransition';
 
 const TAB_ITEMS = [
   { key: 'Overview', label: 'Overview', icon: 'home-outline' },
@@ -20,8 +23,12 @@ const TAB_ITEMS = [
   { key: 'Holidays', label: 'School Holidays', icon: 'sunny-outline' },
 ];
 
+// Skeleton shape per section — matches the real layout that follows.
+const SECTION_SKELETON = { Overview: 'stats', Pending: 'list', Completed: 'list', Holidays: 'list' };
+
 export default function ChairmanPortal({ navigation, route }) {
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Overview');
+  const { tabLoading, selectTab } = useSectionTransition(activeTab, setActiveTab);
   const [school, setSchool] = useState(null);
   const [faculty, setFaculty] = useState([]);
   const [activities, setActivities] = useState([]);
@@ -249,7 +256,7 @@ export default function ChairmanPortal({ navigation, route }) {
     return (
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
+        contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }}
         showsVerticalScrollIndicator={false}
         refreshControl={refreshControl}
       >
@@ -325,7 +332,7 @@ export default function ChairmanPortal({ navigation, route }) {
   const renderCompleted = () => (
     <ScrollView
       style={{ flex: 1 }}
-      contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
+      contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }}
       showsVerticalScrollIndicator={false}
       refreshControl={refreshControl}
     >
@@ -350,8 +357,8 @@ export default function ChairmanPortal({ navigation, route }) {
 
   if (loading) {
     return (
-      <View style={[styles.center, { backgroundColor: theme.colors.background }]}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
+      <View style={{ flex: 1, backgroundColor: theme.colors.background, paddingTop: insets.top }}>
+        <SectionSkeleton kind={SECTION_SKELETON[activeTab] || 'list'} />
       </View>
     );
   }
@@ -417,17 +424,20 @@ export default function ChairmanPortal({ navigation, route }) {
               <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 1 }}>Chairman Portal · {user?.name || 'Chairman'}</Text>
             </View>
           </View>
+          <NotificationBell navigation={navigation} />
         </View>
       </View>
 
-      {activeTab === 'Overview' && renderOverview()}
+      {tabLoading && <SectionSkeleton kind={SECTION_SKELETON[activeTab] || 'list'} />}
 
-      {activeTab === 'Completed' && renderCompleted()}
+      {!tabLoading && activeTab === 'Overview' && renderOverview()}
 
-      {activeTab === 'Holidays' && (
+      {!tabLoading && activeTab === 'Completed' && renderCompleted()}
+
+      {!tabLoading && activeTab === 'Holidays' && (
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
+          contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }}
           showsVerticalScrollIndicator={false}
           refreshControl={refreshControl}
         >
@@ -435,11 +445,11 @@ export default function ChairmanPortal({ navigation, route }) {
         </ScrollView>
       )}
 
-      {activeTab === 'Pending' && (
+      {!tabLoading && activeTab === 'Pending' && (
       <FlatList
         data={[...visitReports, ...activities]}
         keyExtractor={(item) => item._id}
-        contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20 }}
+        contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -712,8 +722,9 @@ export default function ChairmanPortal({ navigation, route }) {
         subtitle={user?.name || 'Chairman'}
         tabs={TAB_ITEMS}
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={selectTab}
         actions={[
+          { label: 'Notifications', icon: 'notifications-outline', onPress: () => navigation.navigate('Notifications') },
           { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
           { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
         ]}

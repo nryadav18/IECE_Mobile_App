@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  ActivityIndicator, Modal, ScrollView, Dimensions, Platform
+  ActivityIndicator, Modal, ScrollView, Dimensions, Platform, RefreshControl
 } from 'react-native';
 import { ThemeContext } from '../../context/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../../services/api';
 import { useAlert } from '../../context/AlertContext';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { SkeletonList } from '../../components/Skeleton';
 
 // Platform-specific map imports
 // iOS  → Apple Maps via react-native-maps (PROVIDER_DEFAULT)
@@ -176,6 +177,7 @@ function RegistrationVideoPlayer({ uri, style }) {
 export default function PendingRegistrationsScreen({ navigation }) {
   const [registrations, setRegistrations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
 
   const { theme } = useContext(ThemeContext);
@@ -188,6 +190,7 @@ export default function PendingRegistrationsScreen({ navigation }) {
 
   const fetchPendingRegistrations = async () => {
     try {
+      setRefreshing(true);
       const response = await api.get('/admin/pending-face-registrations');
       if (response.data.success) {
         // Flatten users into one item per pending (user, school) registration —
@@ -206,6 +209,7 @@ export default function PendingRegistrationsScreen({ navigation }) {
       console.error('fetchPendingRegistrations error:', error);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -427,7 +431,7 @@ export default function PendingRegistrationsScreen({ navigation }) {
                 style={[styles.btn, styles.btnApprove]}
                 onPress={() => handleApprove(selectedUser)}
                 activeOpacity={0.85}
-              >ppppppppppppppp
+              >
                 <Ionicons name="checkmark-circle-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
                 <Text style={styles.btnText}>Approve</Text>
               </TouchableOpacity>
@@ -453,9 +457,8 @@ export default function PendingRegistrationsScreen({ navigation }) {
       </View>
 
       {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={{ color: theme.colors.textSecondary, marginTop: 12, fontWeight: '500' }}>Loading…</Text>
+        <View style={{ flex: 1, padding: 16 }}>
+          <SkeletonList count={6} avatar lines={3} trailing />
         </View>
       ) : registrations.length === 0 ? (
         <View style={styles.center}>
@@ -470,8 +473,17 @@ export default function PendingRegistrationsScreen({ navigation }) {
           data={registrations}
           keyExtractor={(item) => itemKey(item)}
           renderItem={renderItem}
-          contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 20 }]}
+          contentContainerStyle={[styles.list, { flexGrow: 1, paddingBottom: insets.bottom + 20 }]}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={fetchPendingRegistrations}
+              tintColor={theme.colors.primary}
+              colors={[theme.colors.primary]}
+              progressBackgroundColor={theme.colors.surface}
+            />
+          }
         />
       )}
 
