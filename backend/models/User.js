@@ -163,14 +163,13 @@ const userSchema = new mongoose.Schema({
 // Keep the legacy single-school field in sync with the multi-school list so
 // that older code paths (holiday checks, populates, attendance fallbacks)
 // always have a sensible primary school. schoolIds is the source of truth.
-userSchema.pre('save', function(next) {
+userSchema.pre('save', function() {
   // Only derive the primary from the multi-school list when it actually holds
   // schools, so a legacy schoolId-only create is never clobbered. Clearing the
   // list to empty is handled explicitly by the controller.
   if (this.isModified('schoolIds') && this.schoolIds && this.schoolIds.length > 0) {
     this.schoolId = this.schoolIds[0];
   }
-  next();
 });
 
 // Encrypt password using bcrypt
