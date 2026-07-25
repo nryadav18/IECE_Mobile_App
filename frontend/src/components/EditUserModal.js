@@ -116,7 +116,7 @@ export default function EditUserModal({ visible, user, role, schools, teamLeader
   if (!visible || !user) return null;
 
   return (
-    <Modal transparent visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal transparent statusBarTranslucent navigationBarTranslucent visible={visible} animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView 
         style={styles.overlay} 
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}

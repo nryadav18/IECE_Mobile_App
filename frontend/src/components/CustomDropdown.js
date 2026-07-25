@@ -57,7 +57,7 @@ export default function CustomDropdown({ label, data, selectedValue, onSelect, p
         </MotiView>
       </TouchableOpacity>
 
-      <Modal visible={isOpen} transparent animationType="slide" onRequestClose={() => setIsOpen(false)}>
+      <Modal visible={isOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setIsOpen(false)}>
         {/* Overlay padded by the keyboard height so the sheet always rests
             directly above the keyboard. The sheet itself is a fixed-height box
             with the search pinned at top and the list scrolling inside it. */}

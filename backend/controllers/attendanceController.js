@@ -11,6 +11,7 @@ const {
   getActiveSubjectLeave,
   getSubjectLeaveWindows,
 } = require('../utils/substitutionStatus');
+const { getApprovedLeaveWindows } = require('../utils/leaveStatus');
 
 // Keep the coarse legacy aggregate face status in sync with the per-school
 // registrations, so older reads and the app's faceStatus gate stay meaningful.
@@ -210,19 +211,22 @@ exports.verifyFace = async (req, res) => {
 
 exports.getMyAttendance = async (req, res) => {
   try {
-    const [attendanceRecords, substitutionLeaves] = await Promise.all([
+    const [attendanceRecords, substitutionLeaves, leaveDays] = await Promise.all([
       Attendance.find({ trainerId: req.user._id })
         .populate('schoolId', 'name state')
         .sort({ date: -1 }),
       // Approved windows where this user is the substituted person — the client
       // paints these dates as "On Substitution" leave in a distinct colour.
       getSubjectLeaveWindows(req.user._id),
+      // Approved personal leave windows — painted as "On Leave" on the calendar.
+      getApprovedLeaveWindows(req.user._id),
     ]);
 
     res.status(200).json({
       success: true,
       data: attendanceRecords,
-      substitutionLeaves
+      substitutionLeaves,
+      leaveDays
     });
   } catch (error) {
     console.error(error);

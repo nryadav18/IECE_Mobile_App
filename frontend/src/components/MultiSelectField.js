@@ -110,7 +110,7 @@ export default function MultiSelectField({
         <Ionicons name="chevron-down" size={20} color={theme.colors.textSecondary} />
       </TouchableOpacity>
 
-      <Modal visible={isOpen} animationType="slide" transparent onRequestClose={() => setIsOpen(false)}>
+      <Modal visible={isOpen} animationType="slide" transparent statusBarTranslucent navigationBarTranslucent onRequestClose={() => setIsOpen(false)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: theme.colors.background, borderColor: theme.colors.border }]}>
             <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>

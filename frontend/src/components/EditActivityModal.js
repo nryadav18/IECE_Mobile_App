@@ -55,7 +55,7 @@ export default function EditActivityModal({ visible, activity, onClose, onSucces
   if (!visible || !activity) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent={true} statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
       <GlobalLoader visible={uploading} />
       <View style={styles.modalOverlay}>
         <View style={[styles.modalContent, { backgroundColor: theme.colors.background, borderColor: theme.colors.border }]}>

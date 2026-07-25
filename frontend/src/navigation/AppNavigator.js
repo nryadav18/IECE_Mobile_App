@@ -29,7 +29,11 @@ import NotificationsScreen from '../screens/NotificationsScreen';
 import SubstitutionScreen from '../screens/Substitution/SubstitutionScreen';
 import RaiseSubstitutionScreen from '../screens/Substitution/RaiseSubstitutionScreen';
 import SubstitutionApprovalScreen from '../screens/Substitution/SubstitutionApprovalScreen';
-import { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES } from '../utils/roles';
+import LeaveScreen from '../screens/Leave/LeaveScreen';
+import LeaveApprovalScreen from '../screens/Leave/LeaveApprovalScreen';
+import MeetingCornerScreen from '../screens/Meeting/MeetingCornerScreen';
+import CreateMeetingScreen from '../screens/Meeting/CreateMeetingScreen';
+import { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES, LEAVE_APPLICANT_ROLES, MEETING_VIEWER_ROLES, MEETING_CREATOR_ROLES } from '../utils/roles';
 
 const Stack = createStackNavigator();
 
@@ -71,6 +75,25 @@ const AppNavigator = () => {
           {/* Only CEO/Admin can open the approval screen. */}
           {ADMIN_ROLES.includes(user.role) && (
             <Stack.Screen name="SubstitutionApproval" component={SubstitutionApprovalScreen} />
+          )}
+
+          {/* Leave feature — applicants (all field staff) + the Admin approver.
+              CEO is only notified, so has no Leave screen. */}
+          {[...LEAVE_APPLICANT_ROLES, 'creator_admin'].includes(user.role) && (
+            <Stack.Screen name="Leave" component={LeaveScreen} />
+          )}
+          {/* Only the Admin reviews leave requests. */}
+          {user.role === 'creator_admin' && (
+            <Stack.Screen name="LeaveApproval" component={LeaveApprovalScreen} />
+          )}
+
+          {/* Meeting Corner — everyone except chairman can view; leaders/heads/
+              CEO/Admin can also post links. */}
+          {MEETING_VIEWER_ROLES.includes(user.role) && (
+            <Stack.Screen name="MeetingCorner" component={MeetingCornerScreen} />
+          )}
+          {MEETING_CREATOR_ROLES.includes(user.role) && (
+            <Stack.Screen name="CreateMeeting" component={CreateMeetingScreen} />
           )}
 
           {user.role === 'trainer' && (

@@ -13,10 +13,15 @@ import CreateActivityForm from '../components/CreateActivityForm';
 import EditActivityModal from '../components/EditActivityModal';
 import SidebarMenu from '../components/SidebarMenu';
 import NotificationBell from '../components/NotificationBell';
+import CountBadge from '../components/CountBadge';
+import { useBadges } from '../context/BadgeContext';
 import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
 import { dayKey, isOffToday, buildHolidayMarks } from '../utils/holiday';
-import { buildSubstitutionMarks, SUBSTITUTION_MARK_COLOR } from '../utils/substitutionMarks';
+import { buildSubstitutionMarks } from '../utils/substitutionMarks';
+import { buildLeaveMarks } from '../utils/leaveMarks';
+import { buildAttendanceMarks } from '../utils/calendarColors';
+import CalendarLegend from '../components/CalendarLegend';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import { SectionSkeleton } from '../components/Skeleton';
 import { useSectionTransition } from '../hooks/useSectionTransition';
@@ -49,6 +54,7 @@ export default function TrainerPortal({ navigation, route }) {
   const [activityToEdit, setActivityToEdit] = useState(null);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [substitutionLeaves, setSubstitutionLeaves] = useState([]);
+  const [leaveDays, setLeaveDays] = useState([]);
   const [faceStatus, setFaceStatus] = useState('none'); // aggregate: 'none' | 'pending' | 'approved'
   const [mySchools, setMySchools] = useState([]);        // [{ _id, name }] assigned schools
   const [faceRegs, setFaceRegs] = useState([]);          // per-school face registrations
@@ -57,6 +63,7 @@ export default function TrainerPortal({ navigation, route }) {
   
   const { theme } = useContext(ThemeContext);
   const { user, logout } = useContext(AuthContext);
+  const { unread, total } = useBadges();
   const insets = useSafeAreaInsets();
   const { showAlert: showGlobalAlert } = useAlert();
   const sidebarRef = useRef(null);
@@ -146,6 +153,7 @@ export default function TrainerPortal({ navigation, route }) {
       const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
       setSubstitutionLeaves(attendanceRes.data.substitutionLeaves || []);
+      setLeaveDays(attendanceRes.data.leaveDays || []);
     } catch (error) {
       console.log('Error fetching attendance', error);
     }
@@ -185,6 +193,7 @@ export default function TrainerPortal({ navigation, route }) {
       const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
       setSubstitutionLeaves(attendanceRes.data.substitutionLeaves || []);
+      setLeaveDays(attendanceRes.data.leaveDays || []);
       await loadFaceStatus();
       fetchHolidays();
     } catch (error) {
@@ -382,6 +391,7 @@ export default function TrainerPortal({ navigation, route }) {
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Ionicons name="menu" size={24} color={theme.colors.textPrimary} />
+              <CountBadge count={total} overlay />
             </TouchableOpacity>
             <View style={{ marginLeft: 14, flex: 1 }}>
               <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0, fontSize: 20 }]} numberOfLines={1}>
@@ -512,25 +522,13 @@ export default function TrainerPortal({ navigation, route }) {
             <Calendar
               current={new Date().toISOString().split('T')[0]}
               markedDates={{
-                ...attendanceRecords.reduce((acc, record) => {
-                  const dateString = new Date(record.date).toISOString().split('T')[0];
-                  let color = '#E0E0E0';
-                  if (record.status === 'Present') color = '#4CAF50';
-                  if (record.status === 'Absent') color = '#F44336';
-                  if (record.status === 'Leave') color = '#FFC107';
-                  acc[dateString] = {
-                    customStyles: {
-                      container: { backgroundColor: color, borderRadius: 8 },
-                      text: { color: 'white', fontWeight: 'bold' }
-                    }
-                  };
-                  return acc;
-                }, {}),
+                // Canonical attendance colours (shared with every portal + profile).
+                ...buildAttendanceMarks(attendanceRecords),
                 // School holidays (sky blue = approved, light = pending) take
                 // precedence over the blank/attendance marking for that date.
                 ...buildHolidayMarks(holidays),
                 // Always mark today (skip if today already has a holiday/attendance mark).
-                ...((attendanceRecords.find(r => new Date(r.date).toISOString().split('T')[0] === dayKey()) || holidays.find(h => h.date === dayKey() && h.status !== 'rejected')) ? {} : {
+                ...((attendanceRecords.find(r => dayKey(new Date(r.date)) === dayKey()) || holidays.find(h => h.date === dayKey() && h.status !== 'rejected')) ? {} : {
                   [dayKey()]: {
                     customStyles: {
                       container: { backgroundColor: '#E0E0E0', borderRadius: 8, borderWidth: 2, borderColor: theme.colors.primary },
@@ -540,6 +538,8 @@ export default function TrainerPortal({ navigation, route }) {
                 }),
                 // On-substitution leave days win over everything else for the period.
                 ...buildSubstitutionMarks(substitutionLeaves),
+                // Approved personal leave days.
+                ...buildLeaveMarks(leaveDays),
               }}
               markingType={'custom'}
               theme={{
@@ -551,14 +551,7 @@ export default function TrainerPortal({ navigation, route }) {
                 todayTextColor: theme.colors.primary,
               }}
             />
-          </View>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginTop: 20 }}>
-            <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#4CAF50', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Present</Text></View>
-            <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#F44336', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Absent</Text></View>
-            <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#FFC107', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Leave</Text></View>
-            <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#87CEEB', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Holiday</Text></View>
-            <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: '#E0E0E0', borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Blank</Text></View>
-            <View style={{ alignItems: 'center' }}><View style={{ width: 16, height: 16, backgroundColor: SUBSTITUTION_MARK_COLOR, borderRadius: 4, marginBottom: 4 }} /><Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>Substituted</Text></View>
+            <CalendarLegend />
           </View>
         </ScrollView>
       )}
@@ -671,7 +664,9 @@ export default function TrainerPortal({ navigation, route }) {
         onSelectTab={selectTab}
         actions={[
           { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
-          { label: 'Notifications', icon: 'notifications-outline', onPress: () => navigation.navigate('Notifications') },
+          { label: 'Meeting Corner', icon: 'videocam-outline', onPress: () => navigation.navigate('MeetingCorner') },
+          { label: 'Apply Leave', icon: 'calendar-outline', onPress: () => navigation.navigate('Leave') },
+          { label: 'Notifications', icon: 'notifications-outline', badge: unread || 0, onPress: () => navigation.navigate('Notifications') },
           { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
           { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
         ]}

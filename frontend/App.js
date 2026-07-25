@@ -3,6 +3,7 @@ import { LogBox } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { NavigationContainer } from '@react-navigation/native';
 import { AuthProvider } from './src/context/AuthContext';
+import { BadgeProvider } from './src/context/BadgeContext';
 import { ThemeProvider } from './src/context/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -24,15 +25,17 @@ export default function App() {
         <ThemeProvider>
           <AlertProvider>
             <AuthProvider>
-              <NavigationContainer
-                ref={navigationRef}
-                onReady={() => {
-                  // Handle a notification that cold-started the app from a tap.
-                  Notifications.getLastNotificationResponseAsync().then(handleNotificationResponse);
-                }}
-              >
-                <AppNavigator />
-              </NavigationContainer>
+              <BadgeProvider>
+                <NavigationContainer
+                  ref={navigationRef}
+                  onReady={() => {
+                    // Handle a notification that cold-started the app from a tap.
+                    Notifications.getLastNotificationResponseAsync().then(handleNotificationResponse);
+                  }}
+                >
+                  <AppNavigator />
+                </NavigationContainer>
+              </BadgeProvider>
             </AuthProvider>
           </AlertProvider>
         </ThemeProvider>

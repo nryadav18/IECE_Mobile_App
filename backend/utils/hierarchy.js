@@ -120,10 +120,62 @@ async function getTeamCircleRecipientIds(persons) {
   return [...ids];
 }
 
+/**
+ * Only the Admin login(s) (creator_admin). A leave request is raised to the
+ * Admin ONLY, so this is who gets the "new leave request" notification.
+ */
+async function getAdminOnlyRecipientIds() {
+  const admins = await getUser().find({ role: 'creator_admin' }).select('_id');
+  return admins.map((a) => a._id);
+}
+
+/**
+ * The CEO login(s). Notified when a leave is approved (but not the approver).
+ */
+async function getCeoRecipientIds() {
+  const ceos = await getUser().find({ role: 'ceo' }).select('_id');
+  return ceos.map((c) => c._id);
+}
+
+/**
+ * Recipients for an APPROVED leave: the applicant themselves + everyone up their
+ * hierarchy + the CEO. Mirrors the request the user described:
+ *   trainer approved -> the trainer + their team leader + the heads over their
+ *                       team + CEO
+ *   leader approved  -> the leader + the heads over their team + CEO
+ *   head approved    -> the head + CEO (nothing ranked above a head today)
+ *
+ * The Admin is the approver (acts, isn't re-notified). Deduplicated.
+ *
+ * @param {object} applicant - Mongoose user doc (needs role, _id, teamId, teamLeaderId)
+ * @returns {Promise<string[]>} de-duplicated recipient ids (strings)
+ */
+async function getLeaveApprovalRecipientIds(applicant) {
+  const ids = new Set();
+
+  ids.add(idStr(applicant._id));
+
+  // A trainer's direct team leader.
+  if (applicant.teamLeaderId) ids.add(idStr(applicant.teamLeaderId));
+
+  // Heads overseeing the applicant's team (trainers + leaders carry a teamId).
+  if (applicant.teamId) {
+    (await getHeadIdsOverTeam(applicant.teamId)).forEach((id) => ids.add(idStr(id)));
+  }
+
+  // Always the CEO.
+  (await getCeoRecipientIds()).forEach((id) => ids.add(idStr(id)));
+
+  return [...ids];
+}
+
 module.exports = {
   getAdminRecipientIds,
+  getAdminOnlyRecipientIds,
+  getCeoRecipientIds,
   getHeadIdsOverTeam,
   getUpwardRecipientIds,
   getSubjectScopeFilter,
   getTeamCircleRecipientIds,
+  getLeaveApprovalRecipientIds,
 };

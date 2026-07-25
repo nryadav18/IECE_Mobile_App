@@ -4,6 +4,7 @@ const User = require('../models/User');
 const { sendPushNotification } = require('./pushNotification');
 const { istDateKey, isSunday, approvedHolidaySchoolIds } = require('./holiday');
 const { getSubjectsOnLeaveSet } = require('./substitutionStatus');
+const { getUsersOnLeaveSet } = require('./leaveStatus');
 
 // IST is a fixed offset of UTC+5:30 (India observes no daylight saving).
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
@@ -52,8 +53,13 @@ async function sendCheckinReminders() {
     });
     const checkedInSet = new Set(checkedInIds.map((id) => id.toString()));
 
-    // People on substitution leave today are excused — don't nudge them.
-    const onLeaveSet = await getSubjectsOnLeaveSet(new Date());
+    // People on substitution leave OR approved personal leave today are excused —
+    // don't nudge them.
+    const [subLeaveSet, personalLeaveSet] = await Promise.all([
+      getSubjectsOnLeaveSet(new Date()),
+      getUsersOnLeaveSet(new Date()),
+    ]);
+    const onLeaveSet = new Set([...subLeaveSet, ...personalLeaveSet]);
 
     // Trainers / team leaders who can actually check in (approved face) and have
     // a registered push token.

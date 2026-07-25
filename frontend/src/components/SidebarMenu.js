@@ -5,6 +5,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { ThemeContext } from '../context/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import CountBadge from './CountBadge';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SIDEBAR_WIDTH = Math.min(320, Math.round(SCREEN_WIDTH * 0.82));
@@ -46,9 +47,13 @@ const SidebarMenu = forwardRef(function SidebarMenu(
   };
 
   const close = (cb) => {
+    // When an action/tab is about to run (cb present), whisk the drawer away
+    // quickly so navigation feels immediate instead of "drawer slides out, THEN
+    // the screen shows". A plain manual dismiss keeps the smoother, slower slide.
+    const duration = typeof cb === 'function' ? 120 : 240;
     Animated.parallel([
-      Animated.timing(slideAnim, { toValue: -SIDEBAR_WIDTH, duration: 240, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(backdropAnim, { toValue: 0, duration: 240, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: -SIDEBAR_WIDTH, duration, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(backdropAnim, { toValue: 0, duration, useNativeDriver: true }),
     ]).start(() => {
       setVisible(false);
       if (typeof cb === 'function') cb();
@@ -58,7 +63,7 @@ const SidebarMenu = forwardRef(function SidebarMenu(
   useImperativeHandle(ref, () => ({ open, close: () => close() }));
 
   return (
-    <Modal visible={visible} transparent animationType="none" onShow={runOpenAnimation} onRequestClose={() => close()}>
+    <Modal visible={visible} transparent animationType="none" statusBarTranslucent navigationBarTranslucent onShow={runOpenAnimation} onRequestClose={() => close()}>
       <View style={styles.root}>
         {/* Dim layer (visual only) */}
         <Animated.View style={[styles.backdrop, { opacity: backdropAnim }]} pointerEvents="none" />
@@ -117,7 +122,8 @@ const SidebarMenu = forwardRef(function SidebarMenu(
                   <Text style={[styles.itemText, { color: isActive ? theme.colors.primary : theme.colors.textPrimary, fontWeight: isActive ? '700' : '500' }]}>
                     {tab.label}
                   </Text>
-                  {isActive && <Ionicons name="chevron-forward" size={18} color={theme.colors.primary} style={{ marginLeft: 'auto' }} />}
+                  {tab.badge > 0 && <CountBadge count={tab.badge} size="sm" style={{ marginLeft: 'auto' }} />}
+                  {isActive && <Ionicons name="chevron-forward" size={18} color={theme.colors.primary} style={{ marginLeft: tab.badge > 0 ? 8 : 'auto' }} />}
                 </TouchableOpacity>
               );
             })}
@@ -142,6 +148,7 @@ const SidebarMenu = forwardRef(function SidebarMenu(
                       <Text style={[styles.itemText, { color: danger ? errColor : theme.colors.textPrimary, fontWeight: danger ? '600' : '500' }]}>
                         {action.label}
                       </Text>
+                      {action.badge > 0 && <CountBadge count={action.badge} size="sm" style={{ marginLeft: 'auto' }} />}
                     </TouchableOpacity>
                   );
                 })}

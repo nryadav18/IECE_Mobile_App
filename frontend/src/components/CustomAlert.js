@@ -141,6 +141,8 @@ const CustomAlert = ({ visible, title, message, buttons, type = 'info', onDismis
       transparent
       visible={visible}
       animationType="none"
+      statusBarTranslucent
+      navigationBarTranslucent
       onRequestClose={onDismiss}
     >
       <View style={styles.overlay}>

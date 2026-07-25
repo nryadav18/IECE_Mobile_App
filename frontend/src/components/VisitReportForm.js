@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import {
-  View, Text, StyleSheet, Modal, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Platform,
+  View, Text, StyleSheet, Modal, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Platform, KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -145,7 +145,10 @@ export default function VisitReportForm({ visible, onClose, targets = [], author
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: theme.colors.background }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
         <View style={[styles.header, { borderBottomColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
           <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>{isEdit ? 'Edit Visit Report' : 'Log Visit Report'}</Text>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -153,7 +156,7 @@ export default function VisitReportForm({ visible, onClose, targets = [], author
           </TouchableOpacity>
         </View>
 
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
           {/* Target person */}
           <Text style={[styles.sectionTitle, { color: theme.colors.primary }]}>Who are you reporting on?</Text>
           {isEdit ? (
@@ -214,7 +217,7 @@ export default function VisitReportForm({ visible, onClose, targets = [], author
             }}
           />
         )}
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

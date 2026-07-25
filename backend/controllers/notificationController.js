@@ -1,4 +1,8 @@
 const Notification = require('../models/Notification');
+const LeaveRequest = require('../models/LeaveRequest');
+const SubstitutionRequest = require('../models/SubstitutionRequest');
+const SchoolHoliday = require('../models/SchoolHoliday');
+const User = require('../models/User');
 
 // @desc    List the caller's notifications (newest first, paginated)
 // @route   GET /api/notifications?page=&limit=&unread=true
@@ -36,6 +40,48 @@ exports.getUnreadCount = async (req, res) => {
     res.status(200).json({ success: true, unreadCount });
   } catch (error) {
     console.error('getUnreadCount error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// @desc    Consolidated badge counts for the whole app: unread inbox + the
+//          role-scoped "pending / needs-action" counts per section, plus a grand
+//          total used for the app-icon badge (like WhatsApp's count).
+// @route   GET /api/notifications/badges
+// @access  Private
+exports.getBadges = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const role = req.user.role;
+
+    // Every user has an unread inbox count.
+    const jobs = { unread: Notification.countDocuments({ recipient: userId, read: false }) };
+
+    // Actionable "pending" sections depend on who can approve what.
+    if (role === 'creator_admin') {
+      jobs.leave = LeaveRequest.countDocuments({ status: 'pending' });
+      jobs.substitution = SubstitutionRequest.countDocuments({ status: 'pending' });
+      jobs.faces = User.countDocuments({ 'faceRegistrations.status': 'pending' });
+      jobs.holidays = SchoolHoliday.countDocuments({ status: 'pending' });
+    } else if (role === 'ceo') {
+      // A CEO reviews substitutions they didn't raise themselves.
+      jobs.substitution = SubstitutionRequest.countDocuments({ status: 'pending', raisedBy: { $ne: userId } });
+    }
+
+    const keys = Object.keys(jobs);
+    const values = await Promise.all(keys.map((k) => jobs[k]));
+    const counts = {};
+    keys.forEach((k, i) => { counts[k] = values[i]; });
+
+    const { unread, ...sections } = counts;
+    const sectionsTotal = Object.values(sections).reduce((a, b) => a + b, 0);
+
+    // Grand total powering the app-icon badge: unread + everything pending.
+    const total = unread + sectionsTotal;
+
+    res.status(200).json({ success: true, unread, sections, total });
+  } catch (error) {
+    console.error('getBadges error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };

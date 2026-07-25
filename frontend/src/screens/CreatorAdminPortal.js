@@ -24,6 +24,8 @@ import VisitReportForm from '../components/VisitReportForm';
 import IndiaMap from '../components/IndiaMap';
 import SidebarMenu from '../components/SidebarMenu';
 import NotificationBell from '../components/NotificationBell';
+import CountBadge from '../components/CountBadge';
+import { useBadges } from '../context/BadgeContext';
 import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
 import TeamMultiSelectModal from '../components/TeamMultiSelectModal';
 import MultiSelectField from '../components/MultiSelectField';
@@ -165,6 +167,7 @@ const CEO_TABS = ['Monitoring', 'Profiles', 'Reports', 'LogVisit'];
 export default function CreatorAdminPortal({ navigation, route }) {
   const { user, logout } = useContext(AuthContext);
   const { theme } = useContext(ThemeContext);
+  const { unread, sections, total } = useBadges();
   const insets = useSafeAreaInsets();
 
   const isCEO = user?.role === 'ceo';
@@ -478,6 +481,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="menu" size={24} color={theme.colors.textPrimary} />
+            <CountBadge count={total} overlay borderColor={theme.colors.surface} />
           </TouchableOpacity>
           <View style={{ marginLeft: 12 }}>
             <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>
@@ -1327,15 +1331,18 @@ export default function CreatorAdminPortal({ navigation, route }) {
         ref={sidebarRef}
         title={isCEO ? 'IECE CEO' : 'IECE Admin'}
         subtitle={isCEO ? 'Executive Portal' : 'Management Portal'}
-        tabs={visibleTabs}
+        tabs={visibleTabs.map((t) => (t.key === 'Holidays' ? { ...t, badge: sections.holidays || 0 } : t))}
         activeTab={activeTab}
         onSelectTab={selectTab}
         actions={[
-          { label: 'Substitution Requests', icon: 'swap-horizontal-outline', onPress: () => navigation.navigate('Substitution') },
-          { label: 'Notifications', icon: 'notifications-outline', onPress: () => navigation.navigate('Notifications') },
-          // Face approvals + staff management + create-admin are admin-only. CEO is read-only.
+          { label: 'Substitution Requests', icon: 'swap-horizontal-outline', badge: sections.substitution || 0, onPress: () => navigation.navigate('Substitution') },
+          { label: 'Meeting Corner', icon: 'videocam-outline', onPress: () => navigation.navigate('MeetingCorner') },
+          { label: 'Notifications', icon: 'notifications-outline', badge: unread || 0, onPress: () => navigation.navigate('Notifications') },
+          // Face approvals + staff management + create-admin + leave approvals are
+          // admin-only. CEO is read-only (only notified about leave outcomes).
           ...(isCEO ? [] : [
-            { label: 'Face Approvals', icon: 'scan-outline', onPress: () => navigation.navigate('PendingRegistrations') },
+            { label: 'Leave Requests', icon: 'calendar-outline', badge: sections.leave || 0, onPress: () => navigation.navigate('Leave') },
+            { label: 'Face Approvals', icon: 'scan-outline', badge: sections.faces || 0, onPress: () => navigation.navigate('PendingRegistrations') },
             { label: 'IECE Staff', icon: 'people-outline', onPress: () => navigation.navigate('ManageScreen') },
             { label: 'Create Admin', icon: 'shield-checkmark-outline', onPress: () => navigation.navigate('CreateAdmin') },
           ]),

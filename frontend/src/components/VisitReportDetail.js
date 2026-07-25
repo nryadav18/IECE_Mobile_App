@@ -1,5 +1,5 @@
 import React, { useContext, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Modal, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, Modal, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemeContext } from '../context/ThemeContext';
 import { REPORT_SECTIONS } from '../utils/visitReport';
@@ -88,7 +88,10 @@ export default function VisitReportDetail({ visible, report, onClose, reviewMode
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: theme.colors.background }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
         <View style={[styles.header, { borderBottomColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
           <View style={{ flex: 1 }}>
             <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>Visit Report</Text>
@@ -105,7 +108,7 @@ export default function VisitReportDetail({ visible, report, onClose, reviewMode
           </TouchableOpacity>
         </View>
 
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
           {/* Meta */}
           <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
             <Row theme={theme} label="Reported by" value={report.teamLeaderId?.name || '—'} />
@@ -164,11 +167,11 @@ export default function VisitReportDetail({ visible, report, onClose, reviewMode
             </View>
           )}
         </ScrollView>
-      </View>
+      </KeyboardAvoidingView>
 
       {/* Rejection reason popup (mandatory) */}
-      <Modal visible={rejectOpen} transparent animationType="fade" onRequestClose={() => setRejectOpen(false)}>
-        <View style={styles.overlay}>
+      <Modal visible={rejectOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="fade" onRequestClose={() => setRejectOpen(false)}>
+        <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={[styles.dialog, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
             <Text style={[styles.dialogTitle, { color: theme.colors.textPrimary }]}>Reason for Rejection</Text>
             <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginBottom: 12 }}>Please tell the reporter why this report is being rejected.</Text>
@@ -190,7 +193,7 @@ export default function VisitReportDetail({ visible, report, onClose, reviewMode
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </Modal>
   );

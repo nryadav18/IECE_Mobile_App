@@ -6,6 +6,10 @@ import api from '../services/api';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Calendar } from 'react-native-calendars';
+import { buildLeaveMarks } from '../utils/leaveMarks';
+import { buildSubstitutionMarks } from '../utils/substitutionMarks';
+import { buildAttendanceMarks, CALENDAR_LEGEND } from '../utils/calendarColors';
+import CalendarLegend from '../components/CalendarLegend';
 import VisitReportDetail from '../components/VisitReportDetail';
 import { Skeleton, SkeletonProfile, SkeletonCard, SkeletonText, SkeletonStatCards, ShineSweep } from '../components/Skeleton';
 
@@ -72,7 +76,7 @@ export default function UserProfileScreen({ route, navigation }) {
     );
   }
 
-  const { profile, attendance, visitReports, activities } = profileData;
+  const { profile, attendance, visitReports, activities, leaveDays = [], substitutionLeaves = [] } = profileData;
 
   const getAttendanceSummary = () => {
     const present = attendance.filter(a => a.status === 'Present').length;
@@ -89,24 +93,13 @@ export default function UserProfileScreen({ route, navigation }) {
 
   const attSummary = getAttendanceSummary();
 
-  const getMarkedDates = () => {
-    const marked = {};
-    attendance.forEach(att => {
-      const dateStr = new Date(att.date).toISOString().split('T')[0];
-      let color = '#9CA3AF'; // Default gray
-      if (att.status === 'Present') color = '#10B981'; // Green
-      else if (att.status === 'Partially Present') color = '#F59E0B'; // Yellow
-      else if (att.status === 'Absent') color = '#EF4444'; // Red
-      
-      marked[dateStr] = {
-        customStyles: {
-          container: { backgroundColor: color, borderRadius: 8 },
-          text: { color: 'white', fontWeight: 'bold' }
-        }
-      };
-    });
-    return marked;
-  };
+  // Uses the SAME canonical builders/colours as the portals, so an authority
+  // viewing this profile sees identical marks to what the person sees themselves.
+  const getMarkedDates = () => ({
+    ...buildAttendanceMarks(attendance),
+    ...buildSubstitutionMarks(substitutionLeaves),
+    ...buildLeaveMarks(leaveDays),
+  });
 
   const renderTabs = () => {
     const tabs = ['Overview', 'Attendance', 'Activities', 'Reports'];
@@ -220,11 +213,7 @@ export default function UserProfileScreen({ route, navigation }) {
           markingType={'custom'}
           markedDates={getMarkedDates()}
         />
-        <View style={{ flexDirection: 'row', justifyContent: 'space-around', padding: 12, borderTopWidth: 1, borderTopColor: theme.colors.border, backgroundColor: theme.colors.background }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}><View style={[styles.legendDot, { backgroundColor: '#10B981' }]} /><Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Present</Text></View>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}><View style={[styles.legendDot, { backgroundColor: '#F59E0B' }]} /><Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Partial</Text></View>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}><View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} /><Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Absent</Text></View>
-        </View>
+        <CalendarLegend items={CALENDAR_LEGEND.filter(i => i.key !== 'holiday')} />
       </View>
 
       <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>

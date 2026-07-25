@@ -41,6 +41,8 @@ const profileRoutes = require('./routes/profileRoutes');
 const holidayRoutes = require('./routes/holidayRoutes');
 const substitutionRoutes = require('./routes/substitutionRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const leaveRoutes = require('./routes/leaveRoutes');
+const meetingRoutes = require('./routes/meetingRoutes');
 
 // Mount routers
 
@@ -58,6 +60,8 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/holidays', holidayRoutes);
 app.use('/api/substitutions', substitutionRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/leaves', leaveRoutes);
+app.use('/api/meetings', meetingRoutes);
 
 const PORT = process.env.PORT || 3000;
 

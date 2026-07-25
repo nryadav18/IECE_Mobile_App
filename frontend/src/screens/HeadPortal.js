@@ -10,6 +10,8 @@ import api from '../services/api';
 import CustomAlert from '../components/CustomAlert';
 import SidebarMenu from '../components/SidebarMenu';
 import NotificationBell from '../components/NotificationBell';
+import CountBadge from '../components/CountBadge';
+import { useBadges } from '../context/BadgeContext';
 import VisitReportForm from '../components/VisitReportForm';
 import VisitReportDetail from '../components/VisitReportDetail';
 import { SectionSkeleton } from '../components/Skeleton';
@@ -37,6 +39,7 @@ const statusColor = (status, theme) => {
 export default function HeadPortal({ navigation, route }) {
   const { theme } = useContext(ThemeContext);
   const { user, logout } = useContext(AuthContext);
+  const { unread, total } = useBadges();
   const insets = useSafeAreaInsets();
   const sidebarRef = React.useRef(null);
 
@@ -165,6 +168,7 @@ export default function HeadPortal({ navigation, route }) {
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <Ionicons name="menu" size={24} color={theme.colors.textPrimary} />
+                <CountBadge count={total} overlay />
               </TouchableOpacity>
               <View style={{ marginLeft: 14, flex: 1 }}>
                 <Text style={[styles.title, { color: theme.colors.textPrimary }]} numberOfLines={1}>{headerLabel}</Text>
@@ -385,7 +389,9 @@ export default function HeadPortal({ navigation, route }) {
         actions={[
           { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
           { label: 'Substitution Requests', icon: 'swap-horizontal-outline', onPress: () => navigation.navigate('Substitution') },
-          { label: 'Notifications', icon: 'notifications-outline', onPress: () => navigation.navigate('Notifications') },
+          { label: 'Meeting Corner', icon: 'videocam-outline', onPress: () => navigation.navigate('MeetingCorner') },
+          { label: 'Apply Leave', icon: 'calendar-outline', onPress: () => navigation.navigate('Leave') },
+          { label: 'Notifications', icon: 'notifications-outline', badge: unread || 0, onPress: () => navigation.navigate('Notifications') },
           { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
           { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },
         ]}

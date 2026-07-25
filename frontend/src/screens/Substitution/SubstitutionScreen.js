@@ -271,7 +271,7 @@ export default function SubstitutionScreen({ navigation, route }) {
       </View>
 
       {/* Subject detail popup (raise flow) */}
-      <Modal visible={!!subject} transparent animationType="fade" onRequestClose={() => setSubject(null)}>
+      <Modal visible={!!subject} transparent statusBarTranslucent navigationBarTranslucent animationType="fade" onRequestClose={() => setSubject(null)}>
         <View style={styles.overlay}>
           <View style={[styles.popup, { backgroundColor: theme.colors.surface }]}>
             <View style={{ alignItems: 'center', marginBottom: 12 }}>

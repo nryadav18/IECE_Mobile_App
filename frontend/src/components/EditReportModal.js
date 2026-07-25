@@ -80,7 +80,7 @@ export default function EditReportModal({
   const schoolOptions = selectedTrainer?.schoolId ? [selectedTrainer.schoolId] : [];
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
       <GlobalLoader visible={uploading} />
       <View style={styles.modalOverlay}>
         <View

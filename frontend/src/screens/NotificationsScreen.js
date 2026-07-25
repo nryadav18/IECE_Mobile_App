@@ -6,6 +6,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { ThemeContext } from '../context/ThemeContext';
+import { AuthContext } from '../context/AuthContext';
+import { useBadges } from '../context/BadgeContext';
+import { canUseLeave, canUseMeetings } from '../utils/roles';
 import {
   getNotifications, markNotificationRead, markAllNotificationsRead,
 } from '../services/inbox';
@@ -15,6 +18,10 @@ const META = {
   substitution_request: { icon: 'swap-horizontal', color: '#F59E0B' },
   substitution_approved: { icon: 'checkmark-circle', color: '#27AE60' },
   substitution_rejected: { icon: 'close-circle', color: '#F44336' },
+  leave_request: { icon: 'calendar', color: '#F59E0B' },
+  leave_approved: { icon: 'checkmark-circle', color: '#27AE60' },
+  leave_rejected: { icon: 'close-circle', color: '#F44336' },
+  meeting_new: { icon: 'videocam', color: '#2D8CFF' },
   default: { icon: 'notifications', color: '#10B981' },
 };
 
@@ -32,6 +39,8 @@ const timeAgo = (d) => {
 
 export default function NotificationsScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
+  const { user } = useContext(AuthContext);
+  const { refresh: refreshBadges } = useBadges();
   const insets = useSafeAreaInsets();
 
   const [items, setItems] = useState([]);
@@ -62,11 +71,21 @@ export default function NotificationsScreen({ navigation }) {
     // Optimistically mark read.
     if (!item.read) {
       setItems((prev) => prev.map((n) => (n._id === item._id ? { ...n, read: true } : n)));
-      markNotificationRead(item._id).catch(() => {});
+      markNotificationRead(item._id).then(() => refreshBadges()).catch(() => {});
     }
     // Deep-link only where the target screen is guaranteed to exist for this user.
     if (item.type === 'substitution_request') {
       navigation.navigate('Substitution', { initialTab: 'approvals' });
+    } else if (canUseLeave(user?.role)) {
+      // Leave screen exists for applicants + the Admin (not CEO).
+      if (item.type === 'leave_request') {
+        navigation.navigate('Leave', { initialTab: 'approvals' });
+      } else if (item.type === 'leave_approved' || item.type === 'leave_rejected') {
+        navigation.navigate('Leave', { initialTab: 'mine' });
+      }
+    }
+    if (item.type === 'meeting_new' && canUseMeetings(user?.role)) {
+      navigation.navigate('MeetingCorner');
     }
   };
 
@@ -74,6 +93,7 @@ export default function NotificationsScreen({ navigation }) {
     setItems((prev) => prev.map((n) => ({ ...n, read: true })));
     try {
       await markAllNotificationsRead();
+      refreshBadges();
     } catch (e) {
       load();
     }

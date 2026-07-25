@@ -6,7 +6,7 @@ const GlobalLoader = ({ visible = false }) => {
   if (!visible) return null;
 
   return (
-    <Modal transparent={true} visible={visible} animationType="fade">
+    <Modal transparent={true} visible={visible} animationType="fade" statusBarTranslucent navigationBarTranslucent>
       <View style={styles.overlay}>
         <View style={styles.loaderContainer}>
           <MotiView

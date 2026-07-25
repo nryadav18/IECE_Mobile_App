@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemeContext } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
+import { useBadges } from '../../context/BadgeContext';
 import { roleLabel } from '../../utils/roles';
 import { prettyDate, toYMD, dayCountInclusive } from '../../utils/dates';
 import Avatar from '../../components/Avatar';
@@ -22,6 +23,7 @@ const schoolsOf = (u) => (u?.schoolIds || []).map((s) => s?.name).filter(Boolean
 export default function SubstitutionApprovalScreen({ navigation, route }) {
   const { theme } = useContext(ThemeContext);
   const { showAlert } = useAlert();
+  const { refresh: refreshBadges } = useBadges();
   const insets = useSafeAreaInsets();
   const requestId = route?.params?.requestId;
 
@@ -86,6 +88,7 @@ export default function SubstitutionApprovalScreen({ navigation, route }) {
                 fromDate: toYMD(fromDate),
                 toDate: toYMD(toDate),
               });
+              refreshBadges();
               showAlert('Approved', 'The substitution was approved and everyone involved has been notified.', 'success', [
                 { text: 'Done', onPress: () => navigation.goBack() },
               ]);
@@ -104,6 +107,7 @@ export default function SubstitutionApprovalScreen({ navigation, route }) {
     setSubmitting(true);
     try {
       await rejectSubstitution(requestId, rejectNote.trim());
+      refreshBadges();
       setRejectOpen(false);
       showAlert('Rejected', 'The request was rejected and the requester was notified.', 'success', [
         { text: 'Done', onPress: () => navigation.goBack() },
@@ -287,7 +291,7 @@ export default function SubstitutionApprovalScreen({ navigation, route }) {
       />
 
       {/* Reject reason modal */}
-      <Modal visible={rejectOpen} transparent animationType="fade" onRequestClose={() => setRejectOpen(false)}>
+      <Modal visible={rejectOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="fade" onRequestClose={() => setRejectOpen(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 28 }}>
           <View style={{ backgroundColor: theme.colors.surface, borderRadius: 20, padding: 20 }}>
             <Text style={{ color: theme.colors.textPrimary, fontSize: 18, fontWeight: '700', marginBottom: 6 }}>Reject Request</Text>

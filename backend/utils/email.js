@@ -215,6 +215,59 @@ const getSubstitutionTemplate = ({ title, intro, rows = [], accent = '#0D9488', 
     `;
 };
 
+/**
+ * Generic branded event email (reuses the IECE teal look). Used for leave
+ * request / approval / rejection notices. Same card as the substitution email
+ * but with a neutral footer line.
+ * @param {object} opts - { title, intro, rows, accent, badge, footerNote }
+ */
+const getEventTemplate = ({ title, intro, rows = [], accent = '#0D9488', badge = '', footerNote = '' }) => {
+    const rowsHtml = rows
+        .filter((r) => r && r.value !== undefined && r.value !== null && String(r.value).trim() !== '')
+        .map(
+            (r) => `
+                <tr>
+                    <td style="padding:10px 0;border-bottom:1px solid #eef2f7;font-size:13px;color:#6b7280;width:42%;vertical-align:top;">${r.label}</td>
+                    <td style="padding:10px 0;border-bottom:1px solid #eef2f7;font-size:14px;color:#111827;font-weight:600;">${r.value}</td>
+                </tr>`
+        )
+        .join('');
+
+    const badgeHtml = badge
+        ? `<div style="display:inline-block;margin-top:14px;padding:6px 16px;border-radius:999px;background:${accent}1a;color:${accent};font-size:12px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">${badge}</div>`
+        : '';
+
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${title}</title>
+    </head>
+    <body style="margin:0;padding:0;font-family:'Inter',Helvetica,Arial,sans-serif;background-color:#f3f4f6;color:#1f2937;">
+        <div style="max-width:540px;margin:40px auto;background:#ffffff;border-radius:16px;box-shadow:0 10px 25px -5px rgba(0,0,0,0.1),0 8px 10px -6px rgba(0,0,0,0.1);overflow:hidden;">
+            <div style="background:linear-gradient(135deg, ${accent} 0%, ${accent} 100%);padding:30px 24px;text-align:center;">
+                <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:0.3px;">${title}</h1>
+                ${badgeHtml}
+            </div>
+            <div style="padding:34px 30px;">
+                <p style="font-size:15px;color:#4b5563;line-height:1.6;margin:0 0 22px;">${intro}</p>
+                <table style="width:100%;border-collapse:collapse;">${rowsHtml}</table>
+                <p style="font-size:13px;color:#6b7280;line-height:1.6;margin:28px 0 0;">
+                    ${footerNote || 'Please log in to the IECE app for full details.'}
+                </p>
+            </div>
+            <div style="background-color:#f9fafb;padding:20px;text-align:center;border-top:1px solid #e5e7eb;font-size:12px;color:#9ca3af;">
+                <p style="margin:5px 0;">This is an automated message. Please do not reply to this email.</p>
+                <p style="margin:5px 0;">&copy; ${new Date().getFullYear()} IECE Dashboard. All rights reserved.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
+};
+
 const sendEmail = async (to, subject, text, html) => {
     if (!process.env.BREVO_API_KEY || !brevo) {
         console.warn("[Brevo] No API Key provided. Email skipped.");
@@ -291,4 +344,32 @@ const sendSubstitutionEmail = async (to, payload) => {
     return await sendEmail(to, subject || title, text, html);
 };
 
-module.exports = { sendOtp, generateOtp, sendEmail, sendSubstitutionEmail };
+/**
+ * Send a branded leave email to one recipient (request raised / approved /
+ * rejected). Plaintext fallback built from the same rows.
+ * @param {string} to
+ * @param {object} payload - { subject, title, intro, rows, accent, badge, footerNote }
+ */
+const sendLeaveEmail = async (to, payload) => {
+    const { subject, title, intro, rows = [], accent, badge, footerNote } = payload;
+    const html = getEventTemplate({ title, intro, rows, accent, badge, footerNote });
+    const text = [
+        title,
+        '',
+        intro,
+        '',
+        ...rows
+            .filter((r) => r && r.value !== undefined && r.value !== null && String(r.value).trim() !== '')
+            .map((r) => `${r.label}: ${r.value}`),
+        '',
+        'Please log in to the IECE app for full details.',
+    ].join('\n');
+
+    if (!process.env.BREVO_API_KEY) {
+        console.log(`[LEAVE-EMAIL-STUB] (No API Key) -> ${to}: ${title}`);
+        return true;
+    }
+    return await sendEmail(to, subject || title, text, html);
+};
+
+module.exports = { sendOtp, generateOtp, sendEmail, sendSubstitutionEmail, sendLeaveEmail };

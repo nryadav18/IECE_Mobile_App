@@ -227,7 +227,7 @@ export default function CreateActivityForm({ onActivityCreated }) {
 
       {/* Uploading Overlay Modal */}
       {uploading && (
-        <Modal transparent={true} visible={uploading} animationType="fade">
+        <Modal transparent={true} statusBarTranslucent navigationBarTranslucent visible={uploading} animationType="fade">
           <View style={styles.loadingOverlay}>
             <View style={[styles.loadingBox, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
               <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginBottom: 16 }} />
