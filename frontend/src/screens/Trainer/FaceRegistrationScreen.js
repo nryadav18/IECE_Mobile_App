@@ -2,6 +2,7 @@ import React from 'react';
 import { useAlert } from '../../context/AlertContext';
 import api from '../../services/api';
 import FaceCapture from '../../components/FaceCapture';
+import { REGISTRATION_FIX } from '../../utils/location';
 
 export default function FaceRegistrationScreen({ navigation, route }) {
   const { showAlert } = useAlert();
@@ -15,6 +16,9 @@ export default function FaceRegistrationScreen({ navigation, route }) {
     const formData = new FormData();
     formData.append('lat', String(location.lat));
     formData.append('lng', String(location.lng));
+    // GPS uncertainty in metres — the server refuses to anchor a geofence to a
+    // fix that is too vague to be trusted.
+    if (location.accuracy != null) formData.append('accuracy', String(location.accuracy));
     formData.append('schoolId', String(schoolId));
     formData.append('video', {
       uri: video.uri,
@@ -38,17 +42,21 @@ export default function FaceRegistrationScreen({ navigation, route }) {
       subtitle={schoolName ? `Register your face at ${schoolName}` : 'Register your face for attendance'}
       actionVerb="Register"
       accentColor="#E23744"
+      // This capture anchors the geofence for this school permanently, so hold
+      // out for a tighter fix than a daily check-in needs.
+      locationOptions={REGISTRATION_FIX}
       onSubmit={submitRegistration}
       onSuccess={() => {
-        showAlert('Pending', 'Your facial registration is pending admin approval.', 'warning');
-        // Tell the portal to flip straight to the "Pending Approval" state so the
-        // user never sees a stale "Register Face" button while the portal refetches.
-        const returnTo = route?.params?.returnTo;
-        if (returnTo) {
-          navigation.navigate(returnTo, { faceJustRegistered: true, initialTab: 'Attendance' });
-        } else {
-          navigation?.goBack();
-        }
+        showAlert(
+          'Submitted for Approval',
+          'Your facial registration has been sent to the admin. You will be notified once it is approved.',
+          'success'
+        );
+        // The registration is in and now waits on an admin — there is nothing
+        // further for the user to do. Reset the stack to Home so pressing back
+        // can never return them to the camera or drop them onto the pending
+        // banner again. (A plain navigate/goBack would leave both behind.)
+        navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
       }}
       onError={(msg) => showAlert('Error', msg, 'error')}
       onCancel={() => navigation?.goBack()}

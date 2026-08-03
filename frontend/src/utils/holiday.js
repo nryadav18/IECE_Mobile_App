@@ -16,11 +16,16 @@ export function isSunday(d = new Date()) {
 }
 
 /**
- * True when attendance should be disabled today: it's a Sunday, or the user's
- * school has an APPROVED holiday today.
+ * True when attendance should be disabled today: the user's school has an
+ * APPROVED holiday today.
+ *
+ * Sundays are deliberately NOT off. Trainers do sometimes work Sundays, so
+ * check-in / check-out stays enabled and the day is recorded normally. Sunday
+ * only suppresses the reminder notifications, which the server decides — do not
+ * add `isSunday()` back here, or the buttons would grey out while the API
+ * happily accepts the attendance.
  */
 export function isOffToday(holidays = []) {
-  if (isSunday()) return true;
   const today = dayKey();
   return holidays.some((h) => h.date === today && h.status === 'approved');
 }

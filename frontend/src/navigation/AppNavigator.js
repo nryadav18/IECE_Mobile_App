@@ -32,7 +32,10 @@ import SubstitutionApprovalScreen from '../screens/Substitution/SubstitutionAppr
 import LeaveScreen from '../screens/Leave/LeaveScreen';
 import LeaveApprovalScreen from '../screens/Leave/LeaveApprovalScreen';
 import MeetingCornerScreen from '../screens/Meeting/MeetingCornerScreen';
+import MeetingDetailScreen from '../screens/Meeting/MeetingDetailScreen';
 import CreateMeetingScreen from '../screens/Meeting/CreateMeetingScreen';
+import ApprovalsScreen from '../screens/Approvals/ApprovalsScreen';
+import FaceRegistrationReviewScreen from '../screens/Approvals/FaceRegistrationReviewScreen';
 import { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES, LEAVE_APPLICANT_ROLES, MEETING_VIEWER_ROLES, MEETING_CREATOR_ROLES } from '../utils/roles';
 
 const Stack = createStackNavigator();
@@ -65,6 +68,16 @@ const AppNavigator = () => {
           {/* Notification inbox — every authenticated user has one. */}
           <Stack.Screen name="Notifications" component={NotificationsScreen} />
 
+          {/* Approvals hub — anyone who can ever BE an approver: (trainee) team
+              leaders, heads, Admin and CEO. The API scopes each queue to the
+              people that person is actually responsible for. */}
+          {[...LEADER_ROLES, ...HEAD_ROLES, ...ADMIN_ROLES].includes(user.role) && (
+            <>
+              <Stack.Screen name="Approvals" component={ApprovalsScreen} />
+              <Stack.Screen name="FaceRegistrationReview" component={FaceRegistrationReviewScreen} />
+            </>
+          )}
+
           {/* Substitution feature — raisers (leaders/heads) + approvers (CEO/Admin). */}
           {[...LEADER_ROLES, ...HEAD_ROLES, ...ADMIN_ROLES].includes(user.role) && (
             <>
@@ -90,7 +103,12 @@ const AppNavigator = () => {
           {/* Meeting Corner — everyone except chairman can view; leaders/heads/
               CEO/Admin can also post links. */}
           {MEETING_VIEWER_ROLES.includes(user.role) && (
-            <Stack.Screen name="MeetingCorner" component={MeetingCornerScreen} />
+            <>
+              <Stack.Screen name="MeetingCorner" component={MeetingCornerScreen} />
+              {/* Anyone who can see the corner can open a meeting's full detail;
+                  the API still checks it was actually shared with them. */}
+              <Stack.Screen name="MeetingDetail" component={MeetingDetailScreen} />
+            </>
           )}
           {MEETING_CREATOR_ROLES.includes(user.role) && (
             <Stack.Screen name="CreateMeeting" component={CreateMeetingScreen} />

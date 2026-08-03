@@ -19,11 +19,16 @@ function isSunday(dateKey = istDateKey()) {
 }
 
 /**
- * True when the school is off on dateKey — i.e. it's a Sunday, or the school has
- * an APPROVED holiday on that date. (No DB hit needed for Sundays.)
+ * True when attendance is CLOSED for this school on dateKey — i.e. the school
+ * has an APPROVED holiday on that date.
+ *
+ * Sundays are deliberately NOT included. Trainers do sometimes work Sundays, so
+ * check-in / check-out stays open and a Sunday they work is recorded normally.
+ * Sunday only suppresses the reminder push notifications (see
+ * attendanceReminderCron), which is a separate decision — do not fold `isSunday`
+ * back in here.
  */
 async function isSchoolOffDay(schoolId, dateKey = istDateKey()) {
-  if (isSunday(dateKey)) return true;
   if (!schoolId) return false;
   const holiday = await SchoolHoliday.findOne({ schoolId, date: dateKey, status: 'approved' });
   return !!holiday;

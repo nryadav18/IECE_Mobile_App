@@ -2,17 +2,26 @@ const Activity = require('../models/Activity');
 const User = require('../models/User');
 const { HEAD_ROLES, LEADER_ROLES } = require('../utils/roles');
 const { sendPushNotification } = require('../utils/pushNotification');
+const { notify } = require('../utils/notify');
+const { getApproverIdsFor, canApproveFor } = require('../utils/hierarchy');
+const { ROLE_LABELS } = require('../utils/roleLabels');
 
-const notifyAdminForActivityApproval = async (activity, senderId) => {
-  const admins = await User.find({ role: 'creator_admin' });
-  const title = 'New Activity Pending Approval';
-  const message = `A new activity (${activity.name}) requires your approval.`;
+const roleLabel = (role) => ROLE_LABELS[role] || role;
 
-  for (const admin of admins) {
-    if (admin.expoPushToken) {
-      await sendPushNotification(admin.expoPushToken, title, message, { type: 'activity_approval', relatedId: activity._id.toString() });
-    }
-  }
+/**
+ * Ask whoever sits directly above the uploader to review a new activity — a
+ * trainer's goes to their team leader, a leader's to their head, a head's to
+ * Admin/CEO (who are always included as a fallback). Same chain as facial
+ * registrations, so staff only ever answer to one person.
+ */
+const notifyApproversForActivity = async (activity, uploader) => {
+  const approverIds = await getApproverIdsFor(uploader);
+  await notify(approverIds, {
+    type: 'activity_approval',
+    title: 'New Activity Pending Approval',
+    body: `${uploader.name} (${roleLabel(uploader.role)}) uploaded "${activity.name}" and needs your approval.`,
+    data: { relatedId: String(activity._id), activityId: String(activity._id) },
+  });
 };
 
 exports.getActivities = async (req, res) => {
@@ -86,10 +95,15 @@ exports.createActivity = async (req, res) => {
     
     const activity = await Activity.create(req.body);
 
-    // Send notification to the IECE admins
-    await notifyAdminForActivityApproval(activity, req.user.id);
-
     res.status(201).json({ success: true, data: activity });
+
+    // Ask the uploader's own approver to review it. Runs after the response and
+    // must never throw — see the unhandledRejection note in server.js.
+    try {
+      await notifyApproversForActivity(activity, req.user);
+    } catch (e) {
+      console.error('Activity approval notification error:', e.message);
+    }
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
@@ -123,9 +137,16 @@ exports.updateActivity = async (req, res) => {
       activity.status = 'approved';
       await activity.save();
     } else if (previousStatus === 'approved' || previousStatus === 'rejected') {
+      // Edited after a decision — it goes back to the uploader's approver as a
+      // fresh request, and the old rejection reason no longer applies.
       activity.status = 'pending';
+      activity.rejectionRemark = undefined;
       await activity.save();
-      await notifyAdminForActivityApproval(activity, req.user.id);
+      try {
+        await notifyApproversForActivity(activity, req.user);
+      } catch (e) {
+        console.error('Activity re-approval notification error:', e.message);
+      }
     } else {
       await activity.save();
     }
@@ -142,38 +163,66 @@ exports.updateActivityStatus = async (req, res) => {
     if (!['approved', 'rejected'].includes(status)) {
       return res.status(400).json({ success: false, error: 'Invalid status' });
     }
+    // A rejection with no remark leaves the uploader guessing what to fix.
+    if (status === 'rejected' && (!rejectionRemark || !rejectionRemark.trim())) {
+      return res.status(400).json({ success: false, error: 'Please give a reason for the rejection so the uploader knows what to fix.' });
+    }
 
-    const activity = await Activity.findByIdAndUpdate(
-      req.params.id,
-      { status, rejectionRemark },
-      { returnDocument: 'after', runValidators: true }
-    );
-
-    if (!activity) {
+    const existing = await Activity.findById(req.params.id);
+    if (!existing) {
       return res.status(404).json({ success: false, error: 'Activity not found' });
     }
 
-    // Send notification back to uploader
-    let msg = `Your activity (${activity.name}) has been ${status} by IECE Admin.`;
-    if (status === 'rejected' && rejectionRemark) {
-      msg += ` Remark: "${rejectionRemark}"`;
+    // Only the uploader's own approver may decide — their team leader, their
+    // head, or Admin/CEO (who may act at any level).
+    const uploader = await User.findById(existing.uploaderId);
+    if (!uploader) {
+      return res.status(404).json({ success: false, error: 'Uploader not found' });
+    }
+    if (!(await canApproveFor(req.user, uploader))) {
+      return res.status(403).json({ success: false, error: 'This activity is not yours to decide.' });
+    }
+
+    existing.status = status;
+    existing.rejectionRemark = status === 'rejected' ? rejectionRemark.trim() : undefined;
+    await existing.save();
+    const activity = existing;
+
+    // Tell the uploader who decided and, when rejected, exactly why.
+    const decidedBy = `${req.user.name} (${roleLabel(req.user.role)})`;
+    let msg = `Your activity "${activity.name}" has been ${status} by ${decidedBy}.`;
+    if (status === 'rejected') {
+      msg += ` Reason: "${activity.rejectionRemark}"`;
     }
     const uploaderTitle = `Activity ${status.charAt(0).toUpperCase() + status.slice(1)}`;
 
-    const uploader = await User.findById(activity.uploaderId);
-    if (uploader && uploader.expoPushToken) {
-      await sendPushNotification(uploader.expoPushToken, uploaderTitle, msg, { type: 'activity_status_update', relatedId: activity._id.toString() });
+    try {
+      await notify([activity.uploaderId], {
+        type: 'activity_status_update',
+        title: uploaderTitle,
+        body: msg,
+        data: { relatedId: String(activity._id), activityId: String(activity._id) },
+      });
+    } catch (e) {
+      console.error('Activity status notification error:', e.message);
     }
 
-    // If approved, notify the school's chairman so they are aware
+    // The school no longer approves activities, but it is still their school —
+    // once approved, let the chairman know so they see what was published.
     if (status === 'approved') {
-      const School = require('../models/School');
-      const school = await School.findById(activity.schoolId);
-      if (school && school.chairmanId) {
-        const chairman = await User.findById(school.chairmanId);
-        if (chairman && chairman.expoPushToken) {
-           await sendPushNotification(chairman.expoPushToken, 'New Activity Approved', `An activity (${activity.name}) at your school was approved by IECE Admin.`, { type: 'activity_status_update', relatedId: activity._id.toString() });
+      try {
+        const School = require('../models/School');
+        const school = await School.findById(activity.schoolId);
+        if (school && school.chairmanId) {
+          await notify([school.chairmanId], {
+            type: 'activity_status_update',
+            title: 'New Activity Approved',
+            body: `An activity ("${activity.name}") at your school was approved by ${decidedBy}.`,
+            data: { relatedId: String(activity._id), activityId: String(activity._id) },
+          });
         }
+      } catch (e) {
+        console.error('Chairman activity notification error:', e.message);
       }
     }
 

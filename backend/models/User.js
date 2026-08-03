@@ -14,8 +14,24 @@ const faceRegistrationSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'approved'],
+    enum: ['pending', 'approved', 'rejected'],
     default: 'pending'
+  },
+  // A rejection is KEPT rather than deleted, so the person can open the app and
+  // read why they were turned down instead of relying on a push they may have
+  // missed. Re-registering resets the entry to pending and clears these.
+  rejectionReason: {
+    type: String,
+    default: null
+  },
+  reviewedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  reviewedAt: {
+    type: Date,
+    default: null
   },
   faceEmbedding: {
     type: [Number],
@@ -24,6 +40,13 @@ const faceRegistrationSchema = new mongoose.Schema({
   registrationLocation: {
     lat: { type: Number },
     lng: { type: Number }
+  },
+  // Reported GPS uncertainty (metres) of the anchor fix above. Kept so a bad
+  // registration can be spotted later instead of silently breaking check-ins.
+  // null for registrations captured by app builds that predate this field.
+  locationAccuracy: {
+    type: Number,
+    default: null
   },
   registrationPhotoUrl: {
     type: String,

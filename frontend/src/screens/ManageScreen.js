@@ -46,6 +46,12 @@ export default function ManageScreen({ navigation }) {
   });
   const [teamModalVisible, setTeamModalVisible] = useState(false);
   const [updating, setUpdating] = useState(false);
+  // Face-registration removal is per-school: a person may be registered at
+  // several schools, so we pick one before confirming the delete.
+  const [faceTarget, setFaceTarget] = useState(null); // { user, registrations: [...] }
+  const [faceStep, setFaceStep] = useState('select'); // 'select' | 'confirm'
+  const [faceSelection, setFaceSelection] = useState(null); // one registration
+  const [faceDeleting, setFaceDeleting] = useState(false);
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
 
   const showAlert = (title, message, type = 'info', buttons = []) => {
@@ -142,28 +148,70 @@ export default function ManageScreen({ navigation }) {
     }
   };
 
-  const handleDeleteFaceRegistration = (id, name) => {
-    showAlert(
-      'Reset Face Registration',
-      `Are you sure you want to delete the facial registration for ${name}? They will need to register again.`,
-      'warning',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          type: 'primary',
-          onPress: async () => {
-            try {
-              await api.delete(`/admin/face-registration/${id}`);
-              showAlert('Success', `Face registration for ${name} has been reset.`, 'success');
-              fetchData();
-            } catch (err) {
-              showAlert('Error', 'Failed to delete face registration.', 'error');
-            }
-          }
-        }
-      ]
-    );
+  // Normalize a user's per-school face registrations into what the picker needs.
+  // `schoolId` arrives populated ({_id, name}) but may be a bare id on older
+  // payloads, so fall back to looking the name up in the schools list.
+  const getFaceRegistrations = (user) =>
+    (user?.faceRegistrations || []).map((reg) => {
+      const raw = reg.schoolId;
+      const id = raw?._id || raw;
+      const name = raw?.name || schools.find((s) => s._id === String(id))?.name || 'Unknown school';
+      return { id: String(id), name, status: reg.status };
+    });
+
+  const handleDeleteFaceRegistration = (user) => {
+    const registrations = getFaceRegistrations(user);
+
+    if (registrations.length === 0) {
+      showAlert(
+        'Nothing to Delete',
+        `${user.name} has no facial registration on record.`,
+        'info'
+      );
+      return;
+    }
+
+    setFaceTarget({ user, registrations });
+    // A single registration needs no choice — go straight to the confirmation.
+    if (registrations.length === 1) {
+      setFaceSelection(registrations[0]);
+      setFaceStep('confirm');
+    } else {
+      setFaceSelection(null);
+      setFaceStep('select');
+    }
+  };
+
+  const closeFaceModal = () => {
+    if (faceDeleting) return;
+    setFaceTarget(null);
+    setFaceSelection(null);
+    setFaceStep('select');
+  };
+
+  const confirmDeleteFaceRegistration = async () => {
+    if (!faceTarget || !faceSelection) return;
+
+    const { user } = faceTarget;
+    const { id: schoolId, name: schoolName } = faceSelection;
+
+    setFaceDeleting(true);
+    try {
+      await api.delete(`/admin/face-registration/${user._id}/${schoolId}`);
+      setFaceTarget(null);
+      setFaceSelection(null);
+      setFaceStep('select');
+      showAlert(
+        'Deleted',
+        `${user.name}'s face registration for ${schoolName} has been removed. They will need to register again at that school.`,
+        'success'
+      );
+      fetchData();
+    } catch (err) {
+      showAlert('Error', err.response?.data?.error || 'Failed to delete face registration.', 'error');
+    } finally {
+      setFaceDeleting(false);
+    }
   };
 
   const handleDeletePress = (id, label) => {
@@ -692,11 +740,12 @@ export default function ManageScreen({ navigation }) {
                         >
                           <Ionicons name="pencil" size={14} color={theme.colors.primary} />
                         </TouchableOpacity>
-                        {/* Show delete-face button only for trainers and team leaders who have a face registered */}
-                        {(activeTab === 'Trainers' || activeTab === 'TeamLeaders') && (item.facialRegistrationStatusV2 || item.facialRegistrationStatus) !== 'none' && (
+                        {/* Delete-face button for field staff who actually have a
+                            registration on record (any school). */}
+                        {activeTab !== 'Schools' && (item.faceRegistrations?.length > 0) && (
                           <TouchableOpacity
                             style={[styles.miniActionBtn, { backgroundColor: '#F59E0B15', borderColor: '#F59E0B' }]}
-                            onPress={() => handleDeleteFaceRegistration(item._id, item.name)}
+                            onPress={() => handleDeleteFaceRegistration(item)}
                           >
                             <Ionicons name="scan" size={14} color="#D97706" />
                           </TouchableOpacity>
@@ -723,6 +772,8 @@ export default function ManageScreen({ navigation }) {
           visible={!!editingUser}
           transparent
           animationType="slide"
+          statusBarTranslucent
+          navigationBarTranslucent
           onRequestClose={() => setEditingUser(null)}
         >
           <View style={styles.modalOverlay}>
@@ -891,8 +942,151 @@ export default function ManageScreen({ navigation }) {
           </View>
         </Modal>
 
+        {/* Delete Face Registration — school picker, then confirmation */}
+        <Modal
+          visible={!!faceTarget}
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          navigationBarTranslucent
+          onRequestClose={closeFaceModal}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.faceModal, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+
+              {/* Header */}
+              <View style={styles.faceModalHeader}>
+                {faceStep === 'confirm' && faceTarget?.registrations.length > 1 ? (
+                  <TouchableOpacity
+                    onPress={() => setFaceStep('select')}
+                    disabled={faceDeleting}
+                    style={[styles.faceIconBtn, { borderColor: theme.colors.border }]}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="chevron-back" size={18} color={theme.colors.textPrimary} />
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.faceIconBtn} />
+                )}
+
+                <View style={{ flex: 1, alignItems: 'center', paddingHorizontal: 8 }}>
+                  <Text style={[styles.faceModalTitle, { color: theme.colors.textPrimary }]} numberOfLines={1}>
+                    {faceStep === 'select' ? 'Select School' : 'Delete Face Registration'}
+                  </Text>
+                  <Text style={[styles.faceModalSubtitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+                    {faceTarget?.user?.name}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  onPress={closeFaceModal}
+                  disabled={faceDeleting}
+                  style={[styles.faceIconBtn, { borderColor: theme.colors.border }]}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close" size={18} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={[styles.faceDivider, { backgroundColor: theme.colors.border }]} />
+
+              {faceStep === 'select' ? (
+                <>
+                  <Text style={[styles.faceHelpText, { color: theme.colors.textSecondary }]}>
+                    This person is registered at {faceTarget?.registrations.length} schools. Choose which
+                    registration to delete — the others stay untouched.
+                  </Text>
+
+                  <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={false}>
+                    {(faceTarget?.registrations || []).map((reg) => {
+                      const approved = reg.status === 'approved';
+                      const statusColor = approved ? '#10B981' : '#F59E0B';
+                      return (
+                        <TouchableOpacity
+                          key={reg.id}
+                          style={[styles.faceSchoolRow, { borderColor: theme.colors.border, backgroundColor: theme.colors.background }]}
+                          onPress={() => {
+                            setFaceSelection(reg);
+                            setFaceStep('confirm');
+                          }}
+                          activeOpacity={0.75}
+                        >
+                          <View style={[styles.faceSchoolIcon, { backgroundColor: statusColor + '18' }]}>
+                            <Ionicons name="business" size={16} color={statusColor} />
+                          </View>
+                          <View style={{ flex: 1, marginRight: 8 }}>
+                            <Text style={[styles.faceSchoolName, { color: theme.colors.textPrimary }]} numberOfLines={2}>
+                              {reg.name}
+                            </Text>
+                            <Text style={[styles.faceSchoolStatus, { color: statusColor }]}>
+                              {approved ? 'Approved' : 'Pending approval'}
+                            </Text>
+                          </View>
+                          <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  <TouchableOpacity
+                    style={[styles.modalBtn, styles.modalSecondaryBtn, styles.faceCancelBtn, { borderColor: theme.colors.border, marginTop: 14 }]}
+                    onPress={closeFaceModal}
+                  >
+                    <Text style={[styles.modalBtnText, { color: theme.colors.textPrimary }]}>Cancel</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <View style={styles.faceWarnIconWrap}>
+                    <View style={styles.faceWarnIcon}>
+                      <Ionicons name="scan" size={30} color="#EF4444" />
+                    </View>
+                  </View>
+
+                  <Text style={[styles.faceConfirmText, { color: theme.colors.textSecondary }]}>
+                    Delete the face registration of{' '}
+                    <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>{faceTarget?.user?.name}</Text>
+                    {' '}for{' '}
+                    <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>{faceSelection?.name}</Text>?
+                  </Text>
+
+                  <View style={[styles.faceNoteBox, { borderColor: '#F59E0B55', backgroundColor: '#F59E0B12' }]}>
+                    <Ionicons name="information-circle" size={16} color="#D97706" style={{ marginRight: 8 }} />
+                    <Text style={[styles.faceNoteText, { color: theme.colors.textSecondary }]}>
+                      They will not be able to mark attendance at this school until they register their
+                      face there again.
+                      {faceTarget?.registrations.length > 1
+                        ? ' Registrations at their other schools are not affected.'
+                        : ''}
+                    </Text>
+                  </View>
+
+                  <View style={styles.modalButtons}>
+                    <TouchableOpacity
+                      style={[styles.modalBtn, styles.modalSecondaryBtn, { borderColor: theme.colors.border }]}
+                      onPress={closeFaceModal}
+                      disabled={faceDeleting}
+                    >
+                      <Text style={[styles.modalBtnText, { color: theme.colors.textPrimary }]}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.modalBtn, { backgroundColor: '#EF4444' }]}
+                      onPress={confirmDeleteFaceRegistration}
+                      disabled={faceDeleting}
+                    >
+                      {faceDeleting
+                        ? <ActivityIndicator size="small" color="#FFF" />
+                        : <Text style={[styles.modalBtnText, { color: '#FFF' }]}>Delete</Text>}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+
         {/* Custom Alerts */}
-        <CustomAlert 
+        <CustomAlert
           visible={alertConfig.visible}
           title={alertConfig.title}
           message={alertConfig.message}
@@ -1111,5 +1305,69 @@ const styles = StyleSheet.create({
   },
   modalPrimaryBtn: {},
   modalSecondaryBtn: { borderWidth: 1 },
-  modalBtnText: { fontWeight: '700', fontSize: 14 }
+  modalBtnText: { fontWeight: '700', fontSize: 14 },
+
+  // Delete face registration modal
+  faceModal: {
+    width: '90%',
+    maxWidth: 440,
+    borderRadius: 20,
+    borderWidth: 1,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 20,
+  },
+  faceModalHeader: { flexDirection: 'row', alignItems: 'center' },
+  faceIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  faceModalTitle: { fontSize: 16, fontWeight: '800', textAlign: 'center' },
+  faceModalSubtitle: { fontSize: 12, fontWeight: '600', marginTop: 2, textAlign: 'center' },
+  faceDivider: { height: 1, marginVertical: 14, opacity: 0.7 },
+  faceHelpText: { fontSize: 13, lineHeight: 19, marginBottom: 12 },
+  faceSchoolRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 10,
+  },
+  faceSchoolIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  faceSchoolName: { fontSize: 14, fontWeight: '700' },
+  faceSchoolStatus: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+  // Standalone (non-row) button — cancel flex:1 so it keeps its own height.
+  faceCancelBtn: { flex: 0, alignSelf: 'stretch' },
+  faceWarnIconWrap: { alignItems: 'center', marginBottom: 14 },
+  faceWarnIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#EF444418',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  faceConfirmText: { fontSize: 14, lineHeight: 21, textAlign: 'center' },
+  faceNoteBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 16,
+  },
+  faceNoteText: { flex: 1, fontSize: 12, lineHeight: 18 },
 });

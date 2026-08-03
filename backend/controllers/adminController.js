@@ -32,10 +32,13 @@ function normalizeSchoolIds(body) {
 exports.getTeamLeaders = async (req, res) => {
   try {
     const teamLeaders = await User.find({ role: { $in: LEADER_ROLES } })
-      .select('-password')
+      // Embeddings are hundreds of floats per school and are useless to the
+      // client; the per-school registration metadata is what the admin UI needs.
+      .select('-password -faceEmbedding -faceEmbeddingV2 -faceRegistrations.faceEmbedding')
       .populate('schoolId', 'name state associationYear classCoverage')
       .populate('schoolIds', 'name state associationYear classCoverage')
       .populate('teamId', 'name')
+      .populate('faceRegistrations.schoolId', 'name state')
       .sort('-createdAt');
     res.status(200).json({ success: true, data: teamLeaders });
   } catch (error) {
@@ -293,12 +296,15 @@ exports.getUsersPaginated = async (req, res) => {
     const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
     const users = await User.find(query)
-      .select('-password')
+      // Embeddings are hundreds of floats per school and are useless to the
+      // client; the per-school registration metadata is what the admin UI needs.
+      .select('-password -faceEmbedding -faceEmbeddingV2 -faceRegistrations.faceEmbedding')
       .populate('schoolId')
       .populate('schoolIds')
       .populate('teamLeaderId', 'name email')
       .populate('teamId', 'name')
       .populate('teamIds', 'name')
+      .populate('faceRegistrations.schoolId', 'name state')
       .sort('-createdAt')
       .skip(skip)
       .limit(parseInt(limit, 10))
@@ -566,7 +572,18 @@ exports.deleteFacialRegistration = async (req, res) => {
     const school = await School.findById(schoolId).select('name');
     const schoolName = school ? school.name : 'a school';
 
-    res.status(200).json({ success: true, data: user });
+    // Compact payload — the admin screen only needs to know what is left, and
+    // the full user document would ship every remaining face embedding.
+    res.status(200).json({
+      success: true,
+      data: {
+        userId: user._id,
+        schoolId,
+        schoolName,
+        remaining: user.faceRegistrations.length,
+        facialRegistrationStatus: user.facialRegistrationStatus
+      }
+    });
 
     // Let the user know they need to register their face again for this school.
     notifyUser(

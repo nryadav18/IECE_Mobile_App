@@ -17,6 +17,9 @@ export default function AttendanceScreen({ navigation, route }) {
     const formData = new FormData();
     formData.append('lat', String(location.lat));
     formData.append('lng', String(location.lng));
+    // GPS uncertainty in metres — recorded with the attendance row and used to
+    // reject fixes too vague to place the person anywhere in particular.
+    if (location.accuracy != null) formData.append('accuracy', String(location.accuracy));
     formData.append('intent', intent);
     formData.append('schoolId', String(schoolId));
     formData.append('video', {

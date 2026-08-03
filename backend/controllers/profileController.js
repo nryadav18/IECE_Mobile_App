@@ -4,7 +4,7 @@ const VisitReport = require('../models/VisitReport');
 const Activity = require('../models/Activity');
 const { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES } = require('../utils/roles');
 const { getApprovedLeaveWindows } = require('../utils/leaveStatus');
-const { getSubjectLeaveWindows } = require('../utils/substitutionStatus');
+const { getSubjectLeaveWindows, getSubstituteDutyWindows } = require('../utils/substitutionStatus');
 
 // @desc    Get detailed user profile (Admin/TL/Self)
 // @route   GET /api/profile/:id
@@ -47,7 +47,12 @@ exports.getUserProfile = async (req, res) => {
         }
     }
 
-    const attendance = await Attendance.find({ trainerId: userId }).sort('-date');
+    // Both schools populated, so a day split across two shows as
+    // "checked in at A, checked out at B" to whoever is viewing this profile.
+    const attendance = await Attendance.find({ trainerId: userId })
+      .populate('schoolId', 'name state')
+      .populate('checkOutSchoolId', 'name state')
+      .sort('-date');
     const visitReports = await VisitReport.find({ trainerId: userId }).sort('-dateOfInspection');
 
     // Activities where user is uploader or an organizer
@@ -61,9 +66,10 @@ exports.getUserProfile = async (req, res) => {
     // Approved leave + substitution windows — so anyone authorized to view this
     // profile sees the SAME "On Leave" / "On Substitution" days on the calendar as
     // the person does in their own portal.
-    const [leaveDays, substitutionLeaves] = await Promise.all([
+    const [leaveDays, substitutionLeaves, substitutionDuties] = await Promise.all([
       getApprovedLeaveWindows(userId),
       getSubjectLeaveWindows(userId),
+      getSubstituteDutyWindows(userId),
     ]);
 
     res.status(200).json({
@@ -74,7 +80,8 @@ exports.getUserProfile = async (req, res) => {
          visitReports,
          activities,
          leaveDays,
-         substitutionLeaves
+         substitutionLeaves,
+         substitutionDuties
       }
     });
   } catch (error) {

@@ -22,6 +22,8 @@ const META = {
   leave_approved: { icon: 'checkmark-circle', color: '#27AE60' },
   leave_rejected: { icon: 'close-circle', color: '#F44336' },
   meeting_new: { icon: 'videocam', color: '#2D8CFF' },
+  meeting_updated: { icon: 'create-outline', color: '#F59E0B' },
+  face_rejected: { icon: 'close-circle', color: '#EF4444' },
   default: { icon: 'notifications', color: '#10B981' },
 };
 
@@ -84,8 +86,21 @@ export default function NotificationsScreen({ navigation }) {
         navigation.navigate('Leave', { initialTab: 'mine' });
       }
     }
-    if (item.type === 'meeting_new' && canUseMeetings(user?.role)) {
-      navigation.navigate('MeetingCorner');
+    // Both approval queues live in the same hub.
+    if (item.type === 'face_registration_pending' || item.type === 'activity_approval') {
+      navigation.navigate('Approvals');
+    }
+    // An activity decision — open the activity so the uploader sees the outcome
+    // and, if rejected, the reason.
+    if (item.type === 'activity_status_update' && item.data?.activityId) {
+      navigation.navigate('ActivityDetails', { activityId: item.data.activityId });
+    }
+    // Open the meeting itself when we know which one; the corner is the
+    // fallback for older notifications that carry no meetingId.
+    if ((item.type === 'meeting_new' || item.type === 'meeting_updated') && canUseMeetings(user?.role)) {
+      const meetingId = item.data?.meetingId;
+      if (meetingId) navigation.navigate('MeetingDetail', { meetingId });
+      else navigation.navigate('MeetingCorner');
     }
   };
 

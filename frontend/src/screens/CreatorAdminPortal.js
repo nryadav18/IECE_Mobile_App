@@ -17,7 +17,6 @@ import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../components/Avatar';
 import CustomAlert from '../components/CustomAlert';
 import CustomDropdown from '../components/CustomDropdown';
-import EditActivityModal from '../components/EditActivityModal';
 import EditReportModal from '../components/EditReportModal';
 import VisitReportDetail from '../components/VisitReportDetail';
 import VisitReportForm from '../components/VisitReportForm';
@@ -140,7 +139,6 @@ const TAB_ITEMS = [
   { key: 'LogVisit', label: 'Log Visit', icon: 'clipboard-outline' },
   { key: 'Holidays', label: 'School Holidays', icon: 'sunny-outline' },
   { key: 'Banners', label: 'Banners', icon: 'images-outline' },
-  { key: 'ManageEvents', label: 'Activities', icon: 'calendar-outline' },
 ];
 
 // Which skeleton shape each section shows while it loads — mirrors the real
@@ -157,7 +155,6 @@ const SECTION_SKELETON = {
   LogVisit: 'form',
   Holidays: 'list',
   Banners: 'form',
-  ManageEvents: 'list',
 };
 
 // The CEO is a read-only super-viewer: no create/manage, no holidays. They keep
@@ -200,11 +197,9 @@ export default function CreatorAdminPortal({ navigation, route }) {
   // Everyone a visit report can be logged on (all field staff).
   const reportTargets = [...teamLeaders, ...trainers, ...heads];
   const myId = user?._id || user?.id;
-  const [allActivities, setAllActivities] = useState([]);
   const [reports, setReports] = useState([]);
   const myReports = reports.filter(r => (r.teamLeaderId?._id || r.teamLeaderId) === myId);
   const [loadingData, setLoadingData] = useState(true);
-  const [activityToEdit, setActivityToEdit] = useState(null);
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info' });
   const [secureTextEntry, setSecureTextEntry] = useState(true);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -262,7 +257,6 @@ export default function CreatorAdminPortal({ navigation, route }) {
       if (schoolsRes.status === 'fulfilled') setSchools(schoolsRes.value.data.data);
       if (tlsRes.status === 'fulfilled') setTeamLeaders(tlsRes.value.data.data);
       if (trainersRes.status === 'fulfilled') setTrainers(trainersRes.value.data.data);
-      if (activitiesRes.status === 'fulfilled') setAllActivities(activitiesRes.value.data.data);
       if (bannerRes.status === 'fulfilled') setBanners(bannerRes.value.data.data);
       if (reportsRes.status === 'fulfilled') setReports(reportsRes.value.data.data);
       if (teamsRes.status === 'fulfilled') setTeams(teamsRes.value.data.data);
@@ -399,31 +393,6 @@ export default function CreatorAdminPortal({ navigation, route }) {
             fetchDropdownData();
           } catch (err) {
             showAlert('Error', 'Failed to delete banner', 'error');
-          }
-      }}
-    ]);
-  };
-
-  const handleUpdateActivityStatus = async (id, status) => {
-    try {
-      await api.put(`/activities/${id}/status`, { status });
-      showAlert('Success', `Activity ${status} successfully.`, 'success');
-      fetchDropdownData();
-    } catch (err) {
-      showAlert('Error', err.response?.data?.error || 'Failed to update activity status.', 'error');
-    }
-  };
-
-  const deleteActivity = (id) => {
-    showAlert('Confirm', 'Are you sure you want to permanently delete this activity?', 'warning', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => {
-          try {
-            await api.delete(`/activities/${id}`);
-            showAlert('Success', 'Activity deleted permanently.', 'success');
-            fetchDropdownData();
-          } catch (err) {
-            showAlert('Error', 'Failed to delete activity.', 'error');
           }
       }}
     ]);
@@ -1266,62 +1235,6 @@ export default function CreatorAdminPortal({ navigation, route }) {
             </MotiView>
           </View>
 
-          {/* MANAGE ACTIVITIES TAB */}
-          <View style={{ display: activeTab === 'ManageEvents' ? 'flex' : 'none', marginTop: 16 }}>
-            {allActivities.length === 0 ? (
-               <View style={{ alignItems: 'center', marginTop: 40 }}>
-                 <Ionicons name="calendar-outline" size={48} color={theme.colors.border} />
-                 <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>No activities published yet.</Text>
-               </View>
-            ) : (
-               allActivities.map(evt => (
-                 <View key={evt._id} style={[styles.eventCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-                    <View style={{ flexDirection: 'row', marginBottom: 16 }}>
-                      {evt.mediaUrls && evt.mediaUrls.length > 0 ? (
-                        <Image source={{ uri: evt.mediaUrls[0] }} style={{ width: 80, height: 80, borderRadius: 12, resizeMode: 'cover', marginRight: 16 }} />
-                      ) : (
-                        <View style={{ width: 80, height: 80, borderRadius: 12, backgroundColor: theme.colors.border, marginRight: 16, justifyContent: 'center', alignItems: 'center' }}>
-                          <Ionicons name="image-outline" size={32} color={theme.colors.textSecondary} />
-                        </View>
-                      )}
-                      <View style={{ flex: 1, justifyContent: 'center' }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <Text style={[styles.eventTitle, { color: theme.colors.textPrimary, flex: 1, marginBottom: 0 }]} numberOfLines={2}>{evt.name}</Text>
-                          <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: evt.status === 'approved' ? theme.colors.success + '20' : evt.status === 'rejected' ? theme.colors.error + '20' : theme.colors.primary + '20' }}>
-                            <Text style={{ fontSize: 10, fontWeight: '700', textTransform: 'uppercase', color: evt.status === 'approved' ? theme.colors.success : evt.status === 'rejected' ? theme.colors.error : theme.colors.primary }}>{evt.status || 'pending'}</Text>
-                          </View>
-                        </View>
-                        <Text style={[styles.eventDate, { color: theme.colors.textSecondary }]}>{new Date(evt.activityDate || evt.eventDate).toLocaleDateString()}</Text>
-                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }} numberOfLines={1}>School: {evt.schoolId?.name || 'N/A'}</Text>
-                      </View>
-                    </View>
-                    
-                    <View style={[styles.eventActions, { flexWrap: 'wrap' }]}>
-                      {(!evt.status || evt.status === 'pending') && (
-                        <>
-                          <TouchableOpacity style={[styles.actionBtn, { borderColor: theme.colors.success, backgroundColor: theme.colors.success + '10', flex: 1 }]} onPress={() => handleUpdateActivityStatus(evt._id, 'approved')}>
-                            <Ionicons name="checkmark-outline" size={18} color={theme.colors.success} />
-                            <Text style={{ color: theme.colors.success, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Approve</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={[styles.actionBtn, { borderColor: theme.colors.error, backgroundColor: theme.colors.error + '10', flex: 1 }]} onPress={() => handleUpdateActivityStatus(evt._id, 'rejected')}>
-                            <Ionicons name="close-outline" size={18} color={theme.colors.error} />
-                            <Text style={{ color: theme.colors.error, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Reject</Text>
-                          </TouchableOpacity>
-                        </>
-                      )}
-                      <TouchableOpacity style={[styles.actionBtn, { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '10', flex: 1 }]} onPress={() => setActivityToEdit(evt)}>
-                        <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
-                        <Text style={{ color: theme.colors.primary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Edit</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[styles.actionBtn, { borderColor: '#FF4444', backgroundColor: '#FF444410', flex: 1 }]} onPress={() => deleteActivity(evt._id)}>
-                        <Ionicons name="trash-outline" size={18} color="#FF4444" />
-                        <Text style={{ color: '#FF4444', fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Delete</Text>
-                      </TouchableOpacity>
-                    </View>
-                 </View>
-               ))
-            )}
-          </View>
 
         </ScrollView>
       )}
@@ -1338,11 +1251,14 @@ export default function CreatorAdminPortal({ navigation, route }) {
           { label: 'Substitution Requests', icon: 'swap-horizontal-outline', badge: sections.substitution || 0, onPress: () => navigation.navigate('Substitution') },
           { label: 'Meeting Corner', icon: 'videocam-outline', onPress: () => navigation.navigate('MeetingCorner') },
           { label: 'Notifications', icon: 'notifications-outline', badge: unread || 0, onPress: () => navigation.navigate('Notifications') },
-          // Face approvals + staff management + create-admin + leave approvals are
-          // admin-only. CEO is read-only (only notified about leave outcomes).
+          // One hub for both queues — face scans AND activities. BOTH Admin and
+          // CEO hold a full override at every level of the hierarchy, so this is
+          // deliberately outside the admin-only block below.
+          { label: 'Approvals', icon: 'checkmark-done-outline', badge: sections.faces || 0, onPress: () => navigation.navigate('Approvals') },
+          // Staff management + create-admin + leave approvals stay admin-only.
+          // CEO is read-only there (only notified about leave outcomes).
           ...(isCEO ? [] : [
             { label: 'Leave Requests', icon: 'calendar-outline', badge: sections.leave || 0, onPress: () => navigation.navigate('Leave') },
-            { label: 'Face Approvals', icon: 'scan-outline', badge: sections.faces || 0, onPress: () => navigation.navigate('PendingRegistrations') },
             { label: 'IECE Staff', icon: 'people-outline', onPress: () => navigation.navigate('ManageScreen') },
             { label: 'Create Admin', icon: 'shield-checkmark-outline', onPress: () => navigation.navigate('CreateAdmin') },
           ]),
@@ -1350,17 +1266,6 @@ export default function CreatorAdminPortal({ navigation, route }) {
         ]}
       />
 
-      <EditActivityModal
-        visible={!!activityToEdit}
-        activity={activityToEdit}
-        onClose={() => setActivityToEdit(null)}
-        onSuccess={() => {
-          setActivityToEdit(null);
-          showAlert('Success', 'Activity updated successfully.', 'success');
-          fetchDropdownData();
-        }}
-        onError={(msg) => showAlert('Error', msg, 'error')}
-      />
 
       <CustomAlert
         visible={alertConfig.visible}

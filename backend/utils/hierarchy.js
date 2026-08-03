@@ -83,6 +83,113 @@ function getSubjectScopeFilter(user) {
 }
 
 /**
+ * A Mongo filter describing who a given user may SHARE A MEETING with — i.e.
+ * the people who work under them.
+ *
+ *   Admin / CEO  -> everybody, including each other. They sit above the whole
+ *                   organisation, so nothing is hidden from them.
+ *   Head          -> the trainers + (trainee) team leaders in the teams they
+ *                   oversee. Zonal, cluster and regional heads share this rule.
+ *   Team leader   -> the trainers reporting to them.
+ *   Anyone else   -> nobody (they cannot post meetings at all).
+ *
+ * Sibling of getSubjectScopeFilter, deliberately kept separate: that one answers
+ * "who may I raise a substitution against" and covers only field staff, whereas
+ * a meeting may legitimately be shared with the Admin and CEO.
+ *
+ * Admin + CEO are ALWAYS notified about every meeting and can always open any
+ * of them, so leaving them out of a head's or leader's list costs nothing — it
+ * only keeps the picker to the people that person actually manages.
+ *
+ * @param {object} user - Mongoose user doc (needs role, _id, teamIds)
+ * @returns {object} a Mongoose query filter
+ */
+function getMeetingRecipientScopeFilter(user) {
+  if (ADMIN_ROLES.includes(user.role)) {
+    return { role: { $in: [...FIELD_STAFF, ...ADMIN_ROLES] } };
+  }
+  if (HEAD_ROLES.includes(user.role)) {
+    return { role: { $in: FIELD_STAFF }, teamId: { $in: user.teamIds || [] } };
+  }
+  if (LEADER_ROLES.includes(user.role)) {
+    return { role: { $in: FIELD_STAFF }, teamLeaderId: user._id };
+  }
+  return { _id: { $in: [] } };
+}
+
+/**
+ * Everyone allowed to APPROVE OR REJECT something raised by `subject` — used
+ * for both facial-registration requests and uploaded activities, so the two
+ * always follow the same chain of command.
+ *
+ *   trainer                     -> their team leader
+ *   team / trainee team leader  -> the head(s) overseeing their team
+ *   head                        -> Admin + CEO
+ *
+ * Admin and CEO are ALWAYS included on top of that, holding a full override at
+ * every level. Without it a trainer whose team leader is on leave, has left, or
+ * simply never acts would be stuck unable to mark attendance at all.
+ *
+ * The same set drives BOTH the notification ("who should be told this needs a
+ * decision") and the permission check ("may this person decide it"), so the
+ * people who get asked are exactly the people who can act — they can never
+ * drift apart.
+ *
+ * @param {object} subject - Mongoose user doc (needs role, _id, teamId, teamLeaderId)
+ * @returns {Promise<string[]>} de-duplicated approver ids (strings)
+ */
+async function getApproverIdsFor(subject) {
+  const ids = new Set();
+  if (!subject) return [];
+
+  if (subject.role === 'trainer') {
+    if (subject.teamLeaderId) ids.add(idStr(subject.teamLeaderId));
+  } else if (LEADER_ROLES.includes(subject.role)) {
+    (await getHeadIdsOverTeam(subject.teamId)).forEach((id) => ids.add(idStr(id)));
+  }
+  // Heads answer to Admin + CEO, who are also the safety net for anyone whose
+  // own approver could not be resolved (no team leader assigned yet, a team
+  // with no head over it, and so on).
+  (await getAdminRecipientIds()).forEach((id) => ids.add(idStr(id)));
+
+  // Nobody approves their own request.
+  ids.delete(idStr(subject._id));
+  return [...ids];
+}
+
+/**
+ * May `actor` decide a request raised by `subject`?
+ * Thin wrapper over getApproverIdsFor so permission and notification can never
+ * disagree about who is in charge.
+ */
+async function canApproveFor(actor, subject) {
+  if (!actor || !subject) return false;
+  const approvers = await getApproverIdsFor(subject);
+  return approvers.includes(idStr(actor._id));
+}
+
+/**
+ * How to describe the approver in a message shown to the requester, e.g.
+ * "…sent to your team leader for approval".
+ *
+ * Takes the whole subject rather than just their role so it can tell the truth
+ * when the normal approver does not exist — a trainer with no team leader is
+ * waiting on the admin, and saying otherwise would send them chasing nobody.
+ */
+function approverLabelFor(subject) {
+  const role = typeof subject === 'string' ? subject : subject?.role;
+  const doc = typeof subject === 'string' ? null : subject;
+
+  if (role === 'trainer') {
+    return doc && !doc.teamLeaderId ? 'the admin' : 'your team leader';
+  }
+  if (LEADER_ROLES.includes(role)) {
+    return doc && !doc.teamId ? 'the admin' : 'your head';
+  }
+  return 'the admin';
+}
+
+/**
  * Recipients for an APPROVED substitution: everyone in the team circle of BOTH
  * the subject and the substitute (their teammates + the heads overseeing those
  * teams), plus the two people themselves, plus CEO + Admin.
@@ -176,6 +283,10 @@ module.exports = {
   getHeadIdsOverTeam,
   getUpwardRecipientIds,
   getSubjectScopeFilter,
+  getMeetingRecipientScopeFilter,
+  getApproverIdsFor,
+  canApproveFor,
+  approverLabelFor,
   getTeamCircleRecipientIds,
   getLeaveApprovalRecipientIds,
 };

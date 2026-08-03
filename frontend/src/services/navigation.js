@@ -31,6 +31,22 @@ export function navigate(name, params) {
  * `type` and optionally `relatedId`. Notifications are role-targeted, so each
  * type has a single sensible destination.
  */
+/**
+ * The portal screen that belongs to a field-staff role.
+ *
+ * Everyone who works under IECE — trainers, (trainee) team leaders and zonal /
+ * cluster / regional heads — has the same working tabs (attendance, school
+ * holidays, activities), but each tier has its OWN portal screen and only that
+ * screen is registered for them in the navigator. Routing a head to the
+ * TrainerPortal lands on a screen that does not exist for their role, so every
+ * role-targeted deep link must go through here.
+ */
+function portalForRole(role) {
+  if (role === 'team_leader' || role === 'trainee_team_leader') return 'TeamLeaderPortal';
+  if (role === 'zonal_head' || role === 'cluster_head' || role === 'regional_head') return 'HeadPortal';
+  return 'TrainerPortal';
+}
+
 function resolveTarget(data = {}) {
   const { type, relatedId } = data;
 
@@ -47,8 +63,8 @@ function resolveTarget(data = {}) {
     case 'substitution_rejected':
       return { screen: 'Notifications' };
 
-    // An activity needs review (admin) or its status changed (uploader).
-    case 'activity_approval':
+    // An activity's status changed → the uploader opens it to see the outcome
+    // (and the rejection reason, if any).
     case 'activity_status_update':
       return relatedId
         ? { screen: 'ActivityDetails', params: { activityId: relatedId } }
@@ -66,19 +82,20 @@ function resolveTarget(data = {}) {
     case 'admin_report':
       return { screen: 'CreatorAdminPortal', params: { initialTab: 'Reports' } };
 
-    // A trainer/TL submitted a face registration → admin approves it.
+    // Someone below you submitted a face registration, or uploaded an activity
+    // → both wait in the same Approvals hub.
     case 'face_registration_pending':
-      return { screen: 'PendingRegistrations' };
+    case 'activity_approval':
+      return { screen: 'Approvals' };
 
     // "Please check in" / "Please check out" reminders → open the user's
     // Attendance tab so they can act right away. The recipient's role rides
-    // along in the payload.
+    // along in the payload, and every field-staff role has its own portal —
+    // sending a head to the TrainerPortal would land on a screen that is not
+    // even registered for them.
     case 'checkin_reminder':
     case 'checkout_reminder':
-      return {
-        screen: data.role === 'team_leader' ? 'TeamLeaderPortal' : 'TrainerPortal',
-        params: { initialTab: 'Attendance' },
-      };
+      return { screen: portalForRole(data.role), params: { initialTab: 'Attendance' } };
 
     // A holiday request needs review → admins only. Open the admin portal on its
     // "School Holidays" tab (the approval / pending list).
@@ -86,15 +103,22 @@ function resolveTarget(data = {}) {
       return { screen: 'CreatorAdminPortal', params: { initialTab: 'Holidays' } };
 
     // A holiday request was approved/rejected → open the applicant's portal on
-    // its "Apply School Holiday" tab so they see the decision. Applicants are
-    // trainers or team leaders.
+    // its "Apply School Holiday" tab so they see the decision. Any field-staff
+    // role can apply, heads included, and each has its own portal.
     case 'holiday_status_update':
-      return data.role === 'team_leader'
-        ? { screen: 'TeamLeaderPortal', params: { initialTab: 'SchoolHoliday' } }
-        : { screen: 'TrainerPortal', params: { initialTab: 'SchoolHoliday' } };
+      return { screen: portalForRole(data.role), params: { initialTab: 'SchoolHoliday' } };
+
+    // A meeting was shared or edited → open that meeting's full detail. Older
+    // pushes carry no meetingId, so fall back to the corner.
+    case 'meeting_new':
+    case 'meeting_updated':
+      return data.meetingId
+        ? { screen: 'MeetingDetail', params: { meetingId: data.meetingId } }
+        : { screen: 'MeetingCorner' };
 
     // Status / informational notifications land on the dashboard.
     case 'face_approved':
+    case 'face_rejected':
     case 'face_removed':
     case 'welcome':
     case 'test':

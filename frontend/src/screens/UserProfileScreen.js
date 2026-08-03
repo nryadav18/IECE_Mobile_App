@@ -6,9 +6,7 @@ import api from '../services/api';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Calendar } from 'react-native-calendars';
-import { buildLeaveMarks } from '../utils/leaveMarks';
-import { buildSubstitutionMarks } from '../utils/substitutionMarks';
-import { buildAttendanceMarks, CALENDAR_LEGEND } from '../utils/calendarColors';
+import { buildCalendarMarks, CALENDAR_LEGEND } from '../utils/calendarColors';
 import CalendarLegend from '../components/CalendarLegend';
 import VisitReportDetail from '../components/VisitReportDetail';
 import { Skeleton, SkeletonProfile, SkeletonCard, SkeletonText, SkeletonStatCards, ShineSweep } from '../components/Skeleton';
@@ -76,7 +74,14 @@ export default function UserProfileScreen({ route, navigation }) {
     );
   }
 
-  const { profile, attendance, visitReports, activities, leaveDays = [], substitutionLeaves = [] } = profileData;
+  const {
+    profile, attendance, visitReports, activities,
+    leaveDays = [],
+    // Days this person was replaced by someone else (shown as On Leave) vs.
+    // days they are covering for someone else (shown as On Substitution).
+    substitutionLeaves = [],
+    substitutionDuties = [],
+  } = profileData;
 
   const getAttendanceSummary = () => {
     const present = attendance.filter(a => a.status === 'Present').length;
@@ -95,10 +100,11 @@ export default function UserProfileScreen({ route, navigation }) {
 
   // Uses the SAME canonical builders/colours as the portals, so an authority
   // viewing this profile sees identical marks to what the person sees themselves.
-  const getMarkedDates = () => ({
-    ...buildAttendanceMarks(attendance),
-    ...buildSubstitutionMarks(substitutionLeaves),
-    ...buildLeaveMarks(leaveDays),
+  const getMarkedDates = () => buildCalendarMarks({
+    attendance,
+    leaveDays,
+    substitutionLeaves,
+    substitutionDuties,
   });
 
   const renderTabs = () => {
@@ -243,6 +249,17 @@ export default function UserProfileScreen({ route, navigation }) {
                 </Text>
               )}
             </View>
+            {/* Where the day happened. Named explicitly when it started at one
+                school and finished at another, so a split day is never read as
+                a single-school day. */}
+            {att.schoolId?.name && (
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 4 }}>
+                <Ionicons name="business-outline" size={11} />{' '}
+                {att.checkOutSchoolId?.name && att.checkOutSchoolId.name !== att.schoolId.name
+                  ? `${att.schoolId.name} → ${att.checkOutSchoolId.name}`
+                  : att.schoolId.name}
+              </Text>
+            )}
           </View>
         ))}
         {attendance.length === 0 && <Text style={{ color: theme.colors.textSecondary }}>No attendance records found.</Text>}

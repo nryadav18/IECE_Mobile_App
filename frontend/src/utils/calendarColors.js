@@ -7,9 +7,9 @@
 // the same map, so the guide can never drift from what's painted.
 
 import { toYMD } from './dates';
-import { SUBSTITUTION_MARK_COLOR } from './substitutionMarks';
-import { LEAVE_MARK_COLOR } from './leaveMarks';
-import { HOLIDAY_APPROVED_COLOR } from './holiday';
+import { SUBSTITUTION_MARK_COLOR, buildSubstitutionMarks } from './substitutionMarks';
+import { LEAVE_MARK_COLOR, buildLeaveMarks } from './leaveMarks';
+import { HOLIDAY_APPROVED_COLOR, buildHolidayMarks, dayKey } from './holiday';
 
 export const CALENDAR_COLORS = {
   present: '#10B981',              // green  — present in school
@@ -54,6 +54,54 @@ export function buildAttendanceMarks(records = []) {
     };
   }
   return marks;
+}
+
+/**
+ * THE canonical way to build a `markedDates` object. Every calendar in the app
+ * goes through this so the layering rules can never drift between screens.
+ *
+ * Precedence, weakest first (later layers paint over earlier ones):
+ *
+ *  1. substitutionDuties  — days this person is assigned to COVER for someone
+ *     else. It is only an assignment, so it is the weakest mark: the moment
+ *     they actually check in, their real Partial/Present colour paints over it.
+ *  2. attendance          — what actually happened (green / amber / red).
+ *  3. holidays            — a school holiday outranks a stray record.
+ *  4. today               — only drawn if nothing else claimed today's cell.
+ *  5. leave + substitutionLeaves — days this person is NOT expected at work,
+ *     either on approved personal leave or because someone else was approved to
+ *     replace them. Strongest: an authorized absence is the final word.
+ *
+ * @param {object}   [opts]
+ * @param {Array}    [opts.attendance]           attendance records
+ * @param {Array}    [opts.holidays]             holiday records (omit to skip)
+ * @param {Array}    [opts.leaveDays]            approved personal leave windows
+ * @param {Array}    [opts.substitutionLeaves]   windows where they were REPLACED
+ * @param {Array}    [opts.substitutionDuties]   windows where they are COVERING
+ * @param {object}   [opts.todayMark]            style for today's cell (omit to skip)
+ */
+export function buildCalendarMarks({
+  attendance = [],
+  holidays = [],
+  leaveDays = [],
+  substitutionLeaves = [],
+  substitutionDuties = [],
+  todayMark,
+} = {}) {
+  const marks = {
+    ...buildSubstitutionMarks(substitutionDuties),
+    ...buildAttendanceMarks(attendance),
+    ...buildHolidayMarks(holidays),
+  };
+
+  // Today's outline is a fallback, not a status — never let it cover a real one.
+  const today = dayKey();
+  if (todayMark && !marks[today]) {
+    marks[today] = todayMark;
+  }
+
+  // Being replaced is an authorized absence, so it reads the same as leave.
+  return { ...marks, ...buildLeaveMarks([...leaveDays, ...substitutionLeaves]) };
 }
 
 // Canonical legend (colour key shown under every calendar). `items` on

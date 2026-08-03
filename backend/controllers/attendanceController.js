@@ -5,13 +5,28 @@ const axios = require('axios');
 const FormData = require('form-data');
 const cloudinary = require('cloudinary').v2;
 const { notifyRole } = require('../utils/pushNotification');
+const { notify } = require('../utils/notify');
+const { getApproverIdsFor, approverLabelFor } = require('../utils/hierarchy');
+const { ROLE_LABELS } = require('../utils/roleLabels');
+
+const roleLabel = (role) => ROLE_LABELS[role] || role;
 const { isSchoolOffDay } = require('../utils/holiday');
 const {
   getActiveSubstituteAssignment,
   getActiveSubjectLeave,
   getSubjectLeaveWindows,
+  getSubstituteDutyWindows,
 } = require('../utils/substitutionStatus');
 const { getApprovedLeaveWindows } = require('../utils/leaveStatus');
+const {
+  DISPLAY_RADIUS_M,
+  MAX_REGISTRATION_ACCURACY_M,
+  MAX_VERIFICATION_ACCURACY_M,
+  getDistanceFromLatLonInM,
+  isWithinGeofence,
+  parseCoordinates,
+  parseAccuracy,
+} = require('../utils/geofence');
 
 // Keep the coarse legacy aggregate face status in sync with the per-school
 // registrations, so older reads and the app's faceStatus gate stay meaningful.
@@ -29,30 +44,23 @@ function syncLegacyFaceStatus(user) {
   }
 }
 
-// Distance calculator using Haversine formula
-function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
-  const R = 6371e3; // Radius of the earth in m
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a = 
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const d = R * c; // Distance in m
-  return d;
-}
-
 exports.registerFace = async (req, res) => {
   try {
-    const { lat, lng } = req.body;
-    
+    const { lat, lng, accuracy } = req.body;
+
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Please upload an image' });
     }
-    
-    if (!lat || !lng) {
-      return res.status(400).json({ success: false, message: 'Location is required' });
+
+    // A registration anchors every future check-in, so the fix has to be real
+    // and reasonably precise before we save it.
+    const coords = parseCoordinates(lat, lng);
+    if (!coords.ok) {
+      return res.status(400).json({ success: false, message: coords.message });
+    }
+    const acc = parseAccuracy(accuracy, MAX_REGISTRATION_ACCURACY_M);
+    if (!acc.ok) {
+      return res.status(400).json({ success: false, message: acc.message });
     }
 
     // Call ML service to extract embedding and check liveness
@@ -86,9 +94,9 @@ exports.registerFace = async (req, res) => {
     const user = await User.findById(req.user.id);
     user.facialRegistrationStatus = 'pending';
     user.faceEmbedding = embedding;
-    user.registrationLocation = { lat: parseFloat(lat), lng: parseFloat(lng) };
+    user.registrationLocation = { lat: coords.lat, lng: coords.lng };
     user.registrationPhotoUrl = result.secure_url;
-    
+
     await user.save();
     
     res.status(200).json({
@@ -115,14 +123,19 @@ exports.registerFace = async (req, res) => {
 
 exports.verifyFace = async (req, res) => {
   try {
-    const { lat, lng } = req.body;
-    
+    const { lat, lng, accuracy } = req.body;
+
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Please upload an image' });
     }
-    
-    if (!lat || !lng) {
-      return res.status(400).json({ success: false, message: 'Location is required' });
+
+    const coords = parseCoordinates(lat, lng);
+    if (!coords.ok) {
+      return res.status(400).json({ success: false, message: coords.message });
+    }
+    const acc = parseAccuracy(accuracy, MAX_VERIFICATION_ACCURACY_M);
+    if (!acc.ok) {
+      return res.status(400).json({ success: false, message: acc.message });
     }
 
     const user = await User.findById(req.user.id);
@@ -135,20 +148,20 @@ exports.verifyFace = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Trainer is not assigned to a school' });
     }
 
-    // 1. Check Location (50 meters logic)
+    // 1. Check Location against the registered anchor.
     const registeredLat = user.registrationLocation.lat;
     const registeredLng = user.registrationLocation.lng;
-    
-    if (!registeredLat || !registeredLng) {
+
+    if (registeredLat == null || registeredLng == null) {
        return res.status(400).json({ success: false, message: 'Registration location not found' });
     }
 
-    const distance = getDistanceFromLatLonInM(parseFloat(lat), parseFloat(lng), registeredLat, registeredLng);
-    
-    if (distance > 50) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `Location verification failed. You are ${Math.round(distance)} meters away from the registered location. Must be within 50 meters.` 
+    const distance = getDistanceFromLatLonInM(coords.lat, coords.lng, registeredLat, registeredLng);
+
+    if (!isWithinGeofence(distance)) {
+      return res.status(400).json({
+        success: false,
+        message: `Location verification failed. You are ${Math.round(distance)} meters away from the registered location. Must be within ${DISPLAY_RADIUS_M} meters.`
       });
     }
 
@@ -193,7 +206,7 @@ exports.verifyFace = async (req, res) => {
       schoolId: user.schoolId,
       date: new Date(),
       status: 'Present',
-      checkInLocation: { lat: parseFloat(lat), lng: parseFloat(lng) },
+      checkInLocation: { lat: coords.lat, lng: coords.lng, accuracy: acc.accuracy },
       verifiedViaFace: true
     });
     
@@ -211,13 +224,20 @@ exports.verifyFace = async (req, res) => {
 
 exports.getMyAttendance = async (req, res) => {
   try {
-    const [attendanceRecords, substitutionLeaves, leaveDays] = await Promise.all([
+    const [attendanceRecords, substitutionLeaves, substitutionDuties, leaveDays] = await Promise.all([
       Attendance.find({ trainerId: req.user._id })
         .populate('schoolId', 'name state')
+        // Populated too, so a day split across two schools can be shown as
+        // "checked in at A, checked out at B".
+        .populate('checkOutSchoolId', 'name state')
         .sort({ date: -1 }),
-      // Approved windows where this user is the substituted person — the client
-      // paints these dates as "On Substitution" leave in a distinct colour.
+      // Windows where this user was REPLACED by someone else. They are not
+      // expected at work, so the client paints these days as "On Leave".
       getSubjectLeaveWindows(req.user._id),
+      // Windows where this user is COVERING for someone else. Painted as
+      // "On Substitution" — until they actually check in, at which point their
+      // real attendance colour takes over for that day.
+      getSubstituteDutyWindows(req.user._id),
       // Approved personal leave windows — painted as "On Leave" on the calendar.
       getApprovedLeaveWindows(req.user._id),
     ]);
@@ -226,6 +246,7 @@ exports.getMyAttendance = async (req, res) => {
       success: true,
       data: attendanceRecords,
       substitutionLeaves,
+      substitutionDuties,
       leaveDays
     });
   } catch (error) {
@@ -236,14 +257,22 @@ exports.getMyAttendance = async (req, res) => {
 
 exports.registerFaceV2 = async (req, res) => {
   try {
-    const { lat, lng, schoolId } = req.body;
+    const { lat, lng, accuracy, schoolId } = req.body;
 
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Please upload an image' });
     }
 
-    if (!lat || !lng) {
-      return res.status(400).json({ success: false, message: 'Location is required' });
+    // This fix becomes the permanent geofence anchor for this school, so a
+    // vague or bogus reading is refused up front — accepting one here is what
+    // makes later check-ins report absurd distances.
+    const coords = parseCoordinates(lat, lng);
+    if (!coords.ok) {
+      return res.status(400).json({ success: false, message: coords.message });
+    }
+    const acc = parseAccuracy(accuracy, MAX_REGISTRATION_ACCURACY_M);
+    if (!acc.ok) {
+      return res.status(400).json({ success: false, message: acc.message });
     }
 
     if (!schoolId) {
@@ -294,7 +323,7 @@ exports.registerFaceV2 = async (req, res) => {
       console.error('Cloudinary upload failed:', err);
     }
 
-    const registrationLocation = { lat: parseFloat(lat), lng: parseFloat(lng) };
+    const registrationLocation = { lat: coords.lat, lng: coords.lng };
 
     // Upsert the per-school registration. Re-registering resets it to pending
     // so the admin approves the fresh capture for that school again.
@@ -305,13 +334,19 @@ exports.registerFaceV2 = async (req, res) => {
       existing.status = 'pending';
       existing.faceEmbedding = embedding;
       existing.registrationLocation = registrationLocation;
+      existing.locationAccuracy = acc.accuracy;
       existing.registrationPhotoUrl = result.secure_url;
+      // Re-registering wipes the previous decision — this is a fresh request.
+      existing.rejectionReason = null;
+      existing.reviewedBy = null;
+      existing.reviewedAt = null;
     } else {
       user.faceRegistrations.push({
         schoolId,
         status: 'pending',
         faceEmbedding: embedding,
         registrationLocation,
+        locationAccuracy: acc.accuracy,
         registrationPhotoUrl: result.secure_url
       });
     }
@@ -326,23 +361,33 @@ exports.registerFaceV2 = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Facial registration submitted for approval',
+      message: `Facial registration sent to ${approverLabelFor(user)} for approval`,
       data: {
         schoolId,
         status: 'pending'
       }
     });
 
-    const school = await School.findById(schoolId).select('name');
-    const schoolName = school ? school.name : 'a school';
+    // Everything past this point runs AFTER the response has been sent, so it
+    // must never throw — the outer catch could not answer anymore, and an
+    // escaping rejection would take the process down.
+    try {
+      const school = await School.findById(schoolId).select('name');
+      const schoolName = school ? school.name : 'a school';
 
-    // Notify admins that a new facial registration needs approval.
-    notifyRole(
-      'creator_admin',
-      '🧑‍💼 New Facial Registration',
-      `${user.name} submitted a facial registration for ${schoolName} for your approval.`,
-      { type: 'face_registration_pending' }
-    ).catch(err => console.error('Face-registration notification error:', err.message));
+      // Up the chain of command, not straight to the admin: a trainer's request
+      // goes to their team leader, a leader's to their head, a head's to
+      // Admin/CEO — who are also always included as a fallback.
+      const approverIds = await getApproverIdsFor(user);
+      await notify(approverIds, {
+        type: 'face_registration_pending',
+        title: '🧑‍💼 New Facial Registration',
+        body: `${user.name} (${roleLabel(user.role)}) submitted a facial registration for ${schoolName} for your approval.`,
+        data: { userId: String(user._id), schoolId: String(schoolId) },
+      });
+    } catch (err) {
+      console.error('Face-registration notification error:', err.message);
+    }
 
   } catch (error) {
     console.error(error);
@@ -352,14 +397,19 @@ exports.registerFaceV2 = async (req, res) => {
 
 exports.verifyFaceV2 = async (req, res) => {
   try {
-    const { lat, lng, intent, schoolId } = req.body;
+    const { lat, lng, accuracy, intent, schoolId } = req.body;
 
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Please upload an image' });
     }
 
-    if (!lat || !lng) {
-      return res.status(400).json({ success: false, message: 'Location is required' });
+    const coords = parseCoordinates(lat, lng);
+    if (!coords.ok) {
+      return res.status(400).json({ success: false, message: coords.message });
+    }
+    const acc = parseAccuracy(accuracy, MAX_VERIFICATION_ACCURACY_M);
+    if (!acc.ok) {
+      return res.status(400).json({ success: false, message: acc.message });
     }
 
     if (!schoolId) {
@@ -371,16 +421,16 @@ exports.verifyFaceV2 = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Substitution leave: if this user is currently BEING substituted (they
-    // opted for leave for this window), attendance is paused for them until the
-    // window ends — they are marked "On Substitution" on their calendar.
+    // Being substituted: someone else was approved to cover for this user, so
+    // they are not expected at work until the window ends. Attendance is paused
+    // and those days show as "On Leave" on their calendar.
     const subjectLeave = await getActiveSubjectLeave(user._id, new Date());
     if (subjectLeave) {
       return res.status(400).json({
         success: false,
-        message: `You are on substitution leave until ${new Date(
+        message: `You are on leave until ${new Date(
           subjectLeave.approvedToDate || subjectLeave.toDate
-        ).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}. Attendance is paused until then.`,
+        ).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} because someone is covering for you. Attendance is paused until then.`,
       });
     }
 
@@ -403,12 +453,13 @@ exports.verifyFaceV2 = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Your facial registration for this school is not approved yet.' });
     }
 
-    // Block check-in / check-out on Sundays and approved holidays for THIS school.
+    // Block check-in / check-out on approved holidays for THIS school. Sundays
+    // are NOT blocked — trainers sometimes work them.
     if (await isSchoolOffDay(schoolId)) {
       return res.status(400).json({ success: false, message: 'Attendance is disabled today — it is a holiday.' });
     }
 
-    // 1. Location check against this school's own registration anchor (50 m).
+    // 1. Location check against this school's own registration anchor.
     //    Skipped entirely for an active substitute — they may check in/out
     //    anywhere for the duration of their approved window.
     if (!geofenceBypassed) {
@@ -419,12 +470,12 @@ exports.verifyFaceV2 = async (req, res) => {
         return res.status(400).json({ success: false, message: 'Registration location not found for this school.' });
       }
 
-      const distance = getDistanceFromLatLonInM(parseFloat(lat), parseFloat(lng), registeredLat, registeredLng);
+      const distance = getDistanceFromLatLonInM(coords.lat, coords.lng, registeredLat, registeredLng);
 
-      if (distance > 50) {
+      if (!isWithinGeofence(distance)) {
         return res.status(400).json({
           success: false,
-          message: `Location verification failed. You are ${Math.round(distance)} meters away from this school's registered location. Must be within 50 meters.`
+          message: `Location verification failed. You are ${Math.round(distance)} meters away from this school's registered location. Must be within ${DISPLAY_RADIUS_M} meters.`
         });
       }
     }
@@ -467,22 +518,21 @@ exports.verifyFaceV2 = async (req, res) => {
         return res.status(400).json({ success: false, message: 'You must check in before you can check out.' });
       }
 
-      // Same-school check-out guard: you must check out where you checked in.
-      if (String(existingAttendance.schoolId) !== String(schoolId)) {
-        const checkedInSchool = await School.findById(existingAttendance.schoolId).select('name');
-        const name = checkedInSchool ? checkedInSchool.name : 'another school';
-        return res.status(400).json({
-          success: false,
-          message: `You checked in at ${name} today, so you must check out at ${name}.`
-        });
-      }
-
       if (existingAttendance.checkOutTime) {
         return res.status(400).json({ success: false, message: 'You have already checked out today.' });
       }
 
+      // Check-out may happen at a DIFFERENT school from check-in — staff who
+      // cover several schools often work one in the morning and another in the
+      // afternoon. Nothing extra is needed to make that safe: `reg` above is
+      // this school's own registration, so the face was matched against the
+      // embedding approved HERE and the geofence was measured against THIS
+      // school's anchor. The day is simply recorded as spanning both.
+      const movedSchools = String(existingAttendance.schoolId) !== String(schoolId);
+
       existingAttendance.checkOutTime = new Date();
-      existingAttendance.checkOutLocation = { lat: parseFloat(lat), lng: parseFloat(lng) };
+      existingAttendance.checkOutSchoolId = schoolId;
+      existingAttendance.checkOutLocation = { lat: coords.lat, lng: coords.lng, accuracy: acc.accuracy };
       existingAttendance.status = 'Present';
 
       const diffMs = existingAttendance.checkOutTime - existingAttendance.checkInTime;
@@ -490,23 +540,35 @@ exports.verifyFaceV2 = async (req, res) => {
 
       await existingAttendance.save();
 
+      let message = 'Checked out successfully. Status is Present.';
+      if (movedSchools) {
+        const checkedInSchool = await School.findById(existingAttendance.schoolId).select('name');
+        const fromName = checkedInSchool ? checkedInSchool.name : 'another school';
+        message = `Checked out successfully. Your day is recorded from ${fromName} to here. Status is Present.`;
+      }
+
       return res.status(200).json({
         success: true,
-        message: 'Checked out successfully. Status is Present.',
+        message,
         data: existingAttendance
       });
 
     } else {
       // It's a check-in / login.
+      //
+      // Still ONE check-in per day. Moving between schools during the day is
+      // expected, but the day starts once — the second school is captured by
+      // checking OUT there, not by checking in again.
       if (existingAttendance) {
-        // One school per day: block a second check-in and name the other
-        // school so the message is unambiguous.
         if (String(existingAttendance.schoolId) !== String(schoolId)) {
           const checkedInSchool = await School.findById(existingAttendance.schoolId).select('name');
           const name = checkedInSchool ? checkedInSchool.name : 'another school';
+          const advice = existingAttendance.checkOutTime
+            ? 'Your day is already complete.'
+            : 'If you have moved here for the rest of the day, check out here instead.';
           return res.status(400).json({
             success: false,
-            message: `You have already checked in at ${name} today. You can only work at one school per day.`
+            message: `You already checked in at ${name} today. ${advice}`
           });
         }
         return res.status(400).json({ success: false, message: 'You have already checked in for today.' });
@@ -518,7 +580,7 @@ exports.verifyFaceV2 = async (req, res) => {
         date: new Date(),
         status: 'Partially Present',
         checkInTime: new Date(),
-        checkInLocation: { lat: parseFloat(lat), lng: parseFloat(lng) },
+        checkInLocation: { lat: coords.lat, lng: coords.lng, accuracy: acc.accuracy },
         verifiedViaFace: true,
         geofenceBypassed,
         substitutionRequestId: substituteAssignment ? substituteAssignment._id : null

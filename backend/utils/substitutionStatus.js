@@ -57,9 +57,10 @@ async function getSubjectsOnLeaveSet(date = new Date()) {
 }
 
 /**
- * All approved substitution windows where `userId` is the SUBJECT — used to
- * paint "On Substitution" leave days on their attendance calendar. Returns lean
- * objects with the substitute's name for display.
+ * All approved substitution windows where `userId` is the SUBJECT — the person
+ * who was replaced. They are not expected at work for the window, so these days
+ * are painted as ON LEAVE on their attendance calendar. Returns lean objects
+ * carrying the substitute's name so the UI can say who is covering.
  */
 async function getSubjectLeaveWindows(userId) {
   if (!userId) return [];
@@ -75,9 +76,33 @@ async function getSubjectLeaveWindows(userId) {
   }));
 }
 
+/**
+ * All approved substitution windows where `userId` is the SUBSTITUTE — the
+ * person doing the covering. These days are painted ON SUBSTITUTION on their
+ * calendar to show the standing assignment.
+ *
+ * This is only what they were *assigned*; it says nothing about whether they
+ * turned up. The client draws real attendance on top, so a day they actually
+ * check in on shows the normal Partial/Present colour instead.
+ */
+async function getSubstituteDutyWindows(userId) {
+  if (!userId) return [];
+  const reqs = await SubstitutionRequest.find({ substitute: userId, status: 'approved' })
+    .populate('subject', 'name role')
+    .sort({ approvedFromDate: -1 });
+  return reqs.map((r) => ({
+    requestId: r._id,
+    fromDate: r.approvedFromDate || r.fromDate,
+    toDate: r.approvedToDate || r.toDate,
+    reason: r.reason,
+    subject: r.subject ? { name: r.subject.name, role: r.subject.role } : null,
+  }));
+}
+
 module.exports = {
   getActiveSubstituteAssignment,
   getActiveSubjectLeave,
   getSubjectsOnLeaveSet,
   getSubjectLeaveWindows,
+  getSubstituteDutyWindows,
 };

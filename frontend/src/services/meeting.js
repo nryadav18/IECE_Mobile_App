@@ -12,6 +12,16 @@ export const createMeeting = ({ link, agenda, recipientIds }) =>
 export const getMeetings = () =>
   api.get('/meetings').then((r) => r.data);
 
+// One meeting in full — used by the detail screen, including when it is opened
+// straight from a notification and only the id is known.
+export const getMeeting = (id) =>
+  api.get(`/meetings/${id}`).then((r) => r.data);
+
+// Edit an existing meeting. Same payload shape as createMeeting; everyone on
+// the meeting (plus Admin + CEO) is re-notified by the server.
+export const updateMeeting = (id, { link, agenda, recipientIds }) =>
+  api.put(`/meetings/${id}`, { link, agenda, recipientIds }).then((r) => r.data);
+
 export const deleteMeeting = (id) =>
   api.delete(`/meetings/${id}`).then((r) => r.data);
 

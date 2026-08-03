@@ -17,10 +17,9 @@ import CountBadge from '../components/CountBadge';
 import { useBadges } from '../context/BadgeContext';
 import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
-import { dayKey, isOffToday, buildHolidayMarks } from '../utils/holiday';
-import { buildSubstitutionMarks } from '../utils/substitutionMarks';
-import { buildLeaveMarks } from '../utils/leaveMarks';
-import { buildAttendanceMarks } from '../utils/calendarColors';
+import { isOffToday } from '../utils/holiday';
+import { buildCalendarMarks } from '../utils/calendarColors';
+import { deriveAttendanceActions } from '../utils/attendanceActions';
 import CalendarLegend from '../components/CalendarLegend';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import { SectionSkeleton } from '../components/Skeleton';
@@ -53,7 +52,10 @@ export default function TrainerPortal({ navigation, route }) {
   const { tabLoading, selectTab } = useSectionTransition(activeTab, setActiveTab);
   const [activityToEdit, setActivityToEdit] = useState(null);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
+  // Windows where THIS user was replaced by someone else -> painted On Leave.
   const [substitutionLeaves, setSubstitutionLeaves] = useState([]);
+  // Windows where THIS user is covering for someone else -> painted On Substitution.
+  const [substitutionDuties, setSubstitutionDuties] = useState([]);
   const [leaveDays, setLeaveDays] = useState([]);
   const [faceStatus, setFaceStatus] = useState('none'); // aggregate: 'none' | 'pending' | 'approved'
   const [mySchools, setMySchools] = useState([]);        // [{ _id, name }] assigned schools
@@ -70,19 +72,17 @@ export default function TrainerPortal({ navigation, route }) {
 
   // Honor an `initialTab` passed via navigation (e.g. from a tapped checkout
   // reminder) even if the portal is already mounted.
+  //
+  // It is consumed once and then cleared: navigation params outlive the
+  // navigation that set them, so leaving it in place would make every later
+  // visit to this portal re-open whichever tab an old deep link asked for
+  // instead of the default one.
   useEffect(() => {
     if (route?.params?.initialTab) {
       setActiveTab(route.params.initialTab);
+      navigation.setParams({ initialTab: undefined });
     }
   }, [route?.params?.initialTab]);
-
-  // Optimistically reflect a just-completed face registration so the user
-  // immediately sees "Pending Approval" instead of the stale "Register Face".
-  useEffect(() => {
-    if (route?.params?.faceJustRegistered) {
-      setFaceStatus('pending');
-    }
-  }, [route?.params?.faceJustRegistered]);
 
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
 
@@ -153,6 +153,7 @@ export default function TrainerPortal({ navigation, route }) {
       const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
       setSubstitutionLeaves(attendanceRes.data.substitutionLeaves || []);
+      setSubstitutionDuties(attendanceRes.data.substitutionDuties || []);
       setLeaveDays(attendanceRes.data.leaveDays || []);
     } catch (error) {
       console.log('Error fetching attendance', error);
@@ -193,6 +194,7 @@ export default function TrainerPortal({ navigation, route }) {
       const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
       setSubstitutionLeaves(attendanceRes.data.substitutionLeaves || []);
+      setSubstitutionDuties(attendanceRes.data.substitutionDuties || []);
       setLeaveDays(attendanceRes.data.leaveDays || []);
       await loadFaceStatus();
       fetchHolidays();
@@ -259,8 +261,8 @@ export default function TrainerPortal({ navigation, route }) {
   const alreadyCheckedIn = !!(todayAttendance && todayAttendance.checkInTime);
   const alreadyCheckedOut = !!(todayAttendance && todayAttendance.checkOutTime);
 
-  // Today is a non-working day if it's a Sunday or an approved school holiday;
-  // check-in / check-out are disabled on those days.
+  // Today is a non-working day only when the school has an approved holiday.
+  // Sundays stay workable — check-in / check-out remain enabled on them.
   const isHolidayToday = isOffToday(holidays);
 
   const renderProgressTab = () => {
@@ -446,19 +448,23 @@ export default function TrainerPortal({ navigation, route }) {
             const reg = faceRegs.find((r) => String(r.schoolId?._id || r.schoolId) === String(selectedSchoolId));
             const regStatus = reg?.status || 'none';
 
-            const todayAtt = attendanceRecords.find((r) => isToday(r.date));
-            const todaySchoolId = todayAtt ? String(todayAtt.schoolId?._id || todayAtt.schoolId) : null;
-            const todaySchoolName = todayAtt ? (todayAtt.schoolId?.name || 'another school') : null;
-            const checkedInHere = !!(todayAtt && todaySchoolId === String(selectedSchoolId) && todayAtt.checkInTime);
-            const checkedOutHere = !!(todayAtt && todaySchoolId === String(selectedSchoolId) && todayAtt.checkOutTime);
-            const checkedInElsewhere = !!(todayAtt && todaySchoolId !== String(selectedSchoolId));
+            // All Check In / Check Out rules live in one shared helper — see
+            // utils/attendanceActions. Check-in is once per DAY; check-out may
+            // happen at any school this person is approved for, so a day can
+            // start at one school and finish at another.
+            const act = deriveAttendanceActions({
+              todayAttendance: todayAtt,
+              selectedSchoolId,
+              regStatus,
+              isHolidayToday,
+            });
 
             return (
               <View>
                 {regStatus === 'none' && (
                   <TouchableOpacity
                     style={[styles.uploadBtn, { backgroundColor: theme.colors.primary }]}
-                    onPress={() => navigation.navigate('FaceRegistration', { schoolId: selectedSchoolId, schoolName, returnTo: 'TrainerPortal' })}
+                    onPress={() => navigation.navigate('FaceRegistration', { schoolId: selectedSchoolId, schoolName })}
                   >
                     <Ionicons name="scan-outline" size={20} color="#fff" />
                     <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>Register Face for {schoolName}</Text>
@@ -481,36 +487,48 @@ export default function TrainerPortal({ navigation, route }) {
                 {regStatus === 'approved' && (
                   <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
                     <TouchableOpacity
-                      style={[styles.uploadBtn, { flex: 1, marginBottom: 0, backgroundColor: '#4CAF50', opacity: (checkedInHere || isHolidayToday || checkedInElsewhere) ? 0.5 : 1 }]}
+                      style={[styles.uploadBtn, { flex: 1, marginBottom: 0, backgroundColor: '#4CAF50', opacity: act.canCheckIn ? 1 : 0.5 }]}
                       onPress={() => navigation.navigate('Attendance', { intent: 'login', schoolId: selectedSchoolId, schoolName })}
-                      disabled={checkedInHere || isHolidayToday || checkedInElsewhere}
+                      disabled={!act.canCheckIn}
                     >
-                      <Ionicons name={checkedInHere ? 'checkmark-done-outline' : 'log-in-outline'} size={20} color="#fff" />
-                      <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>{checkedInHere ? 'Checked In' : 'Check In'}</Text>
+                      <Ionicons name={act.checkedInHere ? 'checkmark-done-outline' : 'log-in-outline'} size={20} color="#fff" />
+                      <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>{act.checkInLabel}</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.uploadBtn, { flex: 1, marginBottom: 0, backgroundColor: '#F44336', opacity: (!checkedInHere || checkedOutHere || isHolidayToday) ? 0.5 : 1 }]}
+                      style={[styles.uploadBtn, { flex: 1, marginBottom: 0, backgroundColor: '#F44336', opacity: act.canCheckOut ? 1 : 0.5 }]}
                       onPress={() => navigation.navigate('Attendance', { intent: 'logout', schoolId: selectedSchoolId, schoolName })}
-                      disabled={!checkedInHere || checkedOutHere || isHolidayToday}
+                      disabled={!act.canCheckOut}
                     >
-                      <Ionicons name={checkedOutHere ? 'checkmark-done-outline' : 'log-out-outline'} size={20} color="#fff" />
-                      <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>{checkedOutHere ? 'Checked Out' : 'Check Out'}</Text>
+                      <Ionicons name={act.checkedOutToday ? 'checkmark-done-outline' : 'log-out-outline'} size={20} color="#fff" />
+                      <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>{act.checkOutLabel}</Text>
                     </TouchableOpacity>
                   </View>
                 )}
 
-                {checkedInElsewhere && (
-                  <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#87CEEB' }}>
-                    <Ionicons name="information-circle-outline" size={16} color="#0277BD" style={{ marginRight: 8 }} />
-                    <Text style={{ color: '#01579B', fontSize: 12, fontWeight: '600', flex: 1 }}>You already checked in at {todaySchoolName} today, so check-in here is disabled. You can only work at one school per day.</Text>
+                {act.notice && (
+                  <View style={{
+                    backgroundColor: act.notice.tone === 'warn' ? '#FEF3C7' : '#E1F5FE',
+                    borderColor: act.notice.tone === 'warn' ? '#F59E0B' : '#87CEEB',
+                    borderRadius: 10, padding: 12, marginBottom: 16,
+                    flexDirection: 'row', alignItems: 'center', borderWidth: 1,
+                  }}>
+                    <Ionicons
+                      name={act.notice.tone === 'warn' ? 'alert-circle-outline' : 'information-circle-outline'}
+                      size={16}
+                      color={act.notice.tone === 'warn' ? '#D97706' : '#0277BD'}
+                      style={{ marginRight: 8 }}
+                    />
+                    <Text style={{ color: act.notice.tone === 'warn' ? '#92400E' : '#01579B', fontSize: 12, fontWeight: '600', flex: 1 }}>
+                      {act.notice.text}
+                    </Text>
                   </View>
                 )}
               </View>
             );
           })()}
 
-          {/* Holiday banner — attendance disabled on Sundays / approved holidays */}
+          {/* Holiday banner — attendance disabled on approved school holidays */}
           {isHolidayToday && (
             <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#87CEEB' }}>
               <Ionicons name="sunny-outline" size={16} color="#0277BD" style={{ marginRight: 8 }} />
@@ -523,23 +541,23 @@ export default function TrainerPortal({ navigation, route }) {
               current={new Date().toISOString().split('T')[0]}
               markedDates={{
                 // Canonical attendance colours (shared with every portal + profile).
-                ...buildAttendanceMarks(attendanceRecords),
-                // School holidays (sky blue = approved, light = pending) take
-                // precedence over the blank/attendance marking for that date.
-                ...buildHolidayMarks(holidays),
-                // Always mark today (skip if today already has a holiday/attendance mark).
-                ...((attendanceRecords.find(r => dayKey(new Date(r.date)) === dayKey()) || holidays.find(h => h.date === dayKey() && h.status !== 'rejected')) ? {} : {
-                  [dayKey()]: {
+                ...buildCalendarMarks({
+                  attendance: attendanceRecords,
+                  holidays,
+                  leaveDays,
+                  // Days someone else was approved to cover for this person —
+                  // they are not expected in, so these read as On Leave.
+                  substitutionLeaves,
+                  // Days this person is covering for someone else — purple
+                  // until they check in, then their own attendance colour.
+                  substitutionDuties,
+                  todayMark: {
                     customStyles: {
                       container: { backgroundColor: '#E0E0E0', borderRadius: 8, borderWidth: 2, borderColor: theme.colors.primary },
                       text: { color: theme.colors.textPrimary, fontWeight: 'bold' }
                     }
-                  }
+                  },
                 }),
-                // On-substitution leave days win over everything else for the period.
-                ...buildSubstitutionMarks(substitutionLeaves),
-                // Approved personal leave days.
-                ...buildLeaveMarks(leaveDays),
               }}
               markingType={'custom'}
               theme={{

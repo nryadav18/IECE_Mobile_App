@@ -35,6 +35,14 @@ const meetingSchema = new mongoose.Schema({
     ref: 'User',
     default: [],
     index: true
+  },
+  // Who last edited this meeting. An admin may edit anyone's meeting, so the
+  // detail view needs to show that it was changed and by whom — `updatedAt`
+  // alone cannot say who. Null until the first edit.
+  updatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
   }
 }, {
   timestamps: true

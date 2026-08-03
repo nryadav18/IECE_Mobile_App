@@ -5,8 +5,20 @@ import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { MotiView, MotiText } from 'moti';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  ensureLocationReady,
+  acquireAccurateLocation,
+  LocationCancelled,
+  ATTENDANCE_FIX,
+} from '../utils/location';
 
 const RECORD_SECONDS = 3;
+
+// A fix this recent is reused instead of locating again, so the common case
+// (user opens the screen, reads the guide, taps) starts instantly. Anything
+// that already resolved has passed the accuracy gate, so only age matters —
+// and in half a minute nobody walks out of a geofence on foot.
+const FRESH_FIX_MS = 30000;
 
 /**
  * Reusable, guided face-capture experience used by both Face Registration and
@@ -17,10 +29,13 @@ const RECORD_SECONDS = 3;
  *  - subtitle:     short helper under the title
  *  - actionVerb:   verb used on the record button ("Register", "Check In", ...)
  *  - accentColor:  primary accent (defaults to a neutral blue)
- *  - onSubmit(video, location) => Promise   // perform the upload; resolve on success, throw on failure
+ *  - onSubmit(video, location) => Promise   // location is { lat, lng, accuracy }
  *  - onSuccess(result)                       // called after onSubmit resolves
  *  - onError(message)                        // called when something fails
  *  - onCancel()                              // back button before recording
+ *  - locationOptions: how precise the GPS fix must be. Defaults to the
+ *    everyday ATTENDANCE_FIX; face registration passes the stricter
+ *    REGISTRATION_FIX because that fix is stored as a permanent anchor.
  */
 export default function FaceCapture({
   title = 'Face Scan',
@@ -31,38 +46,108 @@ export default function FaceCapture({
   onSuccess,
   onError,
   onCancel,
+  locationOptions = ATTENDANCE_FIX,
 }) {
   const insets = useSafeAreaInsets();
   const cameraRef = useRef(null);
 
   const [hasPermission, setHasPermission] = useState(null);
-  const [location, setLocation] = useState(null);
-  const [phase, setPhase] = useState('guide'); // 'guide' | 'recording' | 'processing'
+  const [phase, setPhase] = useState('guide'); // 'guide' | 'locating' | 'recording' | 'processing'
   const [countdown, setCountdown] = useState(RECORD_SECONDS);
+  // Best GPS uncertainty seen so far, in metres — surfaced so the user can see
+  // the lock tighten instead of staring at a spinner.
+  const [accuracy, setAccuracy] = useState(null);
   const countdownRef = useRef(null);
+  // Last precise fix we obtained, with the time we obtained it.
+  const warmFixRef = useRef(null);
+  // The warm-up acquisition while it is still running, so tapping Record joins
+  // it instead of opening a second receiver session alongside it.
+  const pendingFixRef = useRef(null);
+  // Lets us tear the GPS watch down when the screen closes mid-acquisition,
+  // instead of leaving the receiver running in the background.
+  const abortRef = useRef(null);
+  const mountedRef = useRef(true);
+
+  const trackAccuracy = ({ accuracy: acc }) => {
+    if (mountedRef.current) setAccuracy(acc);
+  };
+
+  const startAcquisition = () => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const promise = ensureLocationReady()
+      .then(() => acquireAccurateLocation({
+        ...locationOptions,
+        onProgress: trackAccuracy,
+        signal: controller.signal,
+      }))
+      .then((fix) => {
+        warmFixRef.current = { fix, at: Date.now() };
+        if (mountedRef.current) setAccuracy(fix.accuracy);
+        return fix;
+      })
+      .finally(() => {
+        if (pendingFixRef.current === promise) pendingFixRef.current = null;
+        if (abortRef.current === controller) abortRef.current = null;
+      });
+
+    pendingFixRef.current = promise;
+    return promise;
+  };
 
   useEffect(() => {
+    mountedRef.current = true;
+
     (async () => {
       const { status: cameraStatus } = await Camera.requestCameraPermissionsAsync();
       const { status: micStatus } = await Camera.requestMicrophonePermissionsAsync();
       const { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
+      if (!mountedRef.current) return;
 
       setHasPermission(cameraStatus === 'granted' && micStatus === 'granted' && locationStatus === 'granted');
+      if (locationStatus !== 'granted') return;
 
-      if (locationStatus === 'granted') {
-        try {
-          const loc = await Location.getCurrentPositionAsync({});
-          setLocation({ lat: loc.coords.latitude, lng: loc.coords.longitude });
-        } catch (e) {
-          // location read failed; submit guard will catch it
-        }
-      }
+      // Warm the GPS receiver up while the user reads the on-screen guide, so
+      // by the time they tap Record there is usually a tight fix waiting.
+      // Any failure here is silent — the user hasn't asked for anything yet,
+      // and Record retries and surfaces the real error then.
+      startAcquisition().catch(() => {});
     })();
 
     return () => {
+      mountedRef.current = false;
       if (countdownRef.current) clearInterval(countdownRef.current);
+      // Stop the GPS watch if the user walked away mid-lock.
+      if (abortRef.current) abortRef.current.abort();
     };
   }, []);
+
+  // Resolve a fix good enough to anchor / verify attendance, reusing the
+  // warm-up result while it is still recent.
+  const resolveLocation = async () => {
+    const warm = warmFixRef.current;
+    if (warm && Date.now() - warm.at < FRESH_FIX_MS) {
+      return warm.fix;
+    }
+
+    setPhase('locating');
+
+    // Join the warm-up if it is still in flight; only fall back to a fresh
+    // acquisition if it has finished (or failed) already.
+    if (pendingFixRef.current) {
+      try {
+        return await pendingFixRef.current;
+      } catch (e) {
+        if (e instanceof LocationCancelled) throw e;
+        // Otherwise fall through and try once more — GPS may have come good
+        // since the warm-up gave up.
+      }
+    }
+
+    if (!mountedRef.current) throw new LocationCancelled();
+    return startAcquisition();
+  };
 
   const startCountdown = () => {
     setCountdown(RECORD_SECONDS);
@@ -80,10 +165,20 @@ export default function FaceCapture({
   const handleRecord = async () => {
     if (!cameraRef.current || phase !== 'guide') return;
 
-    if (!location) {
-      onError && onError('Waiting for your location. Please ensure location is enabled and try again.');
+    // Pin down where we are BEFORE recording. Attendance is only as trustworthy
+    // as this fix, so a vague or stale one stops the flow here rather than
+    // being saved and breaking every future check-in.
+    let location;
+    try {
+      location = await resolveLocation();
+    } catch (err) {
+      // A cancellation means the screen closed — there is nobody to tell.
+      if (!mountedRef.current || err instanceof LocationCancelled) return;
+      setPhase('guide');
+      onError && onError(err?.message || 'Could not get your location. Please try again.');
       return;
     }
+    if (!mountedRef.current) return;
 
     try {
       setPhase('recording');
@@ -158,6 +253,8 @@ export default function FaceCapture({
 
   /* ---------- Camera + guided overlay ---------- */
   const recording = phase === 'recording';
+  const locating = phase === 'locating';
+  const busy = recording || locating;
 
   return (
     <View style={styles.container}>
@@ -167,7 +264,7 @@ export default function FaceCapture({
       <View style={[styles.overlay, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 }]} pointerEvents="box-none">
         {/* Header */}
         <View style={styles.header} pointerEvents="box-none">
-          {!recording ? (
+          {!busy ? (
             <TouchableOpacity style={styles.backBtn} onPress={() => onCancel && onCancel()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Ionicons name="chevron-back" size={26} color="#fff" />
             </TouchableOpacity>
@@ -180,6 +277,15 @@ export default function FaceCapture({
           </View>
           <View style={styles.backBtn} />
         </View>
+
+        {/* GPS lock indicator — the whole flow hinges on this fix, so its
+            quality is shown rather than hidden behind a spinner. */}
+        <GpsPill
+          accuracy={accuracy}
+          locating={locating}
+          accentColor={accentColor}
+          targetAccuracy={locationOptions.targetAccuracyM}
+        />
 
         {/* Center face guide */}
         <View style={styles.centerArea} pointerEvents="none">
@@ -207,22 +313,32 @@ export default function FaceCapture({
         <View style={styles.bottomArea} pointerEvents="box-none">
           {recording ? (
             <BlinkCue accentColor={accentColor} />
+          ) : locating ? (
+            <LocatingCue accentColor={accentColor} accuracy={accuracy} />
           ) : (
             <GuideSteps accentColor={accentColor} />
           )}
 
           <TouchableOpacity
-            style={[styles.recordBtn, { borderColor: accentColor + '88' }, recording && { opacity: 0.6 }]}
+            style={[styles.recordBtn, { borderColor: accentColor + '88' }, busy && { opacity: 0.6 }]}
             onPress={handleRecord}
-            disabled={recording}
+            disabled={busy}
             activeOpacity={0.85}
           >
             <View style={[styles.recordInner, { backgroundColor: accentColor }]}>
-              <Ionicons name={recording ? 'ellipse' : 'scan'} size={recording ? 26 : 34} color="#fff" />
+              {locating ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Ionicons name={recording ? 'ellipse' : 'scan'} size={recording ? 26 : 34} color="#fff" />
+              )}
             </View>
           </TouchableOpacity>
           <Text style={styles.btnLabel}>
-            {recording ? `Recording… keep blinking (${countdown}s)` : `Tap to ${actionVerb}`}
+            {recording
+              ? `Recording… keep blinking (${countdown}s)`
+              : locating
+                ? 'Pinpointing your location…'
+                : `Tap to ${actionVerb}`}
           </Text>
         </View>
       </View>
@@ -232,6 +348,61 @@ export default function FaceCapture({
 }
 
 /* ===================== Sub-components ===================== */
+
+// Small status pill showing how tight the GPS lock currently is. Green once the
+// fix is precise enough to anchor attendance, amber while it is still coarse.
+function GpsPill({ accuracy, locating, accentColor, targetAccuracy }) {
+  const locked = accuracy != null && accuracy <= targetAccuracy;
+  const color = locked ? '#34D399' : accuracy != null ? '#FBBF24' : '#94A3B8';
+
+  const label = locating
+    ? 'Locking on to GPS…'
+    : accuracy == null
+      ? 'Finding your location…'
+      : locked
+        ? `Location locked · ±${accuracy} m`
+        : `Improving accuracy · ±${accuracy} m`;
+
+  return (
+    <View style={styles.gpsPillWrap} pointerEvents="none">
+      <View style={styles.gpsPill}>
+        {accuracy == null || locating ? (
+          <ActivityIndicator size="small" color={accentColor} style={{ marginRight: 8 }} />
+        ) : (
+          <Ionicons
+            name={locked ? 'location' : 'location-outline'}
+            size={14}
+            color={color}
+            style={{ marginRight: 6 }}
+          />
+        )}
+        <Text style={[styles.gpsPillText, { color }]}>{label}</Text>
+      </View>
+    </View>
+  );
+}
+
+// Shown in place of the guide steps while we wait for a precise fix.
+function LocatingCue({ accentColor, accuracy }) {
+  return (
+    <View style={styles.blinkCard}>
+      <MotiView
+        from={{ scale: 0.9 }}
+        animate={{ scale: 1.1 }}
+        transition={{ type: 'timing', duration: 800, loop: true, repeatReverse: true }}
+        style={[styles.blinkIconWrap, { backgroundColor: accentColor + '33' }]}
+      >
+        <Ionicons name="navigate" size={30} color="#fff" />
+      </MotiView>
+      <Text style={styles.blinkTitle}>Getting your exact location</Text>
+      <Text style={styles.blinkSub}>
+        {accuracy != null
+          ? `Accurate to ±${accuracy} m — hold still a moment`
+          : 'Stay still, ideally near a window or outdoors'}
+      </Text>
+    </View>
+  );
+}
 
 // Animated, looping eye that opens & closes to cue the user to blink.
 function BlinkCue({ accentColor }) {
@@ -367,6 +538,15 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' },
   title: { color: '#fff', fontSize: 20, fontWeight: '800', textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 6 },
   subtitle: { color: 'rgba(255,255,255,0.85)', fontSize: 13, marginTop: 2, textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 6 },
+
+  // GPS status pill
+  gpsPillWrap: { alignItems: 'center', marginTop: 12 },
+  gpsPill: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
+  },
+  gpsPillText: { fontSize: 12.5, fontWeight: '700' },
 
   // Center face guide
   centerArea: { alignItems: 'center', justifyContent: 'center', flex: 1 },

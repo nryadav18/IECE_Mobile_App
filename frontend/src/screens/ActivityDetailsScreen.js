@@ -9,11 +9,12 @@ import { Image } from 'react-native';
 import api from '../services/api';
 import Avatar from '../components/Avatar';
 import { Skeleton, SkeletonCircle, SkeletonDetail } from '../components/Skeleton';
+import DownloadButton from '../components/DownloadButton';
 
 const { width } = Dimensions.get('window');
 
 export default function ActivityDetailsScreen({ route, navigation }) {
-  const { activityId } = route.params;
+  const { activityId, preview } = route.params;
   const { theme } = useContext(ThemeContext);
   const insets = useSafeAreaInsets();
   
@@ -64,16 +65,19 @@ export default function ActivityDetailsScreen({ route, navigation }) {
 
   const renderMediaItem = ({ item }) => {
     const isVideo = item.endsWith('.mp4') || item.includes('/video/');
-    
-    if (isVideo) {
-      return <VideoItem url={item} />;
-    }
-    
+
+    // Admin / CEO can save whatever is on screen. The button renders itself
+    // away for every other role, so no role check is needed here.
     return (
-      <Image 
-        source={{ uri: item }} 
-        style={styles.mediaItem} 
-      />
+      <View style={styles.mediaItem}>
+        {isVideo ? <VideoItem url={item} /> : <Image source={{ uri: item }} style={styles.mediaItem} />}
+        <DownloadButton
+          url={item}
+          variant="icon"
+          filename={`${(activity?.name || 'activity').replace(/[^\w.\- ]+/g, '_')}`}
+          style={{ position: 'absolute', top: 12, right: 12 }}
+        />
+      </View>
     );
   };
 
@@ -88,7 +92,20 @@ export default function ActivityDetailsScreen({ route, navigation }) {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}>
-        
+
+        {/* Opened from the approvals queue. Everything below is rendered by the
+            SAME code the published view uses, so what is judged here is exactly
+            what everyone will see once it is approved. */}
+        {preview && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', margin: 16, marginBottom: 0, padding: 12, borderRadius: 12, borderWidth: 1, backgroundColor: '#F59E0B12', borderColor: '#F59E0B55' }}>
+            <Ionicons name="eye-outline" size={16} color="#D97706" style={{ marginRight: 8 }} />
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, lineHeight: 17, flex: 1 }}>
+              Preview — this is exactly how the activity will look once you approve it.
+              {activity.status === 'pending' ? ' It is not published yet.' : ''}
+            </Text>
+          </View>
+        )}
+
         {activity.mediaUrls && activity.mediaUrls.length > 0 && (
           <View style={styles.carouselContainer}>
             <Carousel

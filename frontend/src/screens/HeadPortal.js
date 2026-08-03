@@ -1,5 +1,5 @@
 import React, { useContext, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, Image } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { MotiView } from 'moti';
 import { ThemeContext } from '../context/ThemeContext';
@@ -15,17 +15,36 @@ import { useBadges } from '../context/BadgeContext';
 import VisitReportForm from '../components/VisitReportForm';
 import VisitReportDetail from '../components/VisitReportDetail';
 import { SectionSkeleton } from '../components/Skeleton';
+import AttendanceSection from '../components/AttendanceSection';
+import ApplyHolidaySection from '../components/ApplyHolidaySection';
+import CreateActivityForm from '../components/CreateActivityForm';
+import EditActivityModal from '../components/EditActivityModal';
 import { useSectionTransition } from '../hooks/useSectionTransition';
 import { roleLabel } from '../utils/roles';
 
+// Heads do school field work exactly like trainers and team leaders, so they get
+// the same working tools — attendance, holiday requests and activities — on top
+// of their oversight tabs (teams, visit reports, activity feed).
 const TAB_ITEMS = [
   { key: 'Home', label: 'Home', icon: 'home-outline' },
+  { key: 'Attendance', label: 'Attendance', icon: 'calendar-outline' },
+  { key: 'SchoolHoliday', label: 'Apply School Holiday', icon: 'sunny-outline' },
   { key: 'MyTeams', label: 'My Teams', icon: 'people-outline' },
   { key: 'LogVisit', label: 'Log Visit', icon: 'document-text-outline' },
+  { key: 'PublishActivity', label: 'Publish Activity', icon: 'add-circle-outline' },
+  { key: 'ManageActivities', label: 'Manage Activities', icon: 'list-outline' },
 ];
 
 // Skeleton shape per section — matches the real layout that follows.
-const SECTION_SKELETON = { Home: 'list', MyTeams: 'list', LogVisit: 'form' };
+const SECTION_SKELETON = {
+  Home: 'list',
+  Attendance: 'calendar',
+  SchoolHoliday: 'form',
+  MyTeams: 'list',
+  LogVisit: 'form',
+  PublishActivity: 'form',
+  ManageActivities: 'list',
+};
 
 // Members of a team, grouped by seniority for a clean drill-in view.
 const MEMBER_ROLE_QUERY = 'team_leader,trainee_team_leader,trainer';
@@ -52,6 +71,11 @@ export default function HeadPortal({ navigation, route }) {
   const [membersLoading, setMembersLoading] = useState(false);
   const [allMembers, setAllMembers] = useState([]); // everyone across the head's teams (report targets)
   const [reports, setReports] = useState([]);
+  // Activities THIS head published — the ones they may edit or delete. Scoped
+  // by uploaderId rather than filtered client-side, so the Manage tab can never
+  // offer an action the API would reject.
+  const [myActivities, setMyActivities] = useState([]);
+  const [activityToEdit, setActivityToEdit] = useState(null);
   const [reportFormVisible, setReportFormVisible] = useState(false);
   const [reportToView, setReportToView] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -60,13 +84,15 @@ export default function HeadPortal({ navigation, route }) {
 
   const fetchData = async () => {
     try {
-      const [activitiesRes, teamsRes, reportsRes] = await Promise.allSettled([
+      const [activitiesRes, teamsRes, reportsRes, myActivitiesRes] = await Promise.allSettled([
         api.get('/activities'),
         api.get('/admin/teams'),
         api.get('/reports'),
+        api.get(`/activities?uploaderId=${user?._id || user?.id}`),
       ]);
       if (activitiesRes.status === 'fulfilled') setActivities(activitiesRes.value.data.data || []);
       if (reportsRes.status === 'fulfilled') setReports(reportsRes.value.data.data || []);
+      if (myActivitiesRes.status === 'fulfilled') setMyActivities(myActivitiesRes.value.data.data || []);
 
       let teamList = [];
       if (teamsRes.status === 'fulfilled') {
@@ -131,6 +157,31 @@ export default function HeadPortal({ navigation, route }) {
               // Revert on failure.
               setActivities(prev => prev.map(a => a._id === activity._id ? { ...a, isStarred: !willStar } : a));
               setAlertConfig({ visible: true, title: 'Error', message: 'Could not update the star. Try again.', type: 'error', buttons: [] });
+            }
+          },
+        },
+      ],
+    });
+  };
+
+  const deleteActivity = (id) => {
+    setAlertConfig({
+      visible: true,
+      title: 'Confirm',
+      message: 'Are you sure you want to permanently delete this activity?',
+      type: 'warning',
+      buttons: [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.delete(`/activities/${id}`);
+              setAlertConfig({ visible: true, title: 'Success', message: 'Activity deleted permanently.', type: 'success', buttons: [] });
+              fetchData();
+            } catch (err) {
+              setAlertConfig({ visible: true, title: 'Error', message: 'Failed to delete activity.', type: 'error', buttons: [] });
             }
           },
         },
@@ -310,6 +361,19 @@ export default function HeadPortal({ navigation, route }) {
             )}
           </View>
 
+          {/* ---------- ATTENDANCE: same facial attendance as every other
+               IECE staff member. Heads do school field work too, so they
+               register, check in and check out exactly like a trainer. ---------- */}
+          <View style={{ display: activeTab === 'Attendance' ? 'flex' : 'none' }}>
+            <AttendanceSection navigation={navigation} />
+          </View>
+
+          {/* ---------- APPLY SCHOOL HOLIDAY: heads work in schools too, so
+               they can request a holiday for theirs like anyone else. ---------- */}
+          <View style={{ display: activeTab === 'SchoolHoliday' ? 'flex' : 'none' }}>
+            <ApplyHolidaySection onChanged={fetchData} />
+          </View>
+
           {/* ---------- LOG VISIT: create + review visit reports ---------- */}
           <View style={{ display: activeTab === 'LogVisit' ? 'flex' : 'none' }}>
             <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
@@ -361,6 +425,62 @@ export default function HeadPortal({ navigation, route }) {
               ))
             )}
           </View>
+
+          {/* ---------- PUBLISH ACTIVITY ---------- */}
+          <View style={{ display: activeTab === 'PublishActivity' ? 'flex' : 'none' }}>
+            <CreateActivityForm onActivityCreated={fetchData} />
+          </View>
+
+          {/* ---------- MANAGE ACTIVITIES: only the ones this head published,
+               so every Edit / Delete offered here is one the API will allow. ---------- */}
+          <View style={{ display: activeTab === 'ManageActivities' ? 'flex' : 'none' }}>
+            {myActivities.length === 0 ? (
+              <View style={{ alignItems: 'center', marginTop: 40 }}>
+                <Ionicons name="calendar-outline" size={48} color={theme.colors.border} />
+                <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>No activities published yet.</Text>
+              </View>
+            ) : (
+              myActivities.map((evt) => (
+                <View key={evt._id} style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                  <View style={{ flexDirection: 'row', marginBottom: 16 }}>
+                    {evt.mediaUrls && evt.mediaUrls.length > 0 ? (
+                      <Image source={{ uri: evt.mediaUrls[0] }} style={{ width: 80, height: 80, borderRadius: 12, resizeMode: 'cover', marginRight: 16 }} />
+                    ) : (
+                      <View style={{ width: 80, height: 80, borderRadius: 12, backgroundColor: theme.colors.border, marginRight: 16, justifyContent: 'center', alignItems: 'center' }}>
+                        <Ionicons name="image-outline" size={32} color={theme.colors.textSecondary} />
+                      </View>
+                    )}
+                    <View style={{ flex: 1, justifyContent: 'center' }}>
+                      <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: '700' }} numberOfLines={2}>{evt.name}</Text>
+                      <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginTop: 4 }}>
+                        {evt.activityDate ? new Date(evt.activityDate).toLocaleDateString() : ''}
+                      </Text>
+                      <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                        {evt.organizers?.length || 0} Organizers
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { flex: 1, borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '10' }]}
+                      onPress={() => setActivityToEdit(evt)}
+                    >
+                      <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
+                      <Text style={{ color: theme.colors.primary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Edit Activity</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { flex: 1, borderColor: '#FF4444', backgroundColor: '#FF444410' }]}
+                      onPress={() => deleteActivity(evt._id)}
+                    >
+                      <Ionicons name="trash-outline" size={18} color="#FF4444" />
+                      <Text style={{ color: '#FF4444', fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Delete</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
         </ScrollView>
       )}
 
@@ -379,6 +499,16 @@ export default function HeadPortal({ navigation, route }) {
         onClose={() => setReportToView(null)}
       />
 
+      {activityToEdit && (
+        <EditActivityModal
+          visible={!!activityToEdit}
+          activity={activityToEdit}
+          onClose={() => setActivityToEdit(null)}
+          onSuccess={fetchData}
+          onError={(msg) => setAlertConfig({ visible: true, title: 'Error', message: msg, type: 'error', buttons: [] })}
+        />
+      )}
+
       <SidebarMenu
         ref={sidebarRef}
         title={roleLabel(user?.role)}
@@ -388,6 +518,7 @@ export default function HeadPortal({ navigation, route }) {
         onSelectTab={(t) => { setSelectedTeam(null); setMembers([]); selectTab(t); }}
         actions={[
           { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
+          { label: 'Approvals', icon: 'checkmark-done-outline', onPress: () => navigation.navigate('Approvals') },
           { label: 'Substitution Requests', icon: 'swap-horizontal-outline', onPress: () => navigation.navigate('Substitution') },
           { label: 'Meeting Corner', icon: 'videocam-outline', onPress: () => navigation.navigate('MeetingCorner') },
           { label: 'Apply Leave', icon: 'calendar-outline', onPress: () => navigation.navigate('Leave') },
@@ -415,4 +546,8 @@ const styles = StyleSheet.create({
   menuBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: 4 },
   card: { padding: 16, borderRadius: 14, borderWidth: 1, marginBottom: 12 },
+  actionBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 12, borderRadius: 12, borderWidth: 1,
+  },
 });

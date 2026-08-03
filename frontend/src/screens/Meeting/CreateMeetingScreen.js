@@ -11,18 +11,34 @@ import Avatar from '../../components/Avatar';
 import MeetingPlatformBadge from '../../components/MeetingPlatformBadge';
 import { SkeletonList } from '../../components/Skeleton';
 import { detectPlatform, isValidMeetingLink } from '../../utils/meetingPlatform';
-import { getMeetingRecipients, createMeeting, meetingError } from '../../services/meeting';
+import { getMeetingRecipients, createMeeting, updateMeeting, meetingError } from '../../services/meeting';
 
-export default function CreateMeetingScreen({ navigation }) {
+/**
+ * Posts a new meeting, and — when a `meeting` is passed in `route.params` —
+ * edits an existing one. The two flows are identical apart from the initial
+ * values and which endpoint the submit hits, so they share one screen rather
+ * than duplicating the recipient picker and its validation.
+ */
+export default function CreateMeetingScreen({ navigation, route }) {
   const { theme } = useContext(ThemeContext);
   const { showAlert } = useAlert();
   const insets = useSafeAreaInsets();
 
-  const [link, setLink] = useState('');
-  const [agenda, setAgenda] = useState('');
+  const editing = route?.params?.meeting || null;
+
+  const [link, setLink] = useState(editing?.link || '');
+  const [agenda, setAgenda] = useState(editing?.agenda || '');
   const [candidates, setCandidates] = useState([]);
+  // Server-supplied description of WHO this person is allowed to share with, so
+  // a short list reads as a rule rather than a bug.
+  const [scope, setScope] = useState(null);
   const [loadingRecipients, setLoadingRecipients] = useState(true);
-  const [selected, setSelected] = useState({}); // { [id]: true }
+  // Pre-tick whoever the meeting is already shared with when editing.
+  const [selected, setSelected] = useState(() => {
+    const initial = {};
+    (editing?.recipients || []).forEach((r) => { initial[String(r?._id || r)] = true; });
+    return initial;
+  });
   const [search, setSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -35,6 +51,7 @@ export default function CreateMeetingScreen({ navigation }) {
     try {
       const res = await getMeetingRecipients();
       setCandidates(res?.data || []);
+      setScope(res?.scope || null);
     } catch (e) {
       showAlert('Error', meetingError(e), 'error');
     } finally {
@@ -85,13 +102,27 @@ export default function CreateMeetingScreen({ navigation }) {
       return;
     }
     setSubmitting(true);
+    const payload = { link: link.trim(), agenda: agenda.trim(), recipientIds };
     try {
-      await createMeeting({ link: link.trim(), agenda: agenda.trim(), recipientIds });
-      showAlert('Meeting Shared', 'Your meeting link has been posted and the selected people have been notified.', 'success', [
-        { text: 'Done', onPress: () => navigation.goBack() },
-      ]);
+      if (editing) {
+        await updateMeeting(editing._id, payload);
+        showAlert(
+          'Meeting Updated',
+          'Your changes have been saved and everyone on this meeting has been notified.',
+          'success',
+          [{ text: 'Done', onPress: () => navigation.goBack() }]
+        );
+      } else {
+        await createMeeting(payload);
+        showAlert(
+          'Meeting Shared',
+          'Your meeting link has been posted and the selected people have been notified.',
+          'success',
+          [{ text: 'Done', onPress: () => navigation.goBack() }]
+        );
+      }
     } catch (e) {
-      showAlert('Could not share', meetingError(e), 'error');
+      showAlert(editing ? 'Could not update' : 'Could not share', meetingError(e), 'error');
     } finally {
       setSubmitting(false);
     }
@@ -118,7 +149,9 @@ export default function CreateMeetingScreen({ navigation }) {
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={{ color: theme.colors.textPrimary, fontSize: 19, fontWeight: '700', marginLeft: 12 }}>Post Meeting Link</Text>
+        <Text style={{ color: theme.colors.textPrimary, fontSize: 19, fontWeight: '700', marginLeft: 12 }}>
+          {editing ? 'Edit Meeting' : 'Post Meeting Link'}
+        </Text>
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={insets.top + 60}>
@@ -160,10 +193,27 @@ export default function CreateMeetingScreen({ navigation }) {
             <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>{selectedCount} selected</Text>
           </View>
 
-          {/* Quick selects */}
+          {/* Who this person is allowed to share with */}
+          {!!scope?.hint && (
+            <View style={{
+              flexDirection: 'row', alignItems: 'flex-start',
+              backgroundColor: theme.colors.primary + '10', borderWidth: 1, borderColor: theme.colors.primary + '35',
+              borderRadius: 12, padding: 11, marginBottom: 12,
+            }}>
+              <Ionicons name="information-circle-outline" size={15} color={theme.colors.primary} style={{ marginTop: 1 }} />
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 12, lineHeight: 17, marginLeft: 7, flex: 1 }}>
+                {scope.hint}
+              </Text>
+            </View>
+          )}
+
+          {/* Quick selects. "My Team" is hidden when the whole list already IS
+              the team — for a head or leader it would just duplicate "All". */}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 }}>
             <Chip label={allSelected ? 'All selected' : 'All'} icon="people" active={allSelected} onPress={selectAll} />
-            {myTeamIds.length > 0 && <Chip label="My Team" icon="git-network-outline" active={false} onPress={selectMyTeam} />}
+            {myTeamIds.length > 0 && myTeamIds.length < candidates.length && (
+              <Chip label="My Team" icon="git-network-outline" active={false} onPress={selectMyTeam} />
+            )}
             {selectedCount > 0 && <Chip label="Clear" icon="close" active={false} onPress={clearAll} />}
           </View>
 
@@ -216,7 +266,19 @@ export default function CreateMeetingScreen({ navigation }) {
             })
           )}
           {!loadingRecipients && filtered.length === 0 && (
-            <Text style={{ color: theme.colors.textSecondary, fontSize: 13, textAlign: 'center', marginTop: 12 }}>No people found.</Text>
+            candidates.length === 0 ? (
+              // Nobody is under this person at all — say why, so it doesn't
+              // read as a loading failure.
+              <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                <Ionicons name="people-outline" size={40} color={theme.colors.border} />
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 13, textAlign: 'center', marginTop: 10, lineHeight: 19 }}>
+                  There is nobody under you to share a meeting with yet.{'\n'}
+                  Ask the Admin to assign your team.
+                </Text>
+              </View>
+            ) : (
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 13, textAlign: 'center', marginTop: 12 }}>No people match that search.</Text>
+            )
           )}
         </ScrollView>
 
@@ -231,9 +293,9 @@ export default function CreateMeetingScreen({ navigation }) {
               <ActivityIndicator color="#fff" />
             ) : (
               <>
-                <Ionicons name="send" size={18} color="#fff" />
+                <Ionicons name={editing ? 'checkmark-circle' : 'send'} size={18} color="#fff" />
                 <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, marginLeft: 8 }}>
-                  Share Meeting{selectedCount > 0 ? ` (${selectedCount})` : ''}
+                  {editing ? 'Update Meeting' : 'Share Meeting'}{selectedCount > 0 ? ` (${selectedCount})` : ''}
                 </Text>
               </>
             )}

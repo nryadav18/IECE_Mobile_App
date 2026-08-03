@@ -5,6 +5,7 @@ const { sendPushNotification } = require('./pushNotification');
 const { istDateKey, isSunday, approvedHolidaySchoolIds } = require('./holiday');
 const { getSubjectsOnLeaveSet } = require('./substitutionStatus');
 const { getUsersOnLeaveSet } = require('./leaveStatus');
+const { FIELD_STAFF } = require('./roles');
 
 // IST is a fixed offset of UTC+5:30 (India observes no daylight saving).
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
@@ -36,9 +37,10 @@ function getISTDayRange() {
 async function sendCheckinReminders() {
   try {
     const dateKey = istDateKey();
-    // No reminders on Sundays — it's a holiday for everyone.
+    // No reminders on Sundays. Attendance itself stays OPEN — trainers who do
+    // work a Sunday can still check in and out — we just don't nag the rest.
     if (isSunday(dateKey)) {
-      console.log('[checkin-reminder] Sunday — skipping all reminders.');
+      console.log('[checkin-reminder] Sunday — skipping reminders (check-in stays open).');
       return;
     }
 
@@ -61,10 +63,12 @@ async function sendCheckinReminders() {
     ]);
     const onLeaveSet = new Set([...subLeaveSet, ...personalLeaveSet]);
 
-    // Trainers / team leaders who can actually check in (approved face) and have
-    // a registered push token.
+    // Everyone who marks attendance — trainers, (trainee) team leaders AND
+    // heads — who can actually check in (approved face) and has a registered
+    // push token. FIELD_STAFF is the single definition of "works under IECE",
+    // so nobody with an attendance screen is left un-reminded.
     const users = await User.find({
-      role: { $in: ['trainer', 'team_leader'] },
+      role: { $in: FIELD_STAFF },
       expoPushToken: { $ne: null },
       $or: [
         { facialRegistrationStatusV2: 'approved' },
@@ -110,9 +114,10 @@ async function sendCheckinReminders() {
 async function sendCheckoutReminders() {
   try {
     const dateKey = istDateKey();
-    // No reminders on Sundays — it's a holiday for everyone.
+    // No reminders on Sundays. Someone who checked in on a Sunday chose to work
+    // and can check out whenever they like; we just don't push them about it.
     if (isSunday(dateKey)) {
-      console.log('[checkout-reminder] Sunday — skipping all reminders.');
+      console.log('[checkout-reminder] Sunday — skipping reminders (check-out stays open).');
       return;
     }
 
@@ -135,10 +140,10 @@ async function sendCheckoutReminders() {
     let sent = 0;
     for (const att of pending) {
       const user = att.trainerId;
-      // Only trainers and team leaders mark attendance; skip anything else,
-      // and skip users without a registered push token.
+      // Only field staff mark attendance (trainers, leaders, heads); skip
+      // anything else, and skip users without a registered push token.
       if (!user || !user.expoPushToken) continue;
-      if (!['trainer', 'team_leader'].includes(user.role)) continue;
+      if (!FIELD_STAFF.includes(user.role)) continue;
       // Skip schools that are on an approved holiday today.
       if (att.schoolId && holidaySchoolIds.has(att.schoolId.toString())) continue;
 

@@ -13,7 +13,7 @@ import Avatar from '../../components/Avatar';
 import NotificationBell from '../../components/NotificationBell';
 import MeetingPlatformBadge from '../../components/MeetingPlatformBadge';
 import { SkeletonList } from '../../components/Skeleton';
-import { getMeetings, deleteMeeting, meetingError } from '../../services/meeting';
+import { getMeetings } from '../../services/meeting';
 
 const timeAgo = (d) => {
   const diff = Date.now() - new Date(d).getTime();
@@ -39,7 +39,6 @@ export default function MeetingCornerScreen({ navigation }) {
   const [meetings, setMeetings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [busyId, setBusyId] = useState(null);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -67,77 +66,80 @@ export default function MeetingCornerScreen({ navigation }) {
     );
   };
 
-  const confirmDelete = (meeting) => {
-    showAlert('Remove Meeting', 'Remove this meeting from the corner?', 'warning', [
-      { text: 'Keep', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          setBusyId(meeting._id);
-          try {
-            await deleteMeeting(meeting._id);
-            await load();
-          } catch (e) {
-            showAlert('Error', meetingError(e), 'error');
-          } finally {
-            setBusyId(null);
-          }
-        },
-      },
-    ]);
-  };
+  const openDetail = (meeting) => navigation.navigate('MeetingDetail', { meeting, meetingId: meeting._id });
 
+  // Compact thumbnail: platform, a trimmed agenda, who posted it and when, plus
+  // the two things people actually want from the list — open it, or join it.
+  // Everything else (full agenda, the raw link, the recipient list, edit and
+  // remove) lives on the detail screen.
   const MeetingCard = ({ meeting }) => {
     const mine = String(meeting.createdBy?._id || meeting.createdBy) === String(user?._id || user?.id);
-    const canRemove = mine || isAdmin;
     const sharedCount = Array.isArray(meeting.recipients) ? meeting.recipients.length : 0;
+    const wasEdited = !!meeting.updatedBy;
+
     return (
-      <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      <TouchableOpacity
+        style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+        onPress={() => openDetail(meeting)}
+        activeOpacity={0.75}
+      >
+        {/* Row 1 — platform, edited flag, and the affordance that this opens */}
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <MeetingPlatformBadge platform={meeting.platform} size="md" />
-          {canRemove && (
-            <TouchableOpacity
-              onPress={() => confirmDelete(meeting)}
-              disabled={busyId === meeting._id}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={{ opacity: busyId === meeting._id ? 0.4 : 1 }}
-            >
-              <Ionicons name="trash-outline" size={18} color={theme.colors.textSecondary} />
-            </TouchableOpacity>
+          {wasEdited && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F59E0B18', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3, marginLeft: 8 }}>
+              <Ionicons name="create-outline" size={11} color="#D97706" />
+              <Text style={{ color: '#D97706', fontSize: 9.5, fontWeight: '800', marginLeft: 3 }}>EDITED</Text>
+            </View>
           )}
+          <View style={{ flex: 1 }} />
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5 }}>{timeAgo(meeting.createdAt)}</Text>
+          <Ionicons name="chevron-forward" size={16} color={theme.colors.textSecondary} style={{ marginLeft: 4 }} />
         </View>
 
-        <Text style={{ color: theme.colors.textPrimary, fontSize: 15, fontWeight: '700', marginTop: 12 }}>
+        {/* Row 2 — the agenda, trimmed. The full text is on the detail screen. */}
+        <Text
+          style={{ color: theme.colors.textPrimary, fontSize: 15, fontWeight: '700', marginTop: 12, lineHeight: 21 }}
+          numberOfLines={2}
+        >
           {meeting.agenda}
         </Text>
 
+        {/* Row 3 — who posted it, and how widely it was shared */}
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
           <Avatar name={meeting.createdBy?.name} size={26} />
           <Text style={{ color: theme.colors.textSecondary, fontSize: 12.5, marginLeft: 8, flex: 1 }} numberOfLines={1}>
             {meeting.createdBy?.name || 'Unknown'} · {roleLabel(meeting.createdBy?.role)}
           </Text>
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5 }}>{timeAgo(meeting.createdAt)}</Text>
+          {(mine || isAdmin) && sharedCount > 0 && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}>
+              <Ionicons name="people-outline" size={13} color={theme.colors.textSecondary} />
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginLeft: 4 }}>{sharedCount}</Text>
+            </View>
+          )}
         </View>
 
-        {(mine || isAdmin) && sharedCount > 0 && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-            <Ionicons name="people-outline" size={14} color={theme.colors.textSecondary} />
-            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginLeft: 5 }}>
-              Shared with {sharedCount} {sharedCount > 1 ? 'people' : 'person'}
-            </Text>
-          </View>
-        )}
+        {/* Row 4 — actions. Join is one tap from the list; details are a tap away. */}
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+          <TouchableOpacity
+            style={{ flex: 1, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingVertical: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}
+            onPress={() => openDetail(meeting)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="information-circle-outline" size={17} color={theme.colors.textPrimary} />
+            <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 14, marginLeft: 6 }}>Details</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={{ marginTop: 14, backgroundColor: '#10B981', borderRadius: 12, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}
-          onPress={() => join(meeting)}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="videocam" size={18} color="#fff" />
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, marginLeft: 8 }}>Join Now</Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={{ flex: 1, backgroundColor: '#10B981', borderRadius: 12, paddingVertical: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}
+            onPress={() => join(meeting)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="videocam" size={17} color="#fff" />
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, marginLeft: 6 }}>Join Now</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
     );
   };
 

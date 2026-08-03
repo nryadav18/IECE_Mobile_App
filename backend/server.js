@@ -43,6 +43,7 @@ const substitutionRoutes = require('./routes/substitutionRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const leaveRoutes = require('./routes/leaveRoutes');
 const meetingRoutes = require('./routes/meetingRoutes');
+const approvalRoutes = require('./routes/approvalRoutes');
 
 // Mount routers
 
@@ -62,7 +63,15 @@ app.use('/api/substitutions', substitutionRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/leaves', leaveRoutes);
 app.use('/api/meetings', meetingRoutes);
+app.use('/api/approvals', approvalRoutes);
 
 const PORT = process.env.PORT || 3000;
+
+// Safety net. On modern Node an unhandled promise rejection terminates the
+// process by default, so one stray background task (a push notification, a
+// post-response lookup) could take the whole API down. Log it and keep serving.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+});
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
