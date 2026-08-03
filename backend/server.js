@@ -15,12 +15,17 @@ const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const { startAttendanceReminderCron } = require('./utils/attendanceReminderCron');
+const { startCelebrationCron } = require('./utils/celebrationCron');
 
 // Connect to database
 connectDB();
 
 // Schedule the hourly (5–10 PM IST) "please check out" attendance reminders.
 startAttendanceReminderCron();
+
+// Wish everyone at 08:00 IST on festivals, national days and IECE's own
+// anniversary — the same occasions the home screen header celebrates.
+startCelebrationCron();
 
 const app = express();
 
@@ -44,6 +49,9 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const leaveRoutes = require('./routes/leaveRoutes');
 const meetingRoutes = require('./routes/meetingRoutes');
 const approvalRoutes = require('./routes/approvalRoutes');
+const statsRoutes = require('./routes/statsRoutes');
+const occasionRoutes = require('./routes/occasionRoutes');
+const appVersionRoutes = require('./routes/appVersionRoutes');
 
 // Mount routers
 
@@ -64,6 +72,9 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/leaves', leaveRoutes);
 app.use('/api/meetings', meetingRoutes);
 app.use('/api/approvals', approvalRoutes);
+app.use('/api/stats', statsRoutes);
+app.use('/api/occasions', occasionRoutes);
+app.use('/api/app-version', appVersionRoutes);
 
 const PORT = process.env.PORT || 3000;
 

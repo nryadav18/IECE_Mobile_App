@@ -2,12 +2,15 @@ const express = require('express');
 const {
   getTeamLeaders,
   getSchools,
+  getArchivedSchools,
+  restoreSchool,
   createTeamLeader,
   createChairmanAndSchool,
   createTrainer,
   createHead,
   createTeam,
   getTeams,
+  getTeamById,
   deleteTeam,
   getUsersPaginated,
   updateUser,
@@ -38,11 +41,17 @@ router.get(
 // Teams: admin manages them; heads/CEO may list them (read-only for CEO).
 router.get('/teams', authorize(...ADMIN_ROLES, ...HEAD_ROLES), getTeams);
 router.post('/team', authorize('creator_admin'), createTeam);
+// Drill-in on a single team (its members, heads and school coverage).
+router.get('/team/:id', authorize(...ADMIN_ROLES, ...HEAD_ROLES), getTeamById);
 router.delete('/team/:id', authorize('creator_admin'), deleteTeam);
 
 // Read lists: admin + CEO. Creation stays admin-only below.
 router.get('/team-leaders', authorize(...ADMIN_ROLES), getTeamLeaders);
 router.get('/schools', authorize(...ADMIN_ROLES), getSchools);
+// Archived schools: deleting a school login never destroys the work done there,
+// so the school itself is kept (hidden) and can be brought back.
+router.get('/schools/archived', authorize(...ADMIN_ROLES), getArchivedSchools);
+router.put('/school/:id/restore', authorize('creator_admin'), restoreSchool);
 
 router.post('/team-leader', authorize('creator_admin'), createTeamLeader);
 router.post('/chairman-school', authorize('creator_admin'), createChairmanAndSchool);

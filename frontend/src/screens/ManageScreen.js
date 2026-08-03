@@ -20,6 +20,11 @@ export default function ManageScreen({ navigation }) {
   const [activeTab, setActiveTab] = useState('Schools'); // 'Schools' | 'Trainers' | 'TeamLeaders' | 'Heads'
 
   const [schools, setSchools] = useState([]);
+  // Schools whose login was deleted. The school record is kept so every
+  // activity, visit report and attendance entry logged there still resolves.
+  const [archivedSchools, setArchivedSchools] = useState([]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [restoringSchoolId, setRestoringSchoolId] = useState(null);
   const [teamLeaders, setTeamLeaders] = useState([]);
   const [trainers, setTrainers] = useState([]);
   const [chairmen, setChairmen] = useState([]);
@@ -67,13 +72,14 @@ export default function ManageScreen({ navigation }) {
     // don't flip the whole screen back to the full-screen ScreenLoader.
     if (!isRefresh) setLoading(true);
     try {
-      const [schoolsRes, tlsRes, trainersRes, chairmenRes, teamsRes, headsRes] = await Promise.all([
+      const [schoolsRes, tlsRes, trainersRes, chairmenRes, teamsRes, headsRes, archivedRes] = await Promise.all([
         api.get('/admin/schools'),
         api.get('/admin/team-leaders'),
         api.get('/admin/users?role=trainer&limit=1000'),
         api.get('/admin/users?role=chairman&limit=1000'),
         api.get('/admin/teams'),
-        api.get('/admin/users?role=zonal_head,cluster_head,regional_head&limit=1000')
+        api.get('/admin/users?role=zonal_head,cluster_head,regional_head&limit=1000'),
+        api.get('/admin/schools/archived')
       ]);
       setSchools(schoolsRes.data.data);
       setTeamLeaders(tlsRes.data.data);
@@ -81,6 +87,7 @@ export default function ManageScreen({ navigation }) {
       setChairmen(chairmenRes.data.data);
       setTeams(teamsRes.data.data);
       setHeads(headsRes.data.data);
+      setArchivedSchools(archivedRes.data.data);
     } catch (err) {
       console.log('Error fetching management data', err);
       showAlert('Error', 'Failed to load entries.', 'error');
@@ -217,13 +224,13 @@ export default function ManageScreen({ navigation }) {
   const handleDeletePress = (id, label) => {
     showAlert(
       'Confirm Deletion',
-      `Are you sure you want to permanently delete ${label}? If this is a Chairman, their associated School, visit reports, and activities will be deleted too.`,
+      `Delete the login for ${label}? If this is a Chairman, their school is archived — its activities, visit reports and attendance are all kept, and everyone who worked there keeps it in their profile history. Archived schools can be restored.`,
       'warning',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          type: 'primary', 
+        {
+          text: 'Delete',
+          type: 'primary',
           onPress: async () => {
             try {
               await api.delete(`/admin/user/${id}`);
@@ -231,6 +238,39 @@ export default function ManageScreen({ navigation }) {
               fetchData();
             } catch (err) {
               showAlert('Error', 'Failed to delete.', 'error');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleRestoreSchool = (school) => {
+    showAlert(
+      'Restore School',
+      `Bring "${school.name}" back? Its work history is already intact. You will need to create a new Chairman login for it, and re-assign any staff who worked there.`,
+      'info',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Restore',
+          type: 'primary',
+          onPress: async () => {
+            setRestoringSchoolId(school._id);
+            try {
+              const res = await api.put(`/admin/school/${school._id}/restore`);
+              showAlert(
+                'Restored',
+                res.data?.needsChairman
+                  ? `${school.name} is active again. Create a Chairman login for it so the school can sign in.`
+                  : `${school.name} is active again.`,
+                'success'
+              );
+              fetchData();
+            } catch (err) {
+              showAlert('Error', err.response?.data?.error || 'Failed to restore school.', 'error');
+            } finally {
+              setRestoringSchoolId(null);
             }
           }
         }
@@ -256,6 +296,14 @@ export default function ManageScreen({ navigation }) {
     const matchedSchool = schools.find((school) => school._id === user.schoolId);
     return matchedSchool?.name || 'None';
   };
+
+  // The Schools table lists chairmen, so a school whose login is gone — a
+  // restored one, most often — would otherwise be invisible here even though
+  // it is active and assignable everywhere else.
+  const loginlessSchools = (() => {
+    const chairmanIds = new Set(chairmen.map(c => String(c._id)));
+    return schools.filter(s => !chairmanIds.has(String(s.chairmanId?._id || s.chairmanId)));
+  })();
 
   // Filter items based on active tab and search query
   const getFilteredData = () => {
@@ -765,6 +813,109 @@ export default function ManageScreen({ navigation }) {
             </View>
           </ScrollView>
           )}
+
+          {/* Active schools with no chairman login — typically just restored. */}
+          {activeTab === 'Schools' && !showSkeleton && loginlessSchools.length > 0 && (
+            <View style={{ paddingHorizontal: 20, paddingBottom: 4 }}>
+              <View style={[styles.archiveCard, { backgroundColor: '#F59E0B10', borderColor: '#F59E0B' }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Ionicons name="alert-circle-outline" size={18} color="#D97706" style={{ marginRight: 8 }} />
+                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 14 }}>
+                    Schools Without a Login ({loginlessSchools.length})
+                  </Text>
+                </View>
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 10, lineHeight: 18 }}>
+                  These schools are active and can be assigned to staff, but nobody can sign in as them. Create a
+                  Chairman login for each from the admin portal.
+                </Text>
+                {loginlessSchools.map(s => (
+                  <Text key={s._id} style={{ color: theme.colors.textPrimary, fontSize: 13, marginBottom: 3 }}>
+                    • {s.name}{s.state ? ` — ${s.state}` : ''}
+                  </Text>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Archived schools — deleting a school login never destroys the work
+              done there, so the school is kept here and can be brought back. */}
+          {activeTab === 'Schools' && !showSkeleton && archivedSchools.length > 0 && (
+            <View style={{ paddingHorizontal: 20, paddingBottom: 10 }}>
+              <TouchableOpacity
+                style={[styles.archiveHeader, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+                onPress={() => setShowArchived(v => !v)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="archive-outline" size={18} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
+                <Text style={{ flex: 1, color: theme.colors.textPrimary, fontWeight: '700', fontSize: 14 }}>
+                  Archived Schools ({archivedSchools.length})
+                </Text>
+                <Ionicons name={showArchived ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
+
+              {showArchived && (
+                <>
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 8, marginBottom: 10, lineHeight: 18 }}>
+                    These schools had their login removed. Nothing they hold was deleted — the activities, visit reports
+                    and attendance logged there are all intact, and everyone who worked there keeps the school in their
+                    profile history.
+                  </Text>
+
+                  {archivedSchools.map(school => (
+                    <View
+                      key={school._id}
+                      style={[styles.archiveCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 15 }}>{school.name}</Text>
+                          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                            {[school.state, school.associationYear, school.classCoverage].filter(Boolean).join(' · ')}
+                          </Text>
+                          <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4 }}>
+                            Archived {school.deletedAt ? new Date(school.deletedAt).toLocaleDateString() : '—'}
+                            {school.archivedChairman?.name ? ` · login was ${school.archivedChairman.name}` : ''}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={[styles.restoreBtn, { borderColor: theme.colors.primary, opacity: restoringSchoolId === school._id ? 0.6 : 1 }]}
+                          onPress={() => handleRestoreSchool(school)}
+                          disabled={restoringSchoolId === school._id}
+                        >
+                          {restoringSchoolId === school._id ? (
+                            <ActivityIndicator size="small" color={theme.colors.primary} />
+                          ) : (
+                            <>
+                              <Ionicons name="refresh" size={14} color={theme.colors.primary} style={{ marginRight: 5 }} />
+                              <Text style={{ color: theme.colors.primary, fontWeight: '700', fontSize: 12 }}>Restore</Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Proof that nothing was thrown away with the login. */}
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
+                        {[
+                          { label: 'activities', value: school.preserved?.activities || 0 },
+                          { label: 'visit reports', value: school.preserved?.visitReports || 0 },
+                          { label: 'attendance records', value: school.preserved?.attendance || 0 },
+                        ].map(item => (
+                          <View
+                            key={item.label}
+                            style={{ backgroundColor: '#10B98115', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, marginBottom: 6 }}
+                          >
+                            <Text style={{ color: '#10B981', fontSize: 11, fontWeight: '600' }}>
+                              {item.value} {item.label} kept
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  ))}
+                </>
+              )}
+            </View>
+          )}
         </ScrollView>
 
         {/* Edit Modal */}
@@ -1267,6 +1418,30 @@ const styles = StyleSheet.create({
     padding: 30,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  archiveHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  archiveCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+  },
+  restoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minWidth: 88,
   },
   emptyContainer: {
     alignItems: 'center',

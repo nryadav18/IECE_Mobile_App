@@ -1,6 +1,9 @@
 const User = require('../models/User');
 const School = require('../models/School');
 const Team = require('../models/Team');
+const Activity = require('../models/Activity');
+const VisitReport = require('../models/VisitReport');
+const Attendance = require('../models/Attendance');
 const PendingAdminRequest = require('../models/PendingAdminRequest');
 const { HEAD_ROLES, LEADER_ROLES, TEAM_MEMBER_ROLES } = require('../utils/roles');
 const { notifyUser, notifyUserById } = require('../utils/pushNotification');
@@ -93,6 +96,72 @@ exports.getTeams = async (req, res) => {
   }
 };
 
+// @desc    Get one Team with its people (members + overseeing heads)
+// @route   GET /api/admin/team/:id
+// @access  Private/CreatorAdmin + CEO + Heads (own teams only)
+exports.getTeamById = async (req, res) => {
+  try {
+    const team = await Team.findById(req.params.id).populate('createdBy', 'name role');
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    // A head may only drill into a team they actually oversee.
+    if (HEAD_ROLES.includes(req.user.role)) {
+      const mine = (req.user.teamIds || []).map(String);
+      if (!mine.includes(String(team._id))) {
+        return res.status(403).json({ success: false, error: 'Not authorized to view this team' });
+      }
+    }
+
+    // Members carry a single teamId; heads oversee via the teamIds array.
+    const MEMBER_FIELDS = '-password -faceEmbedding -faceEmbeddingV2 -faceRegistrations.faceEmbedding';
+    const [members, heads] = await Promise.all([
+      User.find({ teamId: team._id, role: { $in: TEAM_MEMBER_ROLES } })
+        .select(MEMBER_FIELDS)
+        .populate('schoolId', 'name state')
+        .populate('schoolIds', 'name state')
+        .populate('teamLeaderId', 'name email role')
+        .sort('name'),
+      User.find({ teamIds: team._id, role: { $in: HEAD_ROLES } })
+        .select('name email role')
+        .sort('name'),
+    ]);
+
+    // Leaders first, then trainers — the same seniority order the drill-in shows.
+    const leaders = members.filter(m => LEADER_ROLES.includes(m.role));
+    const trainers = members.filter(m => m.role === 'trainer');
+
+    // Distinct schools this team covers, across every member's assignments.
+    const schoolMap = new Map();
+    members.forEach((m) => {
+      const list = (m.schoolIds && m.schoolIds.length) ? m.schoolIds : (m.schoolId ? [m.schoolId] : []);
+      list.forEach((s) => {
+        if (s && s._id) schoolMap.set(String(s._id), { _id: s._id, name: s.name, state: s.state });
+      });
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        team,
+        members: [...leaders, ...trainers],
+        heads,
+        schools: [...schoolMap.values()].sort((a, b) => String(a.name).localeCompare(String(b.name))),
+        counts: {
+          members: members.length,
+          leaders: leaders.length,
+          trainers: trainers.length,
+          heads: heads.length,
+          schools: schoolMap.size,
+        },
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 // @desc    Delete a Team (unlink members and pull it from every head)
 // @route   DELETE /api/admin/team/:id
 // @access  Private/CreatorAdmin
@@ -147,15 +216,74 @@ exports.createHead = async (req, res) => {
   }
 };
 
-// @desc    Get all Schools
+// @desc    Get all active Schools (archived ones are excluded)
 // @route   GET /api/admin/schools
 // @access  Private/CreatorAdmin
 exports.getSchools = async (req, res) => {
   try {
-    const schools = await School.find().sort('-createdAt');
+    const schools = await School.find({ isDeleted: { $ne: true } }).sort('-createdAt');
     res.status(200).json({ success: true, data: schools });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Server Error' });
+  }
+};
+
+// @desc    Get archived (soft-deleted) Schools, with the work they still hold
+// @route   GET /api/admin/schools/archived
+// @access  Private/CreatorAdmin + CEO
+exports.getArchivedSchools = async (req, res) => {
+  try {
+    const schools = await School.find({ isDeleted: true })
+      .populate('deletedBy', 'name role')
+      .sort('-deletedAt');
+
+    // Show the admin exactly what is being preserved, so it is obvious nothing
+    // was destroyed along with the school login.
+    const data = await Promise.all(schools.map(async (school) => {
+      const [activities, visitReports, attendance] = await Promise.all([
+        Activity.countDocuments({ schoolId: school._id }),
+        VisitReport.countDocuments({ schoolId: school._id }),
+        Attendance.countDocuments({ schoolId: school._id }),
+      ]);
+      return { ...school.toObject(), preserved: { activities, visitReports, attendance } };
+    }));
+
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// @desc    Restore an archived School
+// @route   PUT /api/admin/school/:id/restore
+// @access  Private/CreatorAdmin
+exports.restoreSchool = async (req, res) => {
+  try {
+    const school = await School.findById(req.params.id);
+    if (!school) {
+      return res.status(404).json({ success: false, error: 'School not found' });
+    }
+    if (!school.isDeleted) {
+      return res.status(400).json({ success: false, error: 'School is not archived' });
+    }
+
+    school.isDeleted = false;
+    school.deletedAt = null;
+    school.deletedBy = null;
+    await school.save();
+
+    // The chairman login was deleted with the school and cannot be recovered —
+    // the admin has to create a fresh one. Staff assignments were detached too
+    // and must be re-assigned; both stay visible in each person's history.
+    const chairmanExists = await User.exists({ _id: school.chairmanId, role: 'chairman' });
+
+    res.status(200).json({
+      success: true,
+      data: school,
+      needsChairman: !chairmanExists,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
@@ -424,11 +552,13 @@ exports.deleteUser = async (req, res) => {
     }
 
     if (user.role === 'chairman') {
-      const schools = await School.find({ chairmanId: user._id });
+      const schools = await School.find({ chairmanId: user._id, isDeleted: { $ne: true } });
       for (const school of schools) {
         // Unlink everyone assigned to this School (multi-school aware) instead
         // of blocking: pull the school from schoolIds, drop its per-school face
-        // registration, and re-sync the legacy primary school.
+        // registration, and re-sync the legacy primary school. The pre-save
+        // hook closes each person's stint at the school so it stays in their
+        // profile history.
         const affected = await User.find({ schoolIds: school._id });
         for (const member of affected) {
           member.schoolIds = (member.schoolIds || []).filter(
@@ -438,11 +568,21 @@ exports.deleteUser = async (req, res) => {
           member.faceRegistrations = (member.faceRegistrations || []).filter(
             (fr) => String(fr.schoolId) !== String(school._id)
           );
+          member.$locals.schoolRemovalReason = 'school_deleted';
           await member.save();
         }
         // Safety net for any legacy user that only had the single schoolId set.
         await User.updateMany({ schoolId: school._id }, { $set: { schoolId: null } });
-        await School.findByIdAndDelete(school._id);
+
+        // ARCHIVE, never delete. Activities, visit reports, attendance and
+        // holidays all reference this school — removing the document would
+        // orphan every one of them. Archiving hides the school from all
+        // active lists while their history keeps resolving its name.
+        school.isDeleted = true;
+        school.deletedAt = new Date();
+        school.deletedBy = req.user._id || req.user.id;
+        school.archivedChairman = { name: user.name, email: user.email };
+        await school.save();
       }
     }
 

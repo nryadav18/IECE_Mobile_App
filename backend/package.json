@@ -8,7 +8,8 @@
     "templates": "node onboarding/generate_templates.js",
     "create:schools": "node create_schools_chairmen.js",
     "create:leaders": "node create_team_leaders.js",
-    "create:trainers": "node create_trainers.js"
+    "create:trainers": "node create_trainers.js",
+    "sync:occasions": "node scripts/sync-occasions.js"
   },
   "keywords": [],
   "author": "",

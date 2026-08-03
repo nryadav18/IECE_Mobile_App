@@ -116,6 +116,11 @@ function resolveTarget(data = {}) {
         ? { screen: 'MeetingDetail', params: { meetingId: data.meetingId } }
         : { screen: 'MeetingCorner' };
 
+    // The morning festival wish → Home, which is already showing the
+    // celebration header this notification is about.
+    case 'celebration':
+      return { screen: 'Home' };
+
     // Status / informational notifications land on the dashboard.
     case 'face_approved':
     case 'face_rejected':

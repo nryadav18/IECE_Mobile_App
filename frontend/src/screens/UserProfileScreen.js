@@ -76,12 +76,21 @@ export default function UserProfileScreen({ route, navigation }) {
 
   const {
     profile, attendance, visitReports, activities,
+    // Every school this person has worked at — the ones they hold now first,
+    // then the ones they have left. Built by the API.
+    schoolHistory = [],
     leaveDays = [],
     // Days this person was replaced by someone else (shown as On Leave) vs.
     // days they are covering for someone else (shown as On Substitution).
     substitutionLeaves = [],
     substitutionDuties = [],
   } = profileData;
+
+  const currentSchools = schoolHistory.filter(s => s.isCurrent);
+  const pastSchools = schoolHistory.filter(s => !s.isCurrent);
+
+  const formatDate = (d) =>
+    d ? new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null;
 
   const getAttendanceSummary = () => {
     const present = attendance.filter(a => a.status === 'Present').length;
@@ -145,28 +154,37 @@ export default function UserProfileScreen({ route, navigation }) {
           <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0 }]}>Assignment Details</Text>
         </View>
         
-        {(() => {
-          const schools = Array.isArray(profile.schoolIds) && profile.schoolIds.length
-            ? profile.schoolIds
-            : (profile.schoolId ? [profile.schoolId] : []);
-          if (!schools.length) {
-            return <Text style={{ color: theme.colors.textSecondary }}>No school assigned.</Text>;
-          }
-          return (
-            <View style={styles.detailRow}>
-              <Text style={{ color: theme.colors.textSecondary, width: 80 }}>
-                {schools.length > 1 ? 'Schools:' : 'School:'}
-              </Text>
+        {/* Current school(s) sit on top — where this person works right now. */}
+        {currentSchools.length === 0 ? (
+          <Text style={{ color: theme.colors.textSecondary }}>No school assigned.</Text>
+        ) : (
+          currentSchools.map((s, i) => (
+            <View
+              key={s._id || s.schoolId}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'flex-start',
+                backgroundColor: theme.colors.primary + '12',
+                borderRadius: 10,
+                padding: 10,
+                marginBottom: i === currentSchools.length - 1 ? 0 : 8,
+              }}
+            >
+              <Ionicons name="school" size={18} color={theme.colors.primary} style={{ marginRight: 8, marginTop: 1 }} />
               <View style={{ flex: 1 }}>
-                {schools.map((s) => (
-                  <Text key={s._id || s.name} style={{ color: theme.colors.textPrimary, fontWeight: '500', marginBottom: 2 }}>
-                    {s.name}{s.state ? ` — ${s.state}` : ''}
-                  </Text>
-                ))}
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>
+                  {s.name}{s.state ? ` — ${s.state}` : ''}
+                </Text>
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                  {s.assignedAt ? `Working here since ${formatDate(s.assignedAt)}` : 'Currently working here'}
+                </Text>
+              </View>
+              <View style={{ backgroundColor: '#10B981' + '25', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                <Text style={{ color: '#10B981', fontSize: 11, fontWeight: '700' }}>CURRENT</Text>
               </View>
             </View>
-          );
-        })()}
+          ))
+        )}
 
         {profile.teamId?.name && (
           <View style={[styles.detailRow, { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.colors.border }]}>
@@ -180,6 +198,93 @@ export default function UserProfileScreen({ route, navigation }) {
             <Text style={{ color: theme.colors.textSecondary, width: 80 }}>Leader:</Text>
             <Text style={{ color: theme.colors.textPrimary, flex: 1, fontWeight: '500' }}>{profile.teamLeaderId.name}</Text>
           </View>
+        )}
+      </View>
+
+      {/* Schools Worked — the full track. A school detached by the admin, or
+          closed along with its login, still shows here with its dates. */}
+      <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+          <Ionicons name="git-branch-outline" size={20} color={theme.colors.primary} style={{ marginRight: 8 }} />
+          <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0 }]}>
+            Schools Worked ({schoolHistory.length})
+          </Text>
+        </View>
+        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginBottom: 12 }}>
+          Every school this person has been assigned to, newest first.
+        </Text>
+
+        {schoolHistory.length === 0 ? (
+          <Text style={{ color: theme.colors.textSecondary }}>No school assignments recorded yet.</Text>
+        ) : (
+          schoolHistory.map((s, i) => (
+            <View
+              key={s._id || s.schoolId}
+              style={{
+                flexDirection: 'row',
+                paddingVertical: 10,
+                borderTopWidth: i === 0 ? 0 : 1,
+                borderTopColor: theme.colors.border,
+              }}
+            >
+              {/* Timeline rail: filled dot = current, hollow = a past stint */}
+              <View style={{ width: 22, alignItems: 'center', paddingTop: 4 }}>
+                <View
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 5,
+                    borderWidth: 2,
+                    borderColor: s.isCurrent ? '#10B981' : theme.colors.textSecondary,
+                    backgroundColor: s.isCurrent ? '#10B981' : 'transparent',
+                  }}
+                />
+                {i < schoolHistory.length - 1 && (
+                  <View style={{ flex: 1, width: 2, backgroundColor: theme.colors.border, marginTop: 4 }} />
+                )}
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Text
+                    style={{
+                      color: s.isCurrent ? theme.colors.textPrimary : theme.colors.textSecondary,
+                      fontWeight: s.isCurrent ? '700' : '600',
+                      marginRight: 6,
+                    }}
+                  >
+                    {s.name}
+                  </Text>
+                  {s.isCurrent && (
+                    <View style={{ backgroundColor: '#10B981' + '25', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                      <Text style={{ color: '#10B981', fontSize: 10, fontWeight: '700' }}>CURRENT</Text>
+                    </View>
+                  )}
+                  {s.isArchived && (
+                    <View style={{ backgroundColor: theme.colors.textSecondary + '20', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, marginLeft: 4 }}>
+                      <Text style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700' }}>SCHOOL CLOSED</Text>
+                    </View>
+                  )}
+                </View>
+
+                {s.state ? (
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>{s.state}</Text>
+                ) : null}
+
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 3 }}>
+                  {s.assignedAt ? formatDate(s.assignedAt) : 'Start date unknown'}
+                  {' → '}
+                  {s.isCurrent ? 'Present' : (s.removedAt ? formatDate(s.removedAt) : 'Unknown')}
+                </Text>
+
+                {!s.isCurrent && s.removedReason === 'school_deleted' && (
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 2, fontStyle: 'italic' }}>
+                    Ended because the school was removed — their work here is kept.
+                  </Text>
+                )}
+              </View>
+            </View>
+          ))
         )}
       </View>
 

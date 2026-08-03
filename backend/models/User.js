@@ -56,6 +56,29 @@ const faceRegistrationSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// One stint at one school. A person keeps every stint they have ever had, so a
+// school detached by the admin (or archived along with its login) still shows
+// up as part of where they have worked. An open entry (removedAt === null) is
+// a school they are assigned to right now.
+const schoolAssignmentSchema = new mongoose.Schema({
+  schoolId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'School',
+    required: true
+  },
+  // Snapshot of the school at assignment time. The School document is archived
+  // rather than deleted, so this is only a fallback — but it keeps the history
+  // readable even for schools hard-deleted before archiving existed.
+  schoolName: { type: String, default: null },
+  schoolState: { type: String, default: null },
+  assignedAt: { type: Date, default: Date.now },
+  // null while the person is still assigned to the school.
+  removedAt: { type: Date, default: null },
+  // Why the stint ended: 'unassigned' (admin detached them) or
+  // 'school_deleted' (the school's login was removed).
+  removedReason: { type: String, default: null }
+}, { _id: true });
+
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -163,6 +186,12 @@ const userSchema = new mongoose.Schema({
     type: [faceRegistrationSchema],
     default: []
   },
+  // Every school this person has ever been assigned to, open stints first.
+  // Maintained automatically by the pre-save hook below.
+  schoolHistory: {
+    type: [schoolAssignmentSchema],
+    default: []
+  },
   resetPasswordOtp: {
     type: String,
     select: false
@@ -192,6 +221,54 @@ userSchema.pre('save', function() {
   // list to empty is handled explicitly by the controller.
   if (this.isModified('schoolIds') && this.schoolIds && this.schoolIds.length > 0) {
     this.schoolId = this.schoolIds[0];
+  }
+});
+
+// Keep schoolHistory in step with schoolIds. Doing this in the model rather
+// than at each call site means EVERY path that changes a person's schools —
+// creation, an admin edit, a school being archived — records the stint, and a
+// detached school is never silently lost.
+//
+// Set `user.$locals.schoolRemovalReason` before saving to label why a stint
+// ended ('school_deleted'); it defaults to 'unassigned'.
+userSchema.pre('save', async function() {
+  if (!this.isModified('schoolIds')) {
+    return;
+  }
+
+  const now = new Date();
+  const reason = this.$locals.schoolRemovalReason || 'unassigned';
+  const current = (this.schoolIds || []).map(String);
+
+  // Close the stints for schools the person no longer holds.
+  (this.schoolHistory || []).forEach((entry) => {
+    if (!entry.removedAt && !current.includes(String(entry.schoolId))) {
+      entry.removedAt = now;
+      entry.removedReason = reason;
+    }
+  });
+
+  // Open a stint for every newly assigned school. Re-assigning a school the
+  // person previously left starts a NEW stint rather than reopening the old
+  // one, so the gap stays visible in their history.
+  const openIds = new Set(
+    (this.schoolHistory || []).filter(e => !e.removedAt).map(e => String(e.schoolId))
+  );
+  const added = current.filter(id => !openIds.has(id));
+  if (added.length) {
+    // Required lazily so the two models can be loaded in either order.
+    const School = require('./School');
+    const docs = await School.find({ _id: { $in: added } }).select('name state');
+    const byId = new Map(docs.map(d => [String(d._id), d]));
+    added.forEach((id) => {
+      const school = byId.get(id);
+      this.schoolHistory.push({
+        schoolId: id,
+        schoolName: school?.name || null,
+        schoolState: school?.state || null,
+        assignedAt: now
+      });
+    });
   }
 });
 

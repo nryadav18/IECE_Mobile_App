@@ -150,6 +150,19 @@ const AppNavigator = () => {
           {user.role === 'ceo' && (
             <Stack.Screen name="CreatorAdminPortal" component={CreatorAdminPortal} />
           )}
+
+          {/* Celebration preview — the SAME Home screen, opened on a chosen
+              date. Not a mock and not a second implementation: whatever the
+              admin sees here is literally what everyone will see that morning.
+              It pushes on top of the stack, so the real Home underneath keeps
+              its scroll position and its data and is untouched. */}
+          {(user.role === 'creator_admin' || user.role === 'ceo') && (
+            <Stack.Screen
+              name="CelebrationPreview"
+              component={DashboardScreen}
+              options={{ presentation: 'modal', gestureEnabled: true }}
+            />
+          )}
         </>
       ) : (
         <>

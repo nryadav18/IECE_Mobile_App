@@ -6,6 +6,56 @@ const { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES } = require('../utils/roles');
 const { getApprovedLeaveWindows } = require('../utils/leaveStatus');
 const { getSubjectLeaveWindows, getSubstituteDutyWindows } = require('../utils/substitutionStatus');
 
+// Flatten a user's schoolHistory into the shape the profile screen renders:
+// the schools they are at now first (newest assignment on top), then the ones
+// they have left, most recently left first. A school detached by the admin —
+// or archived along with its login — still appears here.
+function buildSchoolHistory(user) {
+  const currentIds = new Set((user.schoolIds || []).map(s => String(s?._id || s)));
+
+  const entries = (user.schoolHistory || []).map((entry) => {
+    const school = entry.schoolId; // populated when the school still exists
+    const id = school?._id || entry.schoolId;
+    return {
+      _id: entry._id,
+      schoolId: id,
+      // Prefer the live school document; fall back to the snapshot taken at
+      // assignment time for schools hard-deleted before archiving existed.
+      name: school?.name || entry.schoolName || 'Unknown school',
+      state: school?.state || entry.schoolState || null,
+      isCurrent: !entry.removedAt && currentIds.has(String(id)),
+      isArchived: !!school?.isDeleted,
+      assignedAt: entry.assignedAt,
+      removedAt: entry.removedAt,
+      removedReason: entry.removedReason,
+    };
+  });
+
+  // Any current school missing from the history (legacy user created before
+  // history existed, and not yet backfilled) is still shown as current.
+  const known = new Set(entries.map(e => String(e.schoolId)));
+  (user.schoolIds || []).forEach((school) => {
+    const id = String(school?._id || school);
+    if (known.has(id)) return;
+    entries.push({
+      _id: id,
+      schoolId: school?._id || school,
+      name: school?.name || 'Unknown school',
+      state: school?.state || null,
+      isCurrent: true,
+      isArchived: !!school?.isDeleted,
+      assignedAt: null,
+      removedAt: null,
+      removedReason: null,
+    });
+  });
+
+  const time = (d) => (d ? new Date(d).getTime() : 0);
+  const current = entries.filter(e => e.isCurrent).sort((a, b) => time(b.assignedAt) - time(a.assignedAt));
+  const past = entries.filter(e => !e.isCurrent).sort((a, b) => time(b.removedAt) - time(a.removedAt));
+  return [...current, ...past];
+}
+
 // @desc    Get detailed user profile (Admin/TL/Self)
 // @route   GET /api/profile/:id
 // @access  Private
@@ -17,6 +67,7 @@ exports.getUserProfile = async (req, res) => {
         .select('-password -faceEmbedding -faceEmbeddingV2 -faceRegistrations.faceEmbedding')
         .populate('schoolId')
         .populate('schoolIds')
+        .populate('schoolHistory.schoolId', 'name state isDeleted')
         .populate('faceRegistrations.schoolId', 'name state')
         .populate('teamLeaderId', 'name email')
         .populate('teamId', 'name');
@@ -76,6 +127,7 @@ exports.getUserProfile = async (req, res) => {
       success: true,
       data: {
          profile: user,
+         schoolHistory: buildSchoolHistory(user),
          attendance,
          visitReports,
          activities,

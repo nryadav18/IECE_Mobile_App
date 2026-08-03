@@ -3,8 +3,10 @@ const User = require('../models/User');
 
 exports.getSchools = async (req, res) => {
   try {
-    const { state, chairmanId } = req.query;
-    let query = {};
+    const { state, chairmanId, includeArchived } = req.query;
+    // Archived schools are kept only so past activities/reports/attendance keep
+    // resolving their name — they never show up in an active school list.
+    let query = includeArchived === 'true' ? {} : { isDeleted: { $ne: true } };
     if (state) query.state = state;
     if (chairmanId) query.chairmanId = chairmanId;
     const schools = await School.find(query).populate('chairmanId', 'name email');

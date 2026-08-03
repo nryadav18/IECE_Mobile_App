@@ -26,6 +26,7 @@ import NotificationBell from '../components/NotificationBell';
 import CountBadge from '../components/CountBadge';
 import { useBadges } from '../context/BadgeContext';
 import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
+import CelebrationsSection from './Admin/CelebrationsSection';
 import TeamMultiSelectModal from '../components/TeamMultiSelectModal';
 import MultiSelectField from '../components/MultiSelectField';
 import { SectionSkeleton } from '../components/Skeleton';
@@ -138,6 +139,7 @@ const TAB_ITEMS = [
   { key: 'Reports', label: 'Reports', icon: 'document-text-outline' },
   { key: 'LogVisit', label: 'Log Visit', icon: 'clipboard-outline' },
   { key: 'Holidays', label: 'School Holidays', icon: 'sunny-outline' },
+  { key: 'Celebrations', label: 'Celebrations', icon: 'sparkles-outline' },
   { key: 'Banners', label: 'Banners', icon: 'images-outline' },
 ];
 
@@ -154,12 +156,15 @@ const SECTION_SKELETON = {
   Reports: 'list',
   LogVisit: 'form',
   Holidays: 'list',
+  Celebrations: 'list',
   Banners: 'form',
 };
 
 // The CEO is a read-only super-viewer: no create/manage, no holidays. They keep
-// Monitoring, Profiles, Reports and can log their own visit reports.
-const CEO_TABS = ['Monitoring', 'Profiles', 'Reports', 'LogVisit'];
+// Monitoring, Profiles, Reports and can log their own visit reports — plus
+// Celebrations, which is a preview: the section hides its edit controls for
+// anyone who isn't creator_admin.
+const CEO_TABS = ['Monitoring', 'Profiles', 'Reports', 'LogVisit', 'Celebrations'];
 
 export default function CreatorAdminPortal({ navigation, route }) {
   const { user, logout } = useContext(AuthContext);
@@ -192,6 +197,11 @@ export default function CreatorAdminPortal({ navigation, route }) {
   const [newTeamName, setNewTeamName] = useState('');
   const [creatingTeam, setCreatingTeam] = useState(false);
   const [teamModalVisible, setTeamModalVisible] = useState(false);
+  // Teams tab drill-in: tap a team to see its people (members + heads).
+  const [selectedTeam, setSelectedTeam] = useState(null);
+  const [teamDetail, setTeamDetail] = useState(null);
+  const [teamDetailLoading, setTeamDetailLoading] = useState(false);
+  const [teamMemberSearch, setTeamMemberSearch] = useState('');
   const [reportToView, setReportToView] = useState(null);
   const [reportFormVisible, setReportFormVisible] = useState(false);
   // Everyone a visit report can be logged on (all field staff).
@@ -237,8 +247,10 @@ export default function CreatorAdminPortal({ navigation, route }) {
 
   const onRefresh = React.useCallback(() => {
     setRefreshing(true);
-    fetchDropdownData().finally(() => setRefreshing(false));
-  }, []);
+    // Keep an open team drill-in in sync with the pull-to-refresh too.
+    const openDetail = selectedTeam ? openTeam(selectedTeam, { silent: true }) : Promise.resolve();
+    Promise.all([fetchDropdownData(), openDetail]).finally(() => setRefreshing(false));
+  }, [selectedTeam]);
 
   const fetchDropdownData = async () => {
     try {
@@ -315,6 +327,8 @@ export default function CreatorAdminPortal({ navigation, route }) {
             try {
               await api.delete(`/admin/team/${team._id}`);
               showAlert('Deleted', 'Team removed', 'success');
+              // Drop out of the drill-in if the team being viewed is the one gone.
+              if (selectedTeam?._id === team._id) closeTeam();
               fetchDropdownData();
             } catch (err) {
               showAlert('Error', err.response?.data?.error || 'Failed to delete team', 'error');
@@ -324,6 +338,41 @@ export default function CreatorAdminPortal({ navigation, route }) {
       ]
     );
   };
+
+  // Open a team's detail view — its leaders, trainers, overseeing heads and
+  // the schools the team covers. `silent` re-fetches in place (pull-to-refresh)
+  // instead of blanking the view behind a spinner.
+  const openTeam = async (team, { silent = false } = {}) => {
+    setSelectedTeam(team);
+    if (!silent) {
+      setTeamDetail(null);
+      setTeamMemberSearch('');
+      setTeamDetailLoading(true);
+    }
+    try {
+      const res = await api.get(`/admin/team/${team._id}`);
+      setTeamDetail(res.data.data);
+    } catch (err) {
+      if (!silent) {
+        setTeamDetail(null);
+        showAlert('Error', err.response?.data?.error || 'Could not load team details', 'error');
+      }
+    } finally {
+      if (!silent) setTeamDetailLoading(false);
+    }
+  };
+
+  const closeTeam = () => {
+    setSelectedTeam(null);
+    setTeamDetail(null);
+    setTeamMemberSearch('');
+  };
+
+  // Leaving the Teams tab drops the drill-in, so coming back always lands on
+  // the team list rather than a stale team.
+  useEffect(() => {
+    if (activeTab !== 'Teams' && selectedTeam) closeTeam();
+  }, [activeTab]);
 
   const uploadToCloudinary = async (fileUri, mimeType, name) => {
     try {
@@ -1098,56 +1147,256 @@ export default function CreatorAdminPortal({ navigation, route }) {
             </MotiView>
           </View>
 
-          {/* Teams TAB — create + manage teams */}
+          {/* Teams TAB — create + manage teams, tap one to view its people */}
           <View style={{ display: activeTab === 'Teams' ? 'flex' : 'none' }}>
-            <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-              <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Team</Text>
-              <TextInput
-                style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, color: theme.colors.textPrimary }]}
-                placeholder="Team Name"
-                placeholderTextColor={theme.colors.placeholder}
-                value={newTeamName}
-                onChangeText={setNewTeamName}
-              />
-              <TouchableOpacity
-                style={[styles.submitBtn, { backgroundColor: theme.colors.primary, opacity: creatingTeam ? 0.7 : 1 }]}
-                onPress={handleCreateTeam}
-                disabled={creatingTeam}
-              >
-                {creatingTeam
-                  ? <ActivityIndicator color="#FFF" />
-                  : <Text style={[styles.submitBtnText, { color: '#FFF' }]}>Create Team</Text>}
-              </TouchableOpacity>
-            </View>
+            {!selectedTeam ? (
+              <>
+                <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                  <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Team</Text>
+                  <TextInput
+                    style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, color: theme.colors.textPrimary }]}
+                    placeholder="Team Name"
+                    placeholderTextColor={theme.colors.placeholder}
+                    value={newTeamName}
+                    onChangeText={setNewTeamName}
+                  />
+                  <TouchableOpacity
+                    style={[styles.submitBtn, { backgroundColor: theme.colors.primary, opacity: creatingTeam ? 0.7 : 1 }]}
+                    onPress={handleCreateTeam}
+                    disabled={creatingTeam}
+                  >
+                    {creatingTeam
+                      ? <ActivityIndicator color="#FFF" />
+                      : <Text style={[styles.submitBtnText, { color: '#FFF' }]}>Create Team</Text>}
+                  </TouchableOpacity>
+                </View>
 
-            <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginTop: 8, marginBottom: 12 }]}>All Teams</Text>
-            {teams.length === 0 ? (
-              <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No teams yet. Create one above.</Text>
-            ) : (
-              teams.map(team => (
-                <View key={team._id} style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12 }]}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{team.name}</Text>
-                      <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>
-                        {typeof team.memberCount === 'number' ? `${team.memberCount} member${team.memberCount === 1 ? '' : 's'}` : ''}
-                      </Text>
-                    </View>
+                <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginTop: 8, marginBottom: 4 }]}>All Teams</Text>
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
+                  Tap a team to view its people — team leaders, trainee team leaders, trainers and the heads who oversee it.
+                </Text>
+                {teams.length === 0 ? (
+                  <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No teams yet. Create one above.</Text>
+                ) : (
+                  teams.map(team => (
                     <TouchableOpacity
-                      style={{ backgroundColor: (theme.colors.error || '#e53935') + '20', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
-                      onPress={() => handleDeleteTeam(team)}
+                      key={team._id}
+                      style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12 }]}
+                      onPress={() => openTeam(team)}
+                      activeOpacity={0.8}
                     >
-                      <Ionicons name="trash-outline" size={18} color={theme.colors.error || '#e53935'} />
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Ionicons name="people-circle-outline" size={34} color={theme.colors.primary} />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                          <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{team.name}</Text>
+                          <Text style={{ color: theme.colors.textSecondary, marginTop: 4, fontSize: 12 }}>
+                            {typeof team.memberCount === 'number' ? `${team.memberCount} member${team.memberCount === 1 ? '' : 's'} · Tap to view` : 'Tap to view'}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={{ backgroundColor: (theme.colors.error || '#e53935') + '20', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginRight: 6 }}
+                          onPress={() => handleDeleteTeam(team)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="trash-outline" size={18} color={theme.colors.error || '#e53935'} />
+                        </TouchableOpacity>
+                        <Ionicons name="chevron-forward" size={20} color={theme.colors.textSecondary} />
+                      </View>
+                    </TouchableOpacity>
+                  ))
+                )}
+              </>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}
+                  onPress={closeTeam}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="chevron-back" size={22} color={theme.colors.primary} />
+                  <Text style={{ color: theme.colors.primary, fontWeight: '600', marginLeft: 2 }}>All Teams</Text>
+                </TouchableOpacity>
+
+                {teamDetailLoading ? (
+                  <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginTop: 30 }} />
+                ) : !teamDetail ? (
+                  <View style={{ alignItems: 'center', marginTop: 40 }}>
+                    <Ionicons name="alert-circle-outline" size={48} color={theme.colors.border} />
+                    <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>Team details unavailable.</Text>
+                    <TouchableOpacity
+                      style={{ marginTop: 14, backgroundColor: theme.colors.primary, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 8 }}
+                      onPress={() => openTeam(selectedTeam)}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: 'bold' }}>Retry</Text>
                     </TouchableOpacity>
                   </View>
-                </View>
-              ))
+                ) : (
+                  <>
+                    {/* Team summary — name, provenance and headline counts */}
+                    <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16 }]}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Ionicons name="people-circle" size={40} color={theme.colors.primary} />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                          <Text style={{ color: theme.colors.textPrimary, fontSize: 20, fontWeight: 'bold' }}>{teamDetail.team?.name}</Text>
+                          <Text style={{ color: theme.colors.textSecondary, marginTop: 3, fontSize: 12 }}>
+                            Created {teamDetail.team?.createdAt ? new Date(teamDetail.team.createdAt).toLocaleDateString() : '—'}
+                            {teamDetail.team?.createdBy?.name ? ` by ${teamDetail.team.createdBy.name}` : ''}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 14 }}>
+                        {[
+                          { label: 'Members', value: teamDetail.counts?.members || 0, icon: 'people-outline' },
+                          { label: 'Leaders', value: teamDetail.counts?.leaders || 0, icon: 'ribbon-outline' },
+                          { label: 'Trainers', value: teamDetail.counts?.trainers || 0, icon: 'person-outline' },
+                          { label: 'Heads', value: teamDetail.counts?.heads || 0, icon: 'shield-checkmark-outline' },
+                          { label: 'Schools', value: teamDetail.counts?.schools || 0, icon: 'business-outline' },
+                        ].map(stat => (
+                          <View
+                            key={stat.label}
+                            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.primary + '15', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8, marginBottom: 8 }}
+                          >
+                            <Ionicons name={stat.icon} size={14} color={theme.colors.primary} />
+                            <Text style={{ color: theme.colors.primary, fontWeight: '700', fontSize: 13, marginLeft: 6 }}>{stat.value}</Text>
+                            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginLeft: 4 }}>{stat.label}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+
+                    {/* Heads overseeing this team */}
+                    <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginTop: 8, marginBottom: 12 }]}>Overseeing Heads</Text>
+                    {(teamDetail.heads || []).length === 0 ? (
+                      <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No head oversees this team yet.</Text>
+                    ) : (
+                      teamDetail.heads.map(head => (
+                        <View key={head._id} style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12 }]}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Avatar name={head.name} size={40} />
+                            <View style={{ flex: 1, marginLeft: 12 }}>
+                              <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{head.name}</Text>
+                              <Text style={{ color: theme.colors.textSecondary, marginTop: 2, fontSize: 12 }}>{head.email}</Text>
+                              <Text style={{ color: theme.colors.primary, marginTop: 4, fontSize: 12, fontWeight: '600' }}>{roleLabel(head.role)}</Text>
+                            </View>
+                            <TouchableOpacity
+                              style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+                              onPress={() => navigation.navigate('UserProfile', { userId: head._id })}
+                            >
+                              <Text style={{ color: '#fff', fontWeight: 'bold' }}>View Profile</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))
+                    )}
+
+                    {/* Team people — leaders first, then trainers */}
+                    <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginTop: 8, marginBottom: 12 }]}>
+                      Team People ({teamDetail.counts?.members || 0})
+                    </Text>
+
+                    {(teamDetail.members || []).length > 0 && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 12, height: 48, marginBottom: 16 }}>
+                        <Ionicons name="search" size={18} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
+                        <TextInput
+                          style={{ flex: 1, color: theme.colors.textPrimary, fontSize: 14 }}
+                          placeholder="Search this team by name or email..."
+                          placeholderTextColor={theme.colors.placeholder}
+                          value={teamMemberSearch}
+                          onChangeText={setTeamMemberSearch}
+                          autoCapitalize="none"
+                        />
+                        {teamMemberSearch.length > 0 && (
+                          <TouchableOpacity onPress={() => setTeamMemberSearch('')}>
+                            <Ionicons name="close-circle" size={18} color={theme.colors.textSecondary} />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    )}
+
+                    {(() => {
+                      const q = teamMemberSearch.trim().toLowerCase();
+                      const visible = (teamDetail.members || []).filter(m =>
+                        !q || m.name?.toLowerCase().includes(q) || m.email?.toLowerCase().includes(q)
+                      );
+                      if ((teamDetail.members || []).length === 0) {
+                        return (
+                          <View style={{ alignItems: 'center', marginTop: 20, marginBottom: 20 }}>
+                            <Ionicons name="person-outline" size={48} color={theme.colors.border} />
+                            <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>No one is assigned to this team yet.</Text>
+                          </View>
+                        );
+                      }
+                      if (visible.length === 0) {
+                        return <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No member matches "{teamMemberSearch}".</Text>;
+                      }
+                      return visible.map(member => {
+                        const memberSchools = (member.schoolIds?.length ? member.schoolIds : (member.schoolId ? [member.schoolId] : []))
+                          .map(s => s?.name).filter(Boolean);
+                        return (
+                          <View key={member._id} style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12 }]}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              <Avatar name={member.name} size={40} />
+                              <View style={{ flex: 1, marginLeft: 12 }}>
+                                <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{member.name}</Text>
+                                <Text style={{ color: theme.colors.textSecondary, marginTop: 2, fontSize: 12 }}>{member.email}</Text>
+                                <Text style={{ color: theme.colors.primary, marginTop: 4, fontSize: 12, fontWeight: '600' }}>{roleLabel(member.role)}</Text>
+                                {member.teamLeaderId?.name ? (
+                                  <Text style={{ color: theme.colors.textSecondary, marginTop: 2, fontSize: 12 }}>Reports to {member.teamLeaderId.name}</Text>
+                                ) : null}
+                                {memberSchools.length ? (
+                                  <Text style={{ color: theme.colors.textSecondary, marginTop: 2, fontSize: 12 }} numberOfLines={2}>
+                                    {memberSchools.join(', ')}
+                                  </Text>
+                                ) : null}
+                              </View>
+                              <TouchableOpacity
+                                style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+                                onPress={() => navigation.navigate('UserProfile', { userId: member._id })}
+                              >
+                                <Text style={{ color: '#fff', fontWeight: 'bold' }}>View Profile</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        );
+                      });
+                    })()}
+
+                    {/* Schools this team covers */}
+                    {(teamDetail.schools || []).length > 0 && (
+                      <>
+                        <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginTop: 8, marginBottom: 12 }]}>Schools Covered</Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 20 }}>
+                          {teamDetail.schools.map(school => (
+                            <View
+                              key={school._id}
+                              style={{ backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8, marginBottom: 8 }}
+                            >
+                              <Text style={{ color: theme.colors.textPrimary, fontSize: 12, fontWeight: '600' }}>{school.name}</Text>
+                              {school.state ? <Text style={{ color: theme.colors.textSecondary, fontSize: 11 }}>{school.state}</Text> : null}
+                            </View>
+                          ))}
+                        </View>
+                      </>
+                    )}
+                  </>
+                )}
+              </>
             )}
           </View>
 
           {/* School Holidays TAB */}
           <View style={{ display: activeTab === 'Holidays' ? 'flex' : 'none' }}>
             <SchoolHolidayApprovals refreshKey={activeTab === 'Holidays' ? 1 : 0} />
+          </View>
+
+          {/* Celebrations TAB */}
+          <View style={{ display: activeTab === 'Celebrations' ? 'flex' : 'none' }}>
+            {/* `active` gates the preview's animation. Every tab stays mounted
+                here, and `display: none` does not stop a Reanimated worklet —
+                so without this the celebration scene would keep running on the
+                UI thread behind every other section of the portal. */}
+            <CelebrationsSection active={activeTab === 'Celebrations'} />
           </View>
 
           {/* Banners TAB */}
