@@ -1,4 +1,4 @@
-const { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES, FIELD_STAFF } = require('./roles');
+const { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES, FIELD_STAFF, TEAM_MEMBER_ROLES } = require('./roles');
 
 // Lazy require to avoid load-order coupling with the User model.
 const getUser = () => require('../models/User');
@@ -29,6 +29,22 @@ async function getHeadIdsOverTeam(teamId) {
     .find({ role: { $in: HEAD_ROLES }, teamIds: teamId })
     .select('_id');
   return heads.map((h) => h._id);
+}
+
+/**
+ * The (trainee) team leader ids of a given team.
+ *
+ * A trainer normally points at their leader through teamLeaderId, but that link
+ * is optional — an admin can drop someone into a team without picking a leader.
+ * Resolving leaders from the team as well means the trainer still has a real
+ * approver above them instead of silently falling through to the admin.
+ */
+async function getLeaderIdsOfTeam(teamId) {
+  if (!teamId) return [];
+  const leaders = await getUser()
+    .find({ role: { $in: LEADER_ROLES }, teamId })
+    .select('_id');
+  return leaders.map((l) => l._id);
 }
 
 /**
@@ -122,9 +138,16 @@ function getMeetingRecipientScopeFilter(user) {
  * for both facial-registration requests and uploaded activities, so the two
  * always follow the same chain of command.
  *
- *   trainer                     -> their team leader
+ *   trainer                     -> their team leader (the explicit teamLeaderId
+ *                                  link AND the leaders of their team) plus the
+ *                                  head(s) overseeing that team
  *   team / trainee team leader  -> the head(s) overseeing their team
  *   head                        -> Admin + CEO
+ *
+ * Approval rights are CUMULATIVE up the chain: a head oversees whole teams, so
+ * everything inside those teams — trainers included, not just the leaders — is
+ * theirs to decide. Restricting a trainer's request to their team leader alone
+ * left heads with an empty Approvals tab for people they are responsible for.
  *
  * Admin and CEO are ALWAYS included on top of that, holding a full override at
  * every level. Without it a trainer whose team leader is on leave, has left, or
@@ -133,7 +156,8 @@ function getMeetingRecipientScopeFilter(user) {
  * The same set drives BOTH the notification ("who should be told this needs a
  * decision") and the permission check ("may this person decide it"), so the
  * people who get asked are exactly the people who can act — they can never
- * drift apart.
+ * drift apart. getApprovalSubjectFilter is the query-shaped mirror of this
+ * function; the two must stay in step.
  *
  * @param {object} subject - Mongoose user doc (needs role, _id, teamId, teamLeaderId)
  * @returns {Promise<string[]>} de-duplicated approver ids (strings)
@@ -144,6 +168,8 @@ async function getApproverIdsFor(subject) {
 
   if (subject.role === 'trainer') {
     if (subject.teamLeaderId) ids.add(idStr(subject.teamLeaderId));
+    (await getLeaderIdsOfTeam(subject.teamId)).forEach((id) => ids.add(idStr(id)));
+    (await getHeadIdsOverTeam(subject.teamId)).forEach((id) => ids.add(idStr(id)));
   } else if (LEADER_ROLES.includes(subject.role)) {
     (await getHeadIdsOverTeam(subject.teamId)).forEach((id) => ids.add(idStr(id)));
   }
@@ -169,6 +195,51 @@ async function canApproveFor(actor, subject) {
 }
 
 /**
+ * The query-shaped mirror of getApproverIdsFor: a Mongo filter matching every
+ * person whose requests `actor` may decide. Read it top-down as "who is under
+ * me":
+ *
+ *   Admin / CEO   -> all field staff, at every level
+ *   Head          -> everyone inside the teams they oversee — trainers, team
+ *                    leaders and trainee team leaders alike
+ *   Team leader   -> the trainers assigned to them, plus any trainer sitting in
+ *                    their own team (the teamLeaderId link is optional)
+ *   Anyone else   -> nobody
+ *
+ * Asking the database "who is under me" instead of testing every candidate one
+ * by one keeps the Approvals tab a single query no matter how many staff exist.
+ *
+ * @param {object} actor - Mongoose user doc (needs role, _id, teamId, teamIds)
+ * @returns {object|null} a Mongoose query filter, or null when nobody is in scope
+ */
+function getApprovalSubjectFilter(actor) {
+  if (!actor) return null;
+
+  if (ADMIN_ROLES.includes(actor.role)) {
+    return { role: { $in: FIELD_STAFF }, _id: { $ne: actor._id } };
+  }
+
+  if (HEAD_ROLES.includes(actor.role)) {
+    const teams = (actor.teamIds || []).filter(Boolean);
+    if (teams.length === 0) return null;
+    return {
+      role: { $in: TEAM_MEMBER_ROLES },
+      teamId: { $in: teams },
+      _id: { $ne: actor._id },
+    };
+  }
+
+  if (LEADER_ROLES.includes(actor.role)) {
+    const links = [{ teamLeaderId: actor._id }];
+    if (actor.teamId) links.push({ teamId: actor.teamId });
+    return { role: 'trainer', $or: links, _id: { $ne: actor._id } };
+  }
+
+  // Trainers (and the chairman login) approve nothing.
+  return null;
+}
+
+/**
  * How to describe the approver in a message shown to the requester, e.g.
  * "…sent to your team leader for approval".
  *
@@ -181,7 +252,10 @@ function approverLabelFor(subject) {
   const doc = typeof subject === 'string' ? null : subject;
 
   if (role === 'trainer') {
-    return doc && !doc.teamLeaderId ? 'the admin' : 'your team leader';
+    // No leader link and no team means nobody above them but the admin; a team
+    // on its own is enough, since its leaders and heads can both decide.
+    if (doc && !doc.teamLeaderId && !doc.teamId) return 'the admin';
+    return 'your team leader';
   }
   if (LEADER_ROLES.includes(role)) {
     return doc && !doc.teamId ? 'the admin' : 'your head';
@@ -281,11 +355,13 @@ module.exports = {
   getAdminOnlyRecipientIds,
   getCeoRecipientIds,
   getHeadIdsOverTeam,
+  getLeaderIdsOfTeam,
   getUpwardRecipientIds,
   getSubjectScopeFilter,
   getMeetingRecipientScopeFilter,
   getApproverIdsFor,
   canApproveFor,
+  getApprovalSubjectFilter,
   approverLabelFor,
   getTeamCircleRecipientIds,
   getLeaveApprovalRecipientIds,

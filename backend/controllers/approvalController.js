@@ -2,8 +2,8 @@ const User = require('../models/User');
 const Activity = require('../models/Activity');
 const { notify } = require('../utils/notify');
 const {
-  getApproverIdsFor,
   canApproveFor,
+  getApprovalSubjectFilter,
 } = require('../utils/hierarchy');
 const { ROLE_LABELS } = require('../utils/roleLabels');
 
@@ -16,10 +16,14 @@ const roleLabel = (role) => ROLE_LABELS[role] || role;
  * flows cannot drift apart in who may act, what a rejection requires, or how
  * the outcome is communicated.
  *
- *   trainer                     -> their team leader decides
+ *   trainer                     -> their team leader decides — and so may the
+ *                                  head(s) over that trainer's team
  *   team / trainee team leader  -> their head decides
  *   head                        -> Admin / CEO decide
  *   Admin + CEO                 -> may decide anything, at any level
+ *
+ * Rights are cumulative: a head owns whole teams, so every member of those
+ * teams shows up in their queue, not just the leaders.
  */
 
 // Recompute the coarse aggregate status from the per-school registrations.
@@ -39,23 +43,17 @@ function syncLegacyFaceStatus(user) {
 }
 
 /**
- * Every user whose requests THIS approver may decide. Built by asking, for each
- * candidate, whether the actor is among their approvers — the same function the
- * permission check uses, so the queue can never show something the actor cannot
- * actually action.
+ * The ids of every user whose requests THIS approver may decide — their team,
+ * or their whole set of teams if they are a head.
+ *
+ * getApprovalSubjectFilter is the query-shaped twin of getApproverIdsFor (which
+ * the permission check uses), so the queue can never show something the actor
+ * cannot actually action, nor hide something they can.
  */
-async function subjectsFor(actor) {
-  // Only people who raise these requests are worth testing.
-  const candidates = await User.find({
-    role: { $in: ['trainer', 'team_leader', 'trainee_team_leader', 'zonal_head', 'cluster_head', 'regional_head'] },
-    _id: { $ne: actor._id },
-  }).select('name role teamId teamLeaderId');
-
-  const allowed = [];
-  for (const c of candidates) {
-    if (await canApproveFor(actor, c)) allowed.push(c);
-  }
-  return allowed;
+async function subjectIdsFor(actor) {
+  const filter = getApprovalSubjectFilter(actor);
+  if (!filter) return [];
+  return User.find(filter).distinct('_id');
 }
 
 // ---------------------------------------------------------------------------
@@ -67,8 +65,7 @@ async function subjectsFor(actor) {
 // @access  Private (leaders, heads, admin, CEO)
 exports.getPendingFaceRegistrations = async (req, res) => {
   try {
-    const subjects = await subjectsFor(req.user);
-    const ids = subjects.map((s) => s._id);
+    const ids = await subjectIdsFor(req.user);
     if (ids.length === 0) return res.status(200).json({ success: true, data: [] });
 
     const users = await User.find({
@@ -170,8 +167,7 @@ exports.reviewFaceRegistration = async (req, res) => {
 // @access  Private (leaders, heads, admin, CEO)
 exports.getPendingActivities = async (req, res) => {
   try {
-    const subjects = await subjectsFor(req.user);
-    const ids = subjects.map((s) => s._id);
+    const ids = await subjectIdsFor(req.user);
     if (ids.length === 0) return res.status(200).json({ success: true, data: [] });
 
     const activities = await Activity.find({ uploaderId: { $in: ids }, status: 'pending' })
@@ -187,5 +183,5 @@ exports.getPendingActivities = async (req, res) => {
   }
 };
 
-module.exports.subjectsFor = subjectsFor;
+module.exports.subjectIdsFor = subjectIdsFor;
 module.exports.syncLegacyFaceStatus = syncLegacyFaceStatus;
