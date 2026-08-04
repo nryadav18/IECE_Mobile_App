@@ -11,10 +11,10 @@ import * as Sharing from 'expo-sharing';
  * The two operating systems disagree fundamentally about where a downloaded
  * file belongs, so one code path cannot serve both. What they DO agree on:
  *
- *   Photos and videos  -> the system photo library. Both platforms have one,
- *                         both index it offline, and both let us group into a
- *                         named album. So media goes to an "IECE" album and
- *                         shows up in Gallery / Photos immediately.
+ *   Photos and videos  -> the system photo library. Both platforms have one and
+ *                         both index it offline, so media shows up in Gallery /
+ *                         Photos immediately. We add to it with ADD-ONLY
+ *                         permission and never read it back.
  *
  *   Everything else    -> Android has a real user-visible filesystem, so a PDF
  *   (PDF, doc, ...)       goes into a folder the user picks once (Downloads by
@@ -26,8 +26,8 @@ import * as Sharing from 'expo-sharing';
  * Every function returns a plain { ok, message } so callers can just show it.
  */
 
-// The album / folder name everything lands in, so a user can find IECE files
-// in one place rather than scattered through their gallery.
+// The folder documents land in, so a user can find IECE files in one place
+// rather than scattered through their storage.
 export const DOWNLOAD_FOLDER = 'IECE';
 
 // Where Android's chosen download folder is remembered, so the user is asked
@@ -102,7 +102,17 @@ async function fetchToCache(url, filename) {
 /* ------------------------------------------------------------------ */
 
 async function saveToPhotoLibrary(localUri) {
-  const perm = await MediaLibrary.requestPermissionsAsync();
+  // ADD-ONLY access. The app never reads or browses the user's library — it only
+  // hands it a file it just downloaded — so it asks for the narrowest permission
+  // that exists for that. This matters beyond good manners: Google Play's Photo
+  // and Video Permissions policy rejects apps that declare broad READ_MEDIA_*
+  // access when a narrower route would do, and Apple shows a far softer prompt
+  // for add-only than for full library access.
+  //
+  // On Android 13+ this needs no runtime permission at all (the file goes in
+  // through MediaStore), so nothing is prompted; on Android 12 and below it asks
+  // for legacy write, and on iOS it asks only for "Add to Photos".
+  const perm = await MediaLibrary.requestPermissionsAsync(true);
   if (!perm.granted) {
     return {
       ok: false,
@@ -110,22 +120,15 @@ async function saveToPhotoLibrary(localUri) {
     };
   }
 
-  const asset = await MediaLibrary.Asset.create(localUri);
-
-  // Group everything under one album so IECE files are easy to find. Album
-  // handling is best-effort: if it fails the asset is already safely saved, and
-  // telling the user it failed would be wrong.
-  try {
-    const existing = await MediaLibrary.Album.get(DOWNLOAD_FOLDER);
-    if (existing) await existing.add(asset);
-    else await MediaLibrary.Album.create(DOWNLOAD_FOLDER, [asset], false);
-  } catch (e) {
-    return { ok: true, message: `Saved to your ${Platform.OS === 'ios' ? 'Photos' : 'Gallery'}.` };
-  }
+  // Deliberately no album grouping: putting the file in a named album means
+  // first looking the album up, and looking anything up is read access — the
+  // exact thing add-only buys us out of. The file lands in the gallery where
+  // every other download does, which is where users look for it anyway.
+  await MediaLibrary.Asset.create(localUri);
 
   return {
     ok: true,
-    message: `Saved to your ${Platform.OS === 'ios' ? 'Photos' : 'Gallery'} in the "${DOWNLOAD_FOLDER}" album.`,
+    message: `Saved to your ${Platform.OS === 'ios' ? 'Photos' : 'Gallery'}.`,
   };
 }
 

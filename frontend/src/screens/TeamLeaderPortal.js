@@ -25,7 +25,7 @@ import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
 import { isOffToday } from '../utils/holiday';
 import { buildCalendarMarks } from '../utils/calendarColors';
-import { deriveAttendanceActions } from '../utils/attendanceActions';
+import { deriveAttendanceActions, findTodayAttendance } from '../utils/attendanceActions';
 import CalendarLegend from '../components/CalendarLegend';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import { SectionSkeleton } from '../components/Skeleton';
@@ -240,21 +240,11 @@ export default function TeamLeaderPortal({ navigation, route }) {
   // out of this render so we don't read properties off a null user.
   if (!user) return null;
 
-  // Lock check-in / check-out to once per calendar day. Once a team leader
-  // checks in (or out) they cannot repeat that action until the next local
-  // midnight, when a fresh day has no record and both buttons re-enable.
-  const isToday = (d) => {
-    const date = new Date(d);
-    const now = new Date();
-    return (
-      date.getFullYear() === now.getFullYear() &&
-      date.getMonth() === now.getMonth() &&
-      date.getDate() === now.getDate()
-    );
-  };
-  const todayAttendance = attendanceRecords.find((r) => isToday(r.date));
-  const alreadyCheckedIn = !!(todayAttendance && todayAttendance.checkInTime);
-  const alreadyCheckedOut = !!(todayAttendance && todayAttendance.checkOutTime);
+  // Today's record, which drives the Check In / Check Out buttons below. It
+  // comes from the same shared helper every other portal uses, so the once-per-
+  // day locking behaves identically everywhere (and a null/undated record in
+  // the list can never take the tab down).
+  const todayAtt = findTodayAttendance(attendanceRecords);
 
   // Today is a non-working day only when the school has an approved holiday.
   // Sundays stay workable — check-in / check-out remain enabled on them.
