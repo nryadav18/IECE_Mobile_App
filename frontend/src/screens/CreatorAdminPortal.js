@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useContext, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useContext, useCallback, useMemo, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, RefreshControl, KeyboardAvoidingView, Platform, Image
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, RefreshControl, KeyboardAvoidingView, Platform, Image, Modal
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -15,12 +15,13 @@ import api from '../services/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../components/Avatar';
+import ApprovedBy from '../components/ApprovedBy';
 import CustomAlert from '../components/CustomAlert';
 import CustomDropdown from '../components/CustomDropdown';
 import EditReportModal from '../components/EditReportModal';
 import VisitReportDetail from '../components/VisitReportDetail';
 import VisitReportForm from '../components/VisitReportForm';
-import IndiaMap from '../components/IndiaMap';
+import MonitoringDashboard from '../components/monitoring/MonitoringDashboard';
 import SidebarMenu from '../components/SidebarMenu';
 import NotificationBell from '../components/NotificationBell';
 import CountBadge from '../components/CountBadge';
@@ -28,8 +29,11 @@ import { useBadges } from '../context/BadgeContext';
 import SchoolHolidayApprovals from '../components/SchoolHolidayApprovals';
 import CelebrationsSection from './Admin/CelebrationsSection';
 import TeamMultiSelectModal from '../components/TeamMultiSelectModal';
+import DirectoryMultiSelectModal from '../components/DirectoryMultiSelectModal';
 import MultiSelectField from '../components/MultiSelectField';
 import { SectionSkeleton } from '../components/Skeleton';
+import LazyTab from '../components/LazyTab';
+import MonthlyReportSection from '../components/MonthlyReportSection';
 import { useSectionTransition } from '../hooks/useSectionTransition';
 import { HEAD_ROLES, roleLabel } from '../utils/roles';
 
@@ -54,7 +58,14 @@ const HeadSchema = Yup.object().shape({
   email: Yup.string().email('Invalid email').required('Required'),
   password: Yup.string().min(6, 'Min 6 chars').required('Required'),
   role: Yup.string().oneOf(HEAD_ROLES, 'Select a head role').required('Required'),
-  schoolIds: Yup.array().of(Yup.string()).min(1, 'Assign at least one school'),
+  // An anonymous-location head belongs to no school on purpose, so the school
+  // requirement lifts entirely when that is switched on.
+  anonymousLocation: Yup.boolean(),
+  schoolIds: Yup.array().of(Yup.string()).when('anonymousLocation', {
+    is: true,
+    then: (s) => s.max(0),
+    otherwise: (s) => s.min(1, 'Assign at least one school'),
+  }),
   teamIds: Yup.array().of(Yup.string()).min(1, 'Assign at least one team'),
 });
 
@@ -137,6 +148,7 @@ const TAB_ITEMS = [
   { key: 'Head', label: 'Create Head', icon: 'ribbon-outline' },
   { key: 'Teams', label: 'Teams', icon: 'people-circle-outline' },
   { key: 'Reports', label: 'Reports', icon: 'document-text-outline' },
+  { key: 'MonthlyReport', label: 'Monthly Report', icon: 'stats-chart-outline' },
   { key: 'LogVisit', label: 'Log Visit', icon: 'clipboard-outline' },
   { key: 'Holidays', label: 'School Holidays', icon: 'sunny-outline' },
   { key: 'Celebrations', label: 'Celebrations', icon: 'sparkles-outline' },
@@ -154,6 +166,7 @@ const SECTION_SKELETON = {
   Head: 'form',
   Teams: 'form',
   Reports: 'list',
+  MonthlyReport: 'form',
   LogVisit: 'form',
   Holidays: 'list',
   Celebrations: 'list',
@@ -165,6 +178,50 @@ const SECTION_SKELETON = {
 // Celebrations, which is a preview: the section hides its edit controls for
 // anyone who isn't creator_admin.
 const CEO_TABS = ['Monitoring', 'Profiles', 'Reports', 'LogVisit', 'Celebrations'];
+
+/**
+ * One person in the Profiles list.
+ *
+ * Pulled out of the screen and memoised because the Profiles tab renders a card
+ * for every head, leader and trainer in the organisation — well over fifty
+ * rows. Written inline, each keystroke in the search box rebuilt all of them.
+ * With this, only the rows whose props actually changed re-render, so filtering
+ * repaints the few cards that came or went instead of the whole list.
+ *
+ * `theme` is safe as a prop because ThemeContext now hands out a stable object
+ * that only changes on a real light/dark switch, and `onOpen` is a stable
+ * useCallback — so the memo comparison genuinely holds.
+ */
+const ProfileRow = React.memo(function ProfileRow({
+  id, name, email, meta, metaColor, metaSize, metaWeight, theme, onOpen,
+}) {
+  return (
+    <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12 }]}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{name}</Text>
+          <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{email}</Text>
+          <Text
+            style={{
+              color: metaColor || theme.colors.textSecondary,
+              marginTop: 4,
+              ...(metaSize ? { fontSize: metaSize } : null),
+              ...(metaWeight ? { fontWeight: metaWeight } : null),
+            }}
+          >
+            {meta}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+          onPress={() => onOpen(id)}
+        >
+          <Text style={{ color: '#fff', fontWeight: 'bold' }}>View Profile</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+});
 
 export default function CreatorAdminPortal({ navigation, route }) {
   const { user, logout } = useContext(AuthContext);
@@ -219,9 +276,17 @@ export default function CreatorAdminPortal({ navigation, route }) {
   
   // Banner flow state
   const [bannerImageAsset, setBannerImageAsset] = useState(null);
+  // "Invisible to": the people this banner will NOT be shown to. Held as whole
+  // user objects so the chips can be drawn without another lookup; only the ids
+  // are sent to the server.
+  const [bannerHiddenFor, setBannerHiddenFor] = useState([]);
+  const [audiencePickerFor, setAudiencePickerFor] = useState(null); // 'new' | banner id
+  const [editingBanner, setEditingBanner] = useState(null);         // banner being edited
+  const [editBannerDesc, setEditBannerDesc] = useState('');
+  const [editBannerHiddenFor, setEditBannerHiddenFor] = useState([]);
+  const [savingBannerEdit, setSavingBannerEdit] = useState(false);
 
-  // Monitoring state
-  const [selectedState, setSelectedState] = useState(null);
+  // Monitoring state — the school drill-in opened from the live dashboard.
   const [selectedSchool, setSelectedSchool] = useState(null);
   const [schoolActivities, setSchoolActivities] = useState([]);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
@@ -243,10 +308,39 @@ export default function CreatorAdminPortal({ navigation, route }) {
     }, [])
   );
 
+  // ---- Profiles tab search -------------------------------------------------
+  // The three lists were filtered inline in the JSX, and each list was filtered
+  // TWICE — once to test for emptiness and again to map the rows — with
+  // `profilesSearchQuery.toLowerCase()` re-evaluated for every person on every
+  // pass. That is six full scans of the whole organisation, plus a rebuild of
+  // every card, for each character typed. Memoised here so a keystroke costs
+  // one pass and the untouched rows are left alone (see ProfileRow).
+  const filteredProfiles = useMemo(() => {
+    const q = profilesSearchQuery.trim().toLowerCase();
+    const match = (p) =>
+      !q || p.name?.toLowerCase().includes(q) || p.email?.toLowerCase().includes(q);
+    return {
+      heads: heads.filter(match),
+      teamLeaders: teamLeaders.filter(match),
+      trainers: trainers.filter(match),
+    };
+  }, [profilesSearchQuery, heads, teamLeaders, trainers]);
+
+  // Stable across renders so the memoised rows are not invalidated by a new
+  // arrow function on every pass.
+  const openProfile = useCallback(
+    (userId) => navigation.navigate('UserProfile', { userId }),
+    [navigation]
+  );
+
   const [refreshing, setRefreshing] = useState(false);
+  // Bumped on every pull-to-refresh so the live Monitoring dashboard — which
+  // owns its own data — can resync alongside the portal's own lists.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const onRefresh = React.useCallback(() => {
     setRefreshing(true);
+    setRefreshTick(t => t + 1);
     // Keep an open team drill-in in sync with the pull-to-refresh too.
     const openDetail = selectedTeam ? openTeam(selectedTeam, { silent: true }) : Promise.resolve();
     Promise.all([fetchDropdownData(), openDetail]).finally(() => setRefreshing(false));
@@ -261,7 +355,9 @@ export default function CreatorAdminPortal({ navigation, route }) {
         api.get('/admin/team-leaders'),
         api.get('/admin/users?role=trainer&limit=100'),
         api.get('/activities'),
-        api.get('/media'),
+        // scope=manage: the admin manages every banner, including any they were
+        // themselves made invisible to — the filtered list is for Home only.
+        api.get('/media?scope=manage'),
         api.get('/reports'),
         api.get('/admin/teams'),
         api.get('/admin/users?role=zonal_head,cluster_head,regional_head&limit=100')
@@ -369,9 +465,12 @@ export default function CreatorAdminPortal({ navigation, route }) {
   };
 
   // Leaving the Teams tab drops the drill-in, so coming back always lands on
-  // the team list rather than a stale team.
+  // the team list rather than a stale team. Monitoring behaves the same way:
+  // returning to it should show the live dashboard, not a school opened an hour
+  // ago from a drill-down.
   useEffect(() => {
     if (activeTab !== 'Teams' && selectedTeam) closeTeam();
+    if (activeTab !== 'Monitoring' && selectedSchool) setSelectedSchool(null);
   }, [activeTab]);
 
   const uploadToCloudinary = async (fileUri, mimeType, name) => {
@@ -420,16 +519,49 @@ export default function CreatorAdminPortal({ navigation, route }) {
     const url = await uploadToCloudinary(bannerImageAsset.uri, bannerImageAsset.mimeType || 'image/jpeg', bannerImageAsset.fileName || 'banner.jpg');
     if (url) {
       try {
-        await api.post('/media', { imageUrl: url, description: bannerDesc });
+        await api.post('/media', {
+          imageUrl: url,
+          description: bannerDesc,
+          hiddenFor: bannerHiddenFor.map(u => u._id),
+        });
         showAlert('Success', 'Banner published successfully!', 'success');
         setBannerDesc('');
         setBannerImageAsset(null);
+        setBannerHiddenFor([]);
         fetchDropdownData();
       } catch (err) {
         showAlert('Error', 'Failed to save media record', 'error');
       }
     }
     setIsUploadingBanner(false);
+  };
+
+  const openBannerEditor = (banner) => {
+    setEditingBanner(banner);
+    setEditBannerDesc(banner.description || '');
+    setEditBannerHiddenFor(banner.hiddenFor || []);
+  };
+
+  const saveBannerEdit = async () => {
+    if (!editingBanner) return;
+    if (!editBannerDesc.trim()) {
+      showAlert('Error', 'Banner description is required', 'error');
+      return;
+    }
+    setSavingBannerEdit(true);
+    try {
+      await api.put(`/media/${editingBanner._id}`, {
+        description: editBannerDesc.trim(),
+        hiddenFor: editBannerHiddenFor.map(u => u._id),
+      });
+      setEditingBanner(null);
+      showAlert('Success', 'Banner updated successfully!', 'success');
+      fetchDropdownData();
+    } catch (err) {
+      showAlert('Error', err.response?.data?.error || 'Failed to update banner', 'error');
+    } finally {
+      setSavingBannerEdit(false);
+    }
   };
 
   const deleteBanner = (id) => {
@@ -463,14 +595,16 @@ export default function CreatorAdminPortal({ navigation, route }) {
     }
   };
 
-  const states = [...new Set(schools.map(s => s.state).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const schoolsInState = schools.filter(s => s.state === selectedState);
-
+  // Opened from a school row in the live dashboard's drill-down. `school` may be
+  // a dashboard row (which carries `id`) or a full school document (`_id`), so
+  // both shapes are accepted and the real record is looked up for the detail.
   const viewSchoolDetails = async (school) => {
-    setSelectedSchool(school);
+    const schoolId = school._id || school.id;
+    const full = schools.find(s => String(s._id) === String(schoolId)) || school;
+    setSelectedSchool(full);
     setActivitiesLoading(true);
     try {
-      const res = await api.get(`/activities?schoolId=${school._id}`);
+      const res = await api.get(`/activities?schoolId=${schoolId}`);
       setSchoolActivities(res.data.data);
     } catch (error) {
       console.log('Error fetching activities');
@@ -533,70 +667,32 @@ export default function CreatorAdminPortal({ navigation, route }) {
           }
         >
           
-          {/* Monitoring Tab */}
+          {/* Monitoring Tab — the live organisation dashboard.
+              The India map that used to live here is gone: a static map of
+              states told the Admin nothing about the day. Schools are still
+              reachable, but now through the dashboard's live coverage list,
+              which knows who is actually at each of them right now.
+              Mounted only while the tab is open so the realtime socket is never
+              held by a screen nobody is looking at. */}
           <View style={[{ display: activeTab === 'Monitoring' ? 'flex' : 'none' }, activeTab === 'Monitoring' && { flex: 1 }]}>
-            {!selectedState && !selectedSchool && (
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Select State</Text>
-                <Text style={{ color: theme.colors.textSecondary, marginBottom: 12 }}>
-                  Tap a state to view its schools.
-                </Text>
-                <IndiaMap 
-                  activeStates={states} 
-                  onStateSelect={(state) => setSelectedState(state)} 
-                />
-              </View>
-            )}
-
-            {selectedState && !selectedSchool && (
-              <View>
-                <TouchableOpacity onPress={() => setSelectedState(null)} style={{ flexDirection: 'row', marginBottom: 16 }}>
-                  <Ionicons name="arrow-back" size={20} color={theme.colors.primary} />
-                  <Text style={{ color: theme.colors.primary, marginLeft: 8 }}>Back to States</Text>
-                </TouchableOpacity>
-                <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Schools in {selectedState}</Text>
-                <View style={{ gap: 12 }}>
-                  {schoolsInState.map(school => (
-                    <TouchableOpacity 
-                      key={school._id} 
-                      style={[styles.schoolCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, padding: 16, borderRadius: 16, flexDirection: 'row', alignItems: 'center' }]} 
-                      onPress={() => viewSchoolDetails(school)}
-                      activeOpacity={0.8}
-                    >
-                      <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: theme.colors.primary + '15', justifyContent: 'center', alignItems: 'center', marginRight: 16 }}>
-                        <Ionicons name="business" size={24} color={theme.colors.primary} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>{school.name}</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <Ionicons name="people-outline" size={14} color={theme.colors.textSecondary} style={{ marginRight: 4 }} />
-                            <Text style={{ color: theme.colors.textSecondary, fontSize: 13 }}>{school.totalStrength || 0} Students</Text>
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <Ionicons name="star-outline" size={14} color={theme.colors.textSecondary} style={{ marginRight: 4 }} />
-                            <Text style={{ color: theme.colors.textSecondary, fontSize: 13 }}>Since {school.associationYear || 'N/A'}</Text>
-                          </View>
-                        </View>
-                      </View>
-                      <Ionicons name="chevron-forward" size={20} color={theme.colors.border} />
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
+            {activeTab === 'Monitoring' && !selectedSchool && (
+              <MonitoringDashboard
+                navigation={navigation}
+                onOpenSchool={viewSchoolDetails}
+                refreshSignal={refreshTick}
+              />
             )}
 
             {selectedSchool && (
               <View>
                 <TouchableOpacity onPress={() => setSelectedSchool(null)} style={{ flexDirection: 'row', marginBottom: 16 }}>
                   <Ionicons name="arrow-back" size={20} color={theme.colors.primary} />
-                  <Text style={{ color: theme.colors.primary, marginLeft: 8 }}>Back to Schools</Text>
+                  <Text style={{ color: theme.colors.primary, marginLeft: 8 }}>Back to Monitoring</Text>
                 </TouchableOpacity>
                 <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                   <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>{selectedSchool.name}</Text>
                   <Text style={{ color: theme.colors.textSecondary }}>Association Year: {selectedSchool.associationYear}</Text>
-                  <Text style={{ color: theme.colors.textSecondary }}>Class Coverage: {selectedSchool.classCoverage}</Text>
-                  <Text style={{ color: theme.colors.textSecondary, marginBottom: 16 }}>Total Strength: {selectedSchool.totalStrength || 0}</Text>
+                  <Text style={{ color: theme.colors.textSecondary, marginBottom: 16 }}>Class Coverage: {selectedSchool.classCoverage}</Text>
                   
                   {/* Activities summary for this school — counts only, no fixed target */}
                   {(() => {
@@ -637,6 +733,9 @@ export default function CreatorAdminPortal({ navigation, route }) {
                             </Text>
                           </View>
                         </View>
+                        {/* Activities are decided by team leaders, heads OR either
+                            admin — this line is the only way to tell which. */}
+                        <ApprovedBy record={act} compact style={{ marginTop: 8 }} />
                       </View>
                     )) : <Text style={{ color: theme.colors.textSecondary }}>No activities assigned yet.</Text>
                   )}
@@ -646,7 +745,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
           </View>
 
           {/* Reports Tab */}
-          <View style={{ display: activeTab === 'Reports' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'Reports'}>
             <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Visit Reports</Text>
             {reports.length === 0 ? (
                <Text style={{ color: theme.colors.textSecondary, textAlign: 'center', marginTop: 12 }}>No reports found.</Text>
@@ -677,6 +776,11 @@ export default function CreatorAdminPortal({ navigation, route }) {
                        Reported by: {report.teamLeaderId?.name || 'N/A'}
                      </Text>
 
+                     {/* Which chairman signed this report off. The push used to
+                         say only "approved by the chairman", which is useless
+                         once a school changes hands. */}
+                     <ApprovedBy record={report} compact style={{ marginTop: 4 }} />
+
                      <TouchableOpacity
                        style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}
                        onPress={() => setReportToView(report)}
@@ -699,10 +803,19 @@ export default function CreatorAdminPortal({ navigation, route }) {
                  );
                })
             )}
-          </View>
+          </LazyTab>
+
+          {/* Monthly Performance Report — generate any person's or team's report
+              for any of the last 12 months and have it emailed to the admin who
+              asked for it. Admin-only (absent from CEO_TABS): the CEO still
+              receives the automatic organisation-wide report on the 1st, but
+              does not generate reports about individuals on demand. */}
+          <LazyTab active={activeTab === 'MonthlyReport'}>
+            <MonthlyReportSection />
+          </LazyTab>
 
           {/* Log Visit Tab — admin & CEO can log a physical visit report on any staff */}
-          <View style={{ display: activeTab === 'LogVisit' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'LogVisit'}>
             <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, marginBottom: 16 }]}>
               <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Log Visit Report</Text>
               <Text style={{ color: theme.colors.textSecondary, fontSize: 13, lineHeight: 20, marginBottom: 14 }}>
@@ -746,10 +859,10 @@ export default function CreatorAdminPortal({ navigation, route }) {
                 </TouchableOpacity>
               ))
             )}
-          </View>
+          </LazyTab>
 
           {/* Profiles Tab */}
-          <View style={{ display: activeTab === 'Profiles' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'Profiles'}>
             <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingHorizontal: 12, height: 48, marginBottom: 16 }}>
               <Ionicons name="search" size={18} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
               <TextInput
@@ -768,72 +881,59 @@ export default function CreatorAdminPortal({ navigation, route }) {
             </View>
 
             <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginBottom: 12 }]}>Heads</Text>
-            {heads.filter(h => h.name?.toLowerCase().includes(profilesSearchQuery.toLowerCase()) || h.email?.toLowerCase().includes(profilesSearchQuery.toLowerCase())).length === 0 ? <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No Heads found.</Text> : (
-               heads.filter(h => h.name?.toLowerCase().includes(profilesSearchQuery.toLowerCase()) || h.email?.toLowerCase().includes(profilesSearchQuery.toLowerCase())).map(h => (
-                 <View key={h._id} style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12 }]}>
-                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                     <View style={{ flex: 1 }}>
-                       <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{h.name}</Text>
-                       <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{h.email}</Text>
-                       <Text style={{ color: theme.colors.primary, marginTop: 4, fontSize: 12, fontWeight: '600' }}>{roleLabel(h.role)} · {(h.teamIds?.length || 0)} team(s)</Text>
-                     </View>
-                     <TouchableOpacity
-                       style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
-                       onPress={() => navigation.navigate('UserProfile', { userId: h._id })}
-                     >
-                       <Text style={{ color: '#fff', fontWeight: 'bold' }}>View Profile</Text>
-                     </TouchableOpacity>
-                   </View>
-                 </View>
+            {filteredProfiles.heads.length === 0 ? <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No Heads found.</Text> : (
+               filteredProfiles.heads.map(h => (
+                 <ProfileRow
+                   key={h._id}
+                   id={h._id}
+                   name={h.name}
+                   email={h.email}
+                   meta={`${roleLabel(h.role)} · ${(h.teamIds?.length || 0)} team(s)`}
+                   metaColor={theme.colors.primary}
+                   metaSize={12}
+                   metaWeight="600"
+                   theme={theme}
+                   onOpen={openProfile}
+                 />
                ))
             )}
 
             <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginBottom: 12, marginTop: 12 }]}>Team Leaders</Text>
-            {teamLeaders.filter(tl => tl.name?.toLowerCase().includes(profilesSearchQuery.toLowerCase()) || tl.email?.toLowerCase().includes(profilesSearchQuery.toLowerCase())).length === 0 ? <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No Team Leaders found.</Text> : (
-               teamLeaders.filter(tl => tl.name?.toLowerCase().includes(profilesSearchQuery.toLowerCase()) || tl.email?.toLowerCase().includes(profilesSearchQuery.toLowerCase())).map(tl => (
-                 <View key={tl._id} style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12 }]}>
-                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                     <View style={{ flex: 1 }}>
-                       <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{tl.name}</Text>
-                       <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{tl.email}</Text>
-                       <Text style={{ color: theme.colors.textSecondary, marginTop: 4, fontSize: 12 }}>{roleLabel(tl.role)}{tl.teamId?.name ? ` · ${tl.teamId.name}` : ''}</Text>
-                     </View>
-                     <TouchableOpacity
-                       style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
-                       onPress={() => navigation.navigate('UserProfile', { userId: tl._id })}
-                     >
-                       <Text style={{ color: '#fff', fontWeight: 'bold' }}>View Profile</Text>
-                     </TouchableOpacity>
-                   </View>
-                 </View>
+            {filteredProfiles.teamLeaders.length === 0 ? <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No Team Leaders found.</Text> : (
+               filteredProfiles.teamLeaders.map(tl => (
+                 <ProfileRow
+                   key={tl._id}
+                   id={tl._id}
+                   name={tl.name}
+                   email={tl.email}
+                   meta={`${roleLabel(tl.role)}${tl.teamId?.name ? ` · ${tl.teamId.name}` : ''}`}
+                   metaColor={theme.colors.textSecondary}
+                   metaSize={12}
+                   theme={theme}
+                   onOpen={openProfile}
+                 />
                ))
             )}
 
             <Text style={[styles.formTitle, { color: theme.colors.textPrimary, marginBottom: 12, marginTop: 12 }]}>Trainers</Text>
-            {trainers.filter(t => t.name?.toLowerCase().includes(profilesSearchQuery.toLowerCase()) || t.email?.toLowerCase().includes(profilesSearchQuery.toLowerCase())).length === 0 ? <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No Trainers found.</Text> : (
-               trainers.filter(t => t.name?.toLowerCase().includes(profilesSearchQuery.toLowerCase()) || t.email?.toLowerCase().includes(profilesSearchQuery.toLowerCase())).map(trainer => (
-                 <View key={trainer._id} style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, padding: 16, marginBottom: 12 }]}>
-                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                     <View style={{ flex: 1 }}>
-                       <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: 'bold' }}>{trainer.name}</Text>
-                       <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{trainer.email}</Text>
-                       <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>School: {trainer.schoolIds?.length ? trainer.schoolIds.map(s => s.name).join(', ') : (trainer.schoolId?.name || 'N/A')}</Text>
-                     </View>
-                     <TouchableOpacity 
-                       style={{ backgroundColor: theme.colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
-                       onPress={() => navigation.navigate('UserProfile', { userId: trainer._id })}
-                     >
-                       <Text style={{ color: '#fff', fontWeight: 'bold' }}>View Profile</Text>
-                     </TouchableOpacity>
-                   </View>
-                 </View>
+            {filteredProfiles.trainers.length === 0 ? <Text style={{ color: theme.colors.textSecondary, marginBottom: 20 }}>No Trainers found.</Text> : (
+               filteredProfiles.trainers.map(trainer => (
+                 <ProfileRow
+                   key={trainer._id}
+                   id={trainer._id}
+                   name={trainer.name}
+                   email={trainer.email}
+                   meta={`School: ${trainer.schoolIds?.length ? trainer.schoolIds.map(s => s.name).join(', ') : (trainer.schoolId?.name || 'N/A')}`}
+                   theme={theme}
+                   onOpen={openProfile}
+                 />
                ))
             )}
-          </View>
+          </LazyTab>
 
           {/* Trainer Form */}
-          <View style={{ display: activeTab === 'Trainer' ? 'flex' : 'none' }}>
-            <MotiView from={{ opacity: 0, x: -20 }} animate={{ opacity: activeTab === 'Trainer' ? 1 : 0, x: activeTab === 'Trainer' ? 0 : -20 }}>
+          <LazyTab active={activeTab === 'Trainer'}>
+            <MotiView from={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
               <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                 <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Trainer</Text>
                 <Formik
@@ -892,11 +992,11 @@ export default function CreatorAdminPortal({ navigation, route }) {
                 </Formik>
               </View>
             </MotiView>
-          </View>
+          </LazyTab>
 
           {/* Chairman Form */}
-          <View style={{ display: activeTab === 'Chairman' ? 'flex' : 'none' }}>
-            <MotiView from={{ opacity: 0, x: -20 }} animate={{ opacity: activeTab === 'Chairman' ? 1 : 0, x: activeTab === 'Chairman' ? 0 : -20 }}>
+          <LazyTab active={activeTab === 'Chairman'}>
+            <MotiView from={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
               <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                 <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Chairman & School</Text>
                 <Formik
@@ -986,11 +1086,11 @@ export default function CreatorAdminPortal({ navigation, route }) {
                 </Formik>
               </View>
             </MotiView>
-          </View>
+          </LazyTab>
 
           {/* Team Leader / Trainee Team Leader Form */}
-          <View style={{ display: activeTab === 'TeamLeader' ? 'flex' : 'none' }}>
-            <MotiView from={{ opacity: 0, x: -20 }} animate={{ opacity: activeTab === 'TeamLeader' ? 1 : 0, x: activeTab === 'TeamLeader' ? 0 : -20 }}>
+          <LazyTab active={activeTab === 'TeamLeader'}>
+            <MotiView from={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
               <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                 <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Team Leader</Text>
                 <Formik
@@ -1067,15 +1167,15 @@ export default function CreatorAdminPortal({ navigation, route }) {
                 </Formik>
               </View>
             </MotiView>
-          </View>
+          </LazyTab>
 
           {/* Head Form (Zonal / Cluster / Regional) */}
-          <View style={{ display: activeTab === 'Head' ? 'flex' : 'none' }}>
-            <MotiView from={{ opacity: 0, x: -20 }} animate={{ opacity: activeTab === 'Head' ? 1 : 0, x: activeTab === 'Head' ? 0 : -20 }}>
+          <LazyTab active={activeTab === 'Head'}>
+            <MotiView from={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
               <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                 <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Create Head</Text>
                 <Formik
-                  initialValues={{ name: '', email: '', password: '', role: '', schoolIds: [], teamIds: [] }}
+                  initialValues={{ name: '', email: '', password: '', role: '', schoolIds: [], teamIds: [], anonymousLocation: false }}
                   validationSchema={HeadSchema}
                   onSubmit={(v, { resetForm }) => submitForm('/admin/head', v, resetForm)}
                 >
@@ -1104,14 +1204,61 @@ export default function CreatorAdminPortal({ navigation, route }) {
                       </View>
                       {submitCount > 0 && errors.password && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.password}</Text>}
 
-                      <MultiSelectField
-                        label="Assign School(s)"
-                        data={schools}
-                        selectedIds={values.schoolIds}
-                        onChange={(ids) => setFieldValue('schoolIds', ids)}
-                        placeholder="Select one or more schools"
-                      />
-                      {submitCount > 0 && errors.schoolIds && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.schoolIds}</Text>}
+                      {/* Anonymous Location — a head who works across many
+                          places rather than out of one campus. Turning it on
+                          detaches the school question entirely: no school to
+                          pick, no geofence to stand inside, one face
+                          registration that lets them check in from anywhere.
+                          The school picker below is not merely ignored but
+                          visibly disabled, so the two can never look as though
+                          they are both in force. */}
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => {
+                          const next = !values.anonymousLocation;
+                          setFieldValue('anonymousLocation', next);
+                          if (next) setFieldValue('schoolIds', []);
+                        }}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'flex-start',
+                          borderWidth: 1,
+                          borderRadius: 12,
+                          padding: 14,
+                          marginBottom: 16,
+                          borderColor: values.anonymousLocation ? theme.colors.primary : theme.colors.border,
+                          backgroundColor: values.anonymousLocation ? theme.colors.primary + '10' : theme.colors.background,
+                        }}
+                      >
+                        <Ionicons
+                          name={values.anonymousLocation ? 'checkbox' : 'square-outline'}
+                          size={22}
+                          color={values.anonymousLocation ? theme.colors.primary : theme.colors.textSecondary}
+                          style={{ marginRight: 10, marginTop: 1 }}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 14.5 }}>
+                            Anonymous Location
+                          </Text>
+                          <Text style={{ color: theme.colors.textSecondary, fontSize: 12.5, marginTop: 3, lineHeight: 18 }}>
+                            No school is assigned & No location check.
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+
+                      <View
+                        style={{ opacity: values.anonymousLocation ? 0.45 : 1 }}
+                        pointerEvents={values.anonymousLocation ? 'none' : 'auto'}
+                      >
+                        <MultiSelectField
+                          label="Assign School(s)"
+                          data={schools}
+                          selectedIds={values.schoolIds}
+                          onChange={(ids) => setFieldValue('schoolIds', ids)}
+                          placeholder={values.anonymousLocation ? 'Not applicable — anonymous location' : 'Select one or more schools'}
+                        />
+                      </View>
+                      {submitCount > 0 && !values.anonymousLocation && errors.schoolIds && <Text style={[styles.errorText, { color: theme.colors.error || 'red' }]}>{errors.schoolIds}</Text>}
 
                       {/* Assign Team (multi-select) */}
                       <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Assign Team(s)</Text>
@@ -1145,10 +1292,10 @@ export default function CreatorAdminPortal({ navigation, route }) {
                 </Formik>
               </View>
             </MotiView>
-          </View>
+          </LazyTab>
 
           {/* Teams TAB — create + manage teams, tap one to view its people */}
-          <View style={{ display: activeTab === 'Teams' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'Teams'}>
             {!selectedTeam ? (
               <>
                 <View style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
@@ -1383,24 +1530,24 @@ export default function CreatorAdminPortal({ navigation, route }) {
                 )}
               </>
             )}
-          </View>
+          </LazyTab>
 
           {/* School Holidays TAB */}
-          <View style={{ display: activeTab === 'Holidays' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'Holidays'}>
             <SchoolHolidayApprovals refreshKey={activeTab === 'Holidays' ? 1 : 0} />
-          </View>
+          </LazyTab>
 
           {/* Celebrations TAB */}
-          <View style={{ display: activeTab === 'Celebrations' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'Celebrations'}>
             {/* `active` gates the preview's animation. Every tab stays mounted
                 here, and `display: none` does not stop a Reanimated worklet —
                 so without this the celebration scene would keep running on the
                 UI thread behind every other section of the portal. */}
             <CelebrationsSection active={activeTab === 'Celebrations'} />
-          </View>
+          </LazyTab>
 
           {/* Banners TAB */}
-          <View style={{ display: activeTab === 'Banners' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'Banners'}>
             <MotiView style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
               <Text style={[styles.formTitle, { color: theme.colors.textPrimary }]}>Manage Banners</Text>
               
@@ -1432,8 +1579,46 @@ export default function CreatorAdminPortal({ navigation, route }) {
                     onChangeText={setBannerDesc}
                     multiline
                   />
-                  
-                  <TouchableOpacity 
+
+                  {/* Step 3 — audience. A banner is public unless people are
+                      named here; anyone named simply never sees it on Home. */}
+                  <Text style={[styles.label, { color: theme.colors.textSecondary }]}>
+                    Step 3: Invisible to (Optional)
+                  </Text>
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginBottom: 8, marginTop: -4 }}>
+                    Anyone selected here will not see this banner. Leave empty to show it to everyone.
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.audienceBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.background }]}
+                    onPress={() => setAudiencePickerFor('new')}
+                  >
+                    <Ionicons name="eye-off-outline" size={18} color={theme.colors.primary} />
+                    <Text style={{ color: theme.colors.textPrimary, marginLeft: 8, flex: 1, fontSize: 13 }}>
+                      {bannerHiddenFor.length === 0
+                        ? 'Select people to hide this banner from'
+                        : `Hidden from ${bannerHiddenFor.length} ${bannerHiddenFor.length === 1 ? 'person' : 'people'}`}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+                  </TouchableOpacity>
+
+                  {bannerHiddenFor.length > 0 && (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                      {bannerHiddenFor.map(u => (
+                        <TouchableOpacity
+                          key={String(u._id)}
+                          style={[styles.audienceChip, { backgroundColor: theme.colors.primary + '18', borderColor: theme.colors.primary }]}
+                          onPress={() => setBannerHiddenFor(prev => prev.filter(p => String(p._id) !== String(u._id)))}
+                        >
+                          <Text style={{ color: theme.colors.primary, fontSize: 11, fontWeight: '700', marginRight: 4 }}>
+                            {u.name} · {roleLabel(u.role)}
+                          </Text>
+                          <Ionicons name="close-circle" size={14} color={theme.colors.primary} />
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  <TouchableOpacity
                     style={[styles.submitBtn, { backgroundColor: theme.colors.primary, opacity: isUploadingBanner ? 0.7 : 1 }]} 
                     onPress={submitBanner}
                     disabled={isUploadingBanner}
@@ -1451,10 +1636,23 @@ export default function CreatorAdminPortal({ navigation, route }) {
                   banners.slice((bannerPage - 1) * bannersPerPage, bannerPage * bannersPerPage).map((b) => (
                     <View key={b._id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, overflow: 'hidden' }}>
                       <Image source={{ uri: b.imageUrl }} style={{ width: 80, height: 45, resizeMode: 'cover' }} />
-                      <View style={{ flex: 1, paddingHorizontal: 12 }}>
+                      <View style={{ flex: 1, paddingHorizontal: 12, paddingVertical: 8 }}>
                         <Text style={{ color: theme.colors.textPrimary, fontSize: 12 }} numberOfLines={2}>{b.description || 'No description'}</Text>
+                        {/* Who this banner is withheld from — visible at a glance
+                            so a quietly-restricted banner is never a mystery. */}
+                        {(b.hiddenFor?.length > 0) && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                            <Ionicons name="eye-off-outline" size={12} color="#F59E0B" />
+                            <Text style={{ color: '#F59E0B', fontSize: 10, marginLeft: 4, fontWeight: '700' }}>
+                              Hidden from {b.hiddenFor.length} {b.hiddenFor.length === 1 ? 'person' : 'people'}
+                            </Text>
+                          </View>
+                        )}
                       </View>
-                      <TouchableOpacity style={{ padding: 12 }} onPress={() => deleteBanner(b._id)}>
+                      <TouchableOpacity style={{ padding: 10 }} onPress={() => openBannerEditor(b)}>
+                        <Ionicons name="create-outline" size={20} color={theme.colors.primary} />
+                      </TouchableOpacity>
+                      <TouchableOpacity style={{ padding: 10 }} onPress={() => deleteBanner(b._id)}>
                         <Ionicons name="trash-outline" size={20} color="#FF4444" />
                       </TouchableOpacity>
                     </View>
@@ -1482,7 +1680,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
                 )}
               </View>
             </MotiView>
-          </View>
+          </LazyTab>
 
 
         </ScrollView>
@@ -1500,14 +1698,26 @@ export default function CreatorAdminPortal({ navigation, route }) {
           { label: 'Substitution Requests', icon: 'swap-horizontal-outline', badge: sections.substitution || 0, onPress: () => navigation.navigate('Substitution') },
           { label: 'Meeting Corner', icon: 'videocam-outline', onPress: () => navigation.navigate('MeetingCorner') },
           { label: 'Notifications', icon: 'notifications-outline', badge: unread || 0, onPress: () => navigation.navigate('Notifications') },
-          // One hub for both queues — face scans AND activities. BOTH Admin and
-          // CEO hold a full override at every level of the hierarchy, so this is
-          // deliberately outside the admin-only block below.
-          { label: 'Approvals', icon: 'checkmark-done-outline', badge: sections.faces || 0, onPress: () => navigation.navigate('Approvals') },
+          // The approvals hub. For the Admin it holds BOTH queues — face scans
+          // and activities. The CEO keeps their activity override at every level
+          // of the hierarchy but no longer reviews faces (that is the Admin's
+          // alone now), so their entry says what it actually opens.
+          {
+            label: isCEO ? 'Activity Approvals' : 'Approvals',
+            icon: 'checkmark-done-outline',
+            badge: sections.faces || 0,
+            onPress: () => navigation.navigate('Approvals'),
+          },
+          // Who approved what, across every feature. Deliberately available to
+          // the CEO as well as the Admin: with several admins sharing the job,
+          // this is the CEO's only way to see which of them decided a given
+          // thing — the question this whole feature exists to answer.
+          { label: 'Approval Log', icon: 'time-outline', onPress: () => navigation.navigate('ApprovalLog') },
           // Staff management + create-admin + leave approvals stay admin-only.
           // CEO is read-only there (only notified about leave outcomes).
           ...(isCEO ? [] : [
             { label: 'Leave Requests', icon: 'calendar-outline', badge: sections.leave || 0, onPress: () => navigation.navigate('Leave') },
+            { label: 'School Visits', icon: 'business-outline', badge: sections.schoolVisit || 0, onPress: () => navigation.navigate('SchoolVisit') },
             { label: 'IECE Staff', icon: 'people-outline', onPress: () => navigation.navigate('ManageScreen') },
             { label: 'Create Admin', icon: 'shield-checkmark-outline', onPress: () => navigation.navigate('CreateAdmin') },
           ]),
@@ -1539,6 +1749,110 @@ export default function CreatorAdminPortal({ navigation, route }) {
         onSubmitted={(message) => { showAlert('Success', message, 'success'); fetchDropdownData(); }}
         onError={(message) => showAlert('Error', message, 'error')}
       />
+
+      {/* The picker for the UPLOAD form. The editor has its own copy inside its
+          modal below: a modal opened as a SIBLING of an already-open one does
+          not present on iOS, so each host renders the picker in its own tree. */}
+      <DirectoryMultiSelectModal
+        visible={audiencePickerFor === 'new'}
+        title="Invisible to"
+        subtitle="Selected people will not see this banner"
+        confirmLabel="Done"
+        selected={bannerHiddenFor}
+        onConfirm={setBannerHiddenFor}
+        onClose={() => setAudiencePickerFor(null)}
+      />
+
+      {/* Edit an existing banner: description + audience. The picture itself is
+          not editable — a new picture is a new banner. */}
+      <Modal
+        visible={!!editingBanner}
+        transparent
+        animationType="slide"
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={() => setEditingBanner(null)}
+      >
+        <View style={styles.editOverlay}>
+          <View style={[styles.editSheet, { backgroundColor: theme.colors.background, borderColor: theme.colors.border }]}>
+            <View style={[styles.editHeader, { borderBottomColor: theme.colors.border }]}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: theme.colors.textPrimary, flex: 1 }}>Edit Banner</Text>
+              <TouchableOpacity onPress={() => setEditingBanner(null)}>
+                <Ionicons name="close" size={24} color={theme.colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: 20 }} keyboardShouldPersistTaps="handled">
+              {!!editingBanner && (
+                <Image
+                  source={{ uri: editingBanner.imageUrl }}
+                  style={{ width: '100%', height: 160, borderRadius: 12, resizeMode: 'cover', borderWidth: 1, borderColor: theme.colors.border }}
+                />
+              )}
+
+              <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Description</Text>
+              <TextInput
+                style={[styles.input, { borderColor: theme.colors.border, color: theme.colors.textPrimary, height: 80, textAlignVertical: 'top' }]}
+                placeholder="Enter banner description"
+                placeholderTextColor={theme.colors.placeholder}
+                value={editBannerDesc}
+                onChangeText={setEditBannerDesc}
+                multiline
+              />
+
+              <Text style={[styles.label, { color: theme.colors.textSecondary }]}>Invisible to</Text>
+              <TouchableOpacity
+                style={[styles.audienceBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}
+                onPress={() => setAudiencePickerFor(editingBanner?._id)}
+              >
+                <Ionicons name="eye-off-outline" size={18} color={theme.colors.primary} />
+                <Text style={{ color: theme.colors.textPrimary, marginLeft: 8, flex: 1, fontSize: 13 }}>
+                  {editBannerHiddenFor.length === 0
+                    ? 'Visible to everyone'
+                    : `Hidden from ${editBannerHiddenFor.length} ${editBannerHiddenFor.length === 1 ? 'person' : 'people'}`}
+                </Text>
+                <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
+
+              {editBannerHiddenFor.length > 0 && (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                  {editBannerHiddenFor.map(u => (
+                    <TouchableOpacity
+                      key={String(u._id)}
+                      style={[styles.audienceChip, { backgroundColor: theme.colors.primary + '18', borderColor: theme.colors.primary }]}
+                      onPress={() => setEditBannerHiddenFor(prev => prev.filter(p => String(p._id) !== String(u._id)))}
+                    >
+                      <Text style={{ color: theme.colors.primary, fontSize: 11, fontWeight: '700', marginRight: 4 }}>
+                        {u.name} · {roleLabel(u.role)}
+                      </Text>
+                      <Ionicons name="close-circle" size={14} color={theme.colors.primary} />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[styles.submitBtn, { backgroundColor: theme.colors.primary, opacity: savingBannerEdit ? 0.7 : 1 }]}
+                onPress={saveBannerEdit}
+                disabled={savingBannerEdit}
+              >
+                {savingBannerEdit ? <ActivityIndicator color="#FFF" /> : <Text style={styles.submitBtnText}>Save Changes</Text>}
+              </TouchableOpacity>
+            </ScrollView>
+
+            {/* Inside the editor's own modal — see the note on the upload copy. */}
+            <DirectoryMultiSelectModal
+              visible={!!audiencePickerFor && audiencePickerFor !== 'new'}
+              title="Invisible to"
+              subtitle="Selected people will not see this banner"
+              confirmLabel="Done"
+              selected={editBannerHiddenFor}
+              onConfirm={setEditBannerHiddenFor}
+              onClose={() => setAudiencePickerFor(null)}
+            />
+          </View>
+        </View>
+      </Modal>
       </View>
     </KeyboardAvoidingView>
   );
@@ -1575,6 +1889,11 @@ const styles = StyleSheet.create({
   uploadBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 14, borderRadius: 12, marginTop: 12 },
   uploadBtnText: { fontWeight: '600' },
   pageBtn: { padding: 8, borderWidth: 1, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  audienceBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 14, borderRadius: 8, borderWidth: 1, marginBottom: 12 },
+  audienceChip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, borderWidth: 1 },
+  editOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  editSheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '88%', borderWidth: 1 },
+  editHeader: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1 },
   eventCard: { padding: 16, borderRadius: 16, borderWidth: 1, marginBottom: 16 },
   eventTitle: { fontSize: 16, fontWeight: 'bold', marginBottom: 6 },
   eventDate: { fontSize: 13, marginBottom: 4 },

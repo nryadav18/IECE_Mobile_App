@@ -110,8 +110,7 @@ const SCHOOLS = {
     { header: 'State', example: 'e.g. Tamil Nadu', width: 20 },
     { header: 'Association Start Date', example: 'DD-MM-YYYY — e.g. 15-06-2024', width: 24, format: 'dd-mm-yyyy',
       note: 'The date IECE started working with this school. Use DD-MM-YYYY.' },
-    { header: 'Class Coverage', example: 'e.g. 8th to 10th', width: 22 },
-    { header: 'Total Strength', example: 'optional — e.g. 450', width: 18 }
+    { header: 'Class Coverage', example: 'e.g. 8th to 10th', width: 22 }
   ]
 };
 

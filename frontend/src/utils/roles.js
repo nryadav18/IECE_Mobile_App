@@ -15,6 +15,16 @@ export const LEAVE_APPLICANT_ROLES = ['trainer', ...LEADER_ROLES, ...HEAD_ROLES]
 // Whether a role has access to the Leave screen at all (applicants + the Admin approver).
 export const canUseLeave = (role) => LEAVE_APPLICANT_ROLES.includes(role) || role === 'creator_admin';
 
+// School Visit (inspection attendance): only leaders and heads go out on
+// inspection duty. Trainers stay at their school, and chairman/Admin/CEO never
+// raise one — deliberately narrower than LEAVE_APPLICANT_ROLES.
+export const SCHOOL_VISIT_APPLICANT_ROLES = [...LEADER_ROLES, ...HEAD_ROLES];
+
+// Whether a role has access to the School Visit screen at all (applicants + the
+// Admin approver).
+export const canUseSchoolVisit = (role) =>
+  SCHOOL_VISIT_APPLICANT_ROLES.includes(role) || role === 'creator_admin';
+
 // Meeting Corner: who can POST a link (leaders, heads, CEO, Admin) vs who can
 // VIEW the corner (everyone except chairman).
 export const MEETING_CREATOR_ROLES = [...LEADER_ROLES, ...HEAD_ROLES, ...ADMIN_ROLES];

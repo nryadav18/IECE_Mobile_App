@@ -1,4 +1,4 @@
-import React, { useState, useContext, useCallback, useMemo } from 'react';
+import React, { useState, useContext, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -36,6 +36,7 @@ import AnimatedCounter from '../components/home/AnimatedCounter';
 import PortalButton from '../components/home/PortalButton';
 import { clamp, greetingFor, withAlpha } from '../components/home/motion';
 import { yearsSinceFounding } from '../utils/org';
+import { optimizedImageUrl, prefetchImages, readCachedBanners, writeCachedBanners } from '../utils/media';
 import useOccasions from '../celebrations/useOccasions';
 import CelebrationHero from '../celebrations/CelebrationHero';
 import CelebrationBarTitle from '../celebrations/CelebrationHeaderBar';
@@ -120,6 +121,29 @@ export default function DashboardScreen({ navigation, route }) {
   /* ------------------------------------------------------------------ *
    * Data                                                                *
    * ------------------------------------------------------------------ */
+
+  // The banners the app saw last time it ran, painted before the network has
+  // said anything. Without this the carousel is a grey box for as long as the
+  // round trip takes, on every single cold start — which is exactly why the
+  // banners "appeared instantly" on the way back from a portal but not on the
+  // way in. See utils/media.
+  const networkLanded = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    readCachedBanners(user?._id || user?.id).then((cached) => {
+      // If the live list has already arrived, it wins — never paint over fresh
+      // data with a stale cache just because the disk read finished second.
+      if (!alive || networkLanded.current || !cached.length) return;
+      setMedia(cached);
+      setLoading(false);
+      prefetchImages(cached.map((m) => optimizedImageUrl(m.imageUrl, width)));
+    });
+    return () => { alive = false; };
+    // Deliberately once, on mount: this is a first-paint optimisation, and
+    // re-running it on rotation would risk replacing live data with the cache.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       fetchMedia();
@@ -144,7 +168,15 @@ export default function DashboardScreen({ navigation, route }) {
         api.get('/activities?status=approved'),
         api.get('/stats/overview'),
       ]);
-      if (mediaRes.status === 'fulfilled') setMedia(mediaRes.value.data.data || []);
+      if (mediaRes.status === 'fulfilled') {
+        const list = mediaRes.value.data.data || [];
+        networkLanded.current = true;
+        setMedia(list);
+        // Save for the next cold start, and pull the pictures down now so the
+        // carousel has them before it needs to draw them.
+        writeCachedBanners(list, user?._id || user?.id);
+        prefetchImages(list.map((m) => optimizedImageUrl(m.imageUrl, width)));
+      }
       if (activitiesRes.status === 'fulfilled') setActivities(activitiesRes.value.data.data || []);
       if (statsRes.status === 'fulfilled') {
         const d = statsRes.value.data?.data || {};
@@ -388,9 +420,14 @@ export default function DashboardScreen({ navigation, route }) {
             </SkeletonCard>
           ) : media.length > 0 ? (
             <MotiView
-              from={{ opacity: 0, translateY: 18 }}
-              animate={{ opacity: 1, translateY: 0 }}
-              transition={{ type: 'timing', duration: 480, delay: 120 }}
+              // Transform only, and no delay. Fading this view in meant blending
+              // an offscreen buffer the size of the whole carousel, and the
+              // delay+duration held the banners back by another half second
+              // after they were ready to show — both of which read as "the
+              // images are still loading" when they no longer are.
+              from={{ translateY: 18 }}
+              animate={{ translateY: 0 }}
+              transition={{ type: 'timing', duration: 320 }}
             >
               <Carousel
                 loop={media.length > 1}
@@ -417,7 +454,15 @@ export default function DashboardScreen({ navigation, route }) {
                       { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
                     ]}
                   >
-                    <Image source={{ uri: item.imageUrl }} style={styles.slideImage} />
+                    {/* Screen-sized, modern-format delivery (see utils/media) —
+                        the original upload is often several megabytes. */}
+                    <Image
+                      source={{ uri: optimizedImageUrl(item.imageUrl, width) }}
+                      style={styles.slideImage}
+                      // Android cross-fades every image in over 300ms, which
+                      // reads as "still loading" even when it came from cache.
+                      fadeDuration={0}
+                    />
                     {!!item.description && (
                       <View style={styles.slideOverlay}>
                         <Text style={styles.slideText} numberOfLines={2}>
@@ -543,6 +588,17 @@ export default function DashboardScreen({ navigation, route }) {
               contentContainerStyle={{ paddingHorizontal: gutter, paddingBottom: 6 }}
             >
               {activities.map((activity, index) => {
+                // Tagged as an organiser on someone else's upload. The server
+                // now returns these alongside a person's own activities (see
+                // getActivities), so the card has to say which is which —
+                // otherwise a trainer sees work appear under their name with no
+                // explanation of where it came from.
+                const myId = String(user?._id || user?.id || '');
+                const isTagged =
+                  !!myId &&
+                  String(activity.uploaderId?._id || activity.uploaderId) !== myId &&
+                  (activity.organizers || []).some((o) => String(o?._id || o) === myId);
+
                 const thumbnail =
                   activity.mediaUrls && activity.mediaUrls.length > 0 ? activity.mediaUrls[0] : null;
                 // Handle auto-generated video thumbnails by replacing .mp4 with .jpg (Cloudinary feature)
@@ -586,7 +642,11 @@ export default function DashboardScreen({ navigation, route }) {
                       ]}
                     >
                       {thumbUrl ? (
-                        <Image source={{ uri: thumbUrl }} style={[styles.cardImage, { height: cardW * 0.56 }]} />
+                        <Image
+                          source={{ uri: optimizedImageUrl(thumbUrl, cardW) }}
+                          style={[styles.cardImage, { height: cardW * 0.56 }]}
+                          fadeDuration={0}
+                        />
                       ) : (
                         <View
                           style={[
@@ -607,6 +667,14 @@ export default function DashboardScreen({ navigation, route }) {
                         <View style={styles.starBadge}>
                           <Ionicons name="star" size={13} color="#F5B301" />
                           <Text style={styles.starText}>Star</Text>
+                        </View>
+                      )}
+
+                      {/* Sits opposite the star so the two never collide. */}
+                      {isTagged && (
+                        <View style={styles.taggedBadge}>
+                          <Ionicons name="pricetag" size={12} color="#FFFFFF" />
+                          <Text style={styles.starText}>Tagged</Text>
                         </View>
                       )}
 
@@ -946,6 +1014,18 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   starText: { color: '#FFFFFF', fontSize: 10, fontWeight: '800' },
+  taggedBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(13,148,136,0.92)',
+    borderRadius: 14,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+  },
   cardBody: { padding: 13 },
   cardTitle: { fontSize: 15, fontWeight: '800', marginBottom: 3 },
   cardSub: { fontSize: 12.5, marginBottom: 8 },

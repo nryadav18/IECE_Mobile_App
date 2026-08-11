@@ -6,8 +6,14 @@ const VisitReport = require('../models/VisitReport');
 const Attendance = require('../models/Attendance');
 const PendingAdminRequest = require('../models/PendingAdminRequest');
 const { HEAD_ROLES, LEADER_ROLES, TEAM_MEMBER_ROLES } = require('../utils/roles');
+const {
+  isAnonymousParam,
+  findAnonymousRegistration,
+  findSchoolRegistration,
+} = require('../utils/anonymousLocation');
 const { notifyUser, notifyUserById } = require('../utils/pushNotification');
 const { sendOtp, generateOtp } = require('../utils/email');
+const { decisionOf, trail } = require('../utils/approvalTrail');
 
 const EMAIL_RE = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -42,6 +48,9 @@ exports.getTeamLeaders = async (req, res) => {
       .populate('schoolIds', 'name state associationYear classCoverage')
       .populate('teamId', 'name')
       .populate('faceRegistrations.schoolId', 'name state')
+      // Resolves "Approved by" for face registrations decided before the
+      // decidedBy snapshot existed.
+      .populate('faceRegistrations.reviewedBy', 'name role')
       .sort('-createdAt');
     res.status(200).json({ success: true, data: teamLeaders });
   } catch (error) {
@@ -189,10 +198,21 @@ exports.deleteTeam = async (req, res) => {
 exports.createHead = async (req, res) => {
   try {
     const { name, email, password, role, teamIds } = req.body;
-    const schoolIds = normalizeSchoolIds(req.body);
 
     if (!HEAD_ROLES.includes(role)) {
       return res.status(400).json({ success: false, error: 'Invalid head role' });
+    }
+
+    // An anonymous-location head belongs to no school by definition, so any
+    // schools the form happened to send are dropped rather than half-applied.
+    const anonymousLocation = Boolean(req.body.anonymousLocation);
+    const schoolIds = anonymousLocation ? [] : normalizeSchoolIds(req.body);
+
+    if (!anonymousLocation && schoolIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Assign at least one school, or mark this head as Anonymous Location.',
+      });
     }
 
     let user = await User.findOne({ email });
@@ -205,9 +225,11 @@ exports.createHead = async (req, res) => {
       email,
       password,
       role,
+      anonymousLocation,
       schoolIds,
       schoolId: schoolIds[0] || null,
-      teamIds: Array.isArray(teamIds) ? teamIds : []
+      teamIds: Array.isArray(teamIds) ? teamIds : [],
+      createdByAdmin: decisionOf(req.user, 'created')
     });
 
     res.status(201).json({ success: true, data: user });
@@ -309,7 +331,8 @@ exports.createTeamLeader = async (req, res) => {
       role,
       schoolIds,
       schoolId: schoolIds[0] || null,
-      teamId: teamId || null
+      teamId: teamId || null,
+      createdByAdmin: decisionOf(req.user, 'created')
     });
 
     res.status(201).json({ success: true, data: user });
@@ -338,7 +361,8 @@ exports.createChairmanAndSchool = async (req, res) => {
       name: chairmanName,
       email,
       password,
-      role: 'chairman'
+      role: 'chairman',
+      createdByAdmin: decisionOf(req.user, 'created')
     });
 
     // 2. Create School
@@ -382,7 +406,8 @@ exports.createTrainer = async (req, res) => {
       schoolIds,
       schoolId: schoolIds[0] || null,
       teamLeaderId,
-      teamId: teamId || null
+      teamId: teamId || null,
+      createdByAdmin: decisionOf(req.user, 'created')
     });
 
     res.status(201).json({ success: true, data: user });
@@ -433,6 +458,10 @@ exports.getUsersPaginated = async (req, res) => {
       .populate('teamId', 'name')
       .populate('teamIds', 'name')
       .populate('faceRegistrations.schoolId', 'name state')
+      // Resolves "Approved by" for face registrations decided before the
+      // decidedBy snapshot existed. One extra batched query for the whole page;
+      // the response filter drops it again for non-Admin/CEO callers.
+      .populate('faceRegistrations.reviewedBy', 'name role')
       .sort('-createdAt')
       .skip(skip)
       .limit(parseInt(limit, 10))
@@ -453,6 +482,28 @@ exports.getUsersPaginated = async (req, res) => {
         pages: Math.ceil(total / parseInt(limit, 10))
       }
     });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// @desc    Every login in the app, four fields each, for people-pickers
+// @route   GET /api/admin/directory
+// @access  Private/Admin+CEO
+//
+// getUsersPaginated deliberately REQUIRES a role and returns fat documents
+// (schools, teams, face registrations). A picker that has to offer "everybody
+// irrespective of their login" would have to call it once per role and drag all
+// of that down to render a name and a role chip. This returns the whole
+// directory in one lean query instead, small enough to search on the device.
+exports.getDirectory = async (req, res) => {
+  try {
+    const users = await User.find({})
+      .select('name email role')
+      .sort('name')
+      .lean();
+
+    res.status(200).json({ success: true, count: users.length, data: users });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -498,11 +549,28 @@ exports.updateUser = async (req, res) => {
       user.schoolId = newIds[0] || null;
       if (Array.isArray(user.faceRegistrations) && user.faceRegistrations.length) {
         const allowed = new Set(newIds);
+        // A school-less (anonymous) registration is kept regardless: it is not
+        // tied to any school, so no school assignment can invalidate it. It is
+        // dropped explicitly below when anonymous mode itself is switched off.
         user.faceRegistrations = user.faceRegistrations.filter(
-          (fr) => allowed.has(String(fr.schoolId))
+          (fr) => !fr.schoolId || allowed.has(String(fr.schoolId))
         );
       }
     };
+
+    // Anonymous location — heads only, and switchable at any time. Turning it
+    // ON detaches every school (the stint stays in schoolHistory via the
+    // pre-save hook); turning it OFF requires real schools to go back to, and
+    // retires the school-less face registration, which now anchors nothing.
+    const anonymousProvided = req.body.anonymousLocation !== undefined;
+    const wantsAnonymous = Boolean(req.body.anonymousLocation);
+
+    if (anonymousProvided && !HEAD_ROLES.includes(user.role) && wantsAnonymous) {
+      return res.status(400).json({
+        success: false,
+        error: 'Only zonal, cluster and regional heads can be set to Anonymous Location.',
+      });
+    }
 
     // Assignment fields, applied by the effective (possibly new) role.
     if (user.role === 'trainer') {
@@ -513,9 +581,59 @@ exports.updateUser = async (req, res) => {
       applySchools();
       if (teamId !== undefined) user.teamId = teamId || null;
     } else if (HEAD_ROLES.includes(user.role)) {
-      applySchools();
+      const nowAnonymous = anonymousProvided ? wantsAnonymous : Boolean(user.anonymousLocation);
+
+      if (nowAnonymous) {
+        user.anonymousLocation = true;
+        user.schoolIds = [];
+        user.schoolId = null;
+
+        const regs = user.faceRegistrations || [];
+        // Switching an EXISTING head to anonymous has to take effect at once —
+        // they should be able to check in from anywhere on their very next
+        // shift. Dropping every per-school registration outright would instead
+        // send them back to the registration queue, waiting on an approval the
+        // Admin has in fact already given for that same face.
+        //
+        // So if they have no school-less registration yet, their most recently
+        // approved school one is carried over: the school anchor is released
+        // (anonymous mode measures nothing against it anyway) while the
+        // identity decision behind it is kept. Only an APPROVED registration
+        // qualifies — a pending or rejected one carries no such decision, and
+        // is dropped with the rest.
+        if (!regs.some((fr) => !fr.schoolId)) {
+          const approved = regs
+            .filter((fr) => fr.schoolId && fr.status === 'approved')
+            .sort((a, b) => new Date(b.reviewedAt || b.updatedAt || 0) - new Date(a.reviewedAt || a.updatedAt || 0))[0];
+          if (approved) approved.schoolId = null;
+        }
+
+        // Whatever is still tied to a school belongs to schools they no longer hold.
+        user.faceRegistrations = regs.filter((fr) => !fr.schoolId);
+      } else {
+        const newIds = schoolsProvided ? normalizeSchoolIds(req.body) : (user.schoolIds || []).map(String);
+        if (newIds.length === 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'Assign at least one school, or keep this head on Anonymous Location.',
+          });
+        }
+        user.anonymousLocation = false;
+        applySchools();
+        // The school-less registration means nothing once they are anchored again.
+        user.faceRegistrations = (user.faceRegistrations || []).filter((fr) => fr.schoolId);
+      }
+
       if (Array.isArray(teamIds)) user.teamIds = teamIds;
     }
+
+    // A head demoted to another role can never stay anonymous.
+    if (!HEAD_ROLES.includes(user.role)) user.anonymousLocation = false;
+
+    // Registrations may have been pruned above (schools taken away, anonymous
+    // mode switched); the coarse aggregate has to follow, or someone keeps an
+    // "approved" badge for a registration that no longer exists.
+    syncLegacyFaceStatus(user);
 
     await user.save();
 
@@ -652,27 +770,56 @@ exports.approveFacialRegistration = async (req, res) => {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    const reg = (user.faceRegistrations || []).find(
-      (fr) => String(fr.schoolId) === String(schoolId)
-    );
+    // An anonymous-location head's registration has no school, so it is
+    // addressed by the literal 'anonymous' instead of an id.
+    const anonymous = isAnonymousParam(schoolId);
+    const reg = anonymous
+      ? findAnonymousRegistration(user)
+      : findSchoolRegistration(user, schoolId);
     if (!reg) {
       return res.status(404).json({ success: false, error: 'No facial registration found for this school' });
     }
 
+    // This endpoint predates the approvals hub and used to record nothing at
+    // all, so face registrations approved from the legacy admin screen were
+    // anonymous. It now records the approver exactly as /api/approvals does.
+    const decidedAt = new Date();
     reg.status = 'approved';
+    reg.reviewedBy = req.user._id;
+    reg.reviewedAt = decidedAt;
+    reg.decidedBy = decisionOf(req.user, 'approved', decidedAt);
     syncLegacyFaceStatus(user);
     await user.save();
 
-    const school = await School.findById(schoolId).select('name');
-    const schoolName = school ? school.name : 'the school';
+    let schoolName = 'the school';
+    let school = null;
+    if (!anonymous) {
+      school = await School.findById(schoolId).select('name');
+      if (school) schoolName = school.name;
+    }
 
     res.status(200).json({ success: true, data: user });
+
+    trail({
+      entityType: 'face_registration',
+      entityId: reg._id,
+      entityLabel: anonymous
+        ? 'Facial registration · any location'
+        : `Facial registration · ${schoolName}`,
+      subject: user,
+      actor: req.user,
+      action: 'approved',
+      school,
+      at: decidedAt,
+    });
 
     // Notify the person that they can now mark attendance at this school.
     notifyUser(
       user,
       '✅ Facial Registration Approved',
-      `Your facial registration for ${schoolName} has been approved. You can now mark attendance there.`,
+      anonymous
+        ? 'Your facial registration has been approved. You can now check in and out from any location.'
+        : `Your facial registration for ${schoolName} has been approved. You can now mark attendance there.`,
       { type: 'face_approved' }
     ).catch(err => console.error('Face-approved notification error:', err.message));
   } catch (error) {
@@ -691,9 +838,12 @@ exports.deleteFacialRegistration = async (req, res) => {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
+    // 'anonymous' addresses the school-less registration of an anonymous-
+    // location head; anything else is a real school id.
+    const anonymous = isAnonymousParam(schoolId);
     const before = (user.faceRegistrations || []).length;
-    user.faceRegistrations = (user.faceRegistrations || []).filter(
-      (fr) => String(fr.schoolId) !== String(schoolId)
+    user.faceRegistrations = (user.faceRegistrations || []).filter((fr) =>
+      anonymous ? !!fr.schoolId : !(fr.schoolId && String(fr.schoolId) === String(schoolId))
     );
     if (user.faceRegistrations.length === before) {
       return res.status(404).json({ success: false, error: 'No facial registration found for this school' });
@@ -709,8 +859,11 @@ exports.deleteFacialRegistration = async (req, res) => {
     syncLegacyFaceStatus(user);
     await user.save();
 
-    const school = await School.findById(schoolId).select('name');
-    const schoolName = school ? school.name : 'a school';
+    let schoolName = 'a school';
+    if (!anonymous) {
+      const school = await School.findById(schoolId).select('name');
+      if (school) schoolName = school.name;
+    }
 
     // Compact payload — the admin screen only needs to know what is left, and
     // the full user document would ship every remaining face embedding.
@@ -729,7 +882,9 @@ exports.deleteFacialRegistration = async (req, res) => {
     notifyUser(
       user,
       'Facial Registration Removed',
-      `Your facial registration for ${schoolName} was removed. Please register your face again there to mark attendance.`,
+      anonymous
+        ? 'Your facial registration was removed. Please register your face again to mark attendance.'
+        : `Your facial registration for ${schoolName} was removed. Please register your face again there to mark attendance.`,
       { type: 'face_removed' }
     ).catch(err => console.error('Face-removed notification error:', err.message));
   } catch (error) {
@@ -864,6 +1019,16 @@ exports.verifyAndCreateAdmin = async (req, res) => {
       email: pending.email,
       password: pending.password, // hashed by the User pre-save hook
       role: 'creator_admin',
+      createdByAdmin: decisionOf(req.user, 'created'),
+    });
+
+    trail({
+      entityType: 'admin_account',
+      entityId: newAdmin._id,
+      entityLabel: `Admin login · ${newAdmin.name} (${newAdmin.email})`,
+      subject: newAdmin,
+      actor: req.user,
+      action: 'created',
     });
 
     await pending.deleteOne();

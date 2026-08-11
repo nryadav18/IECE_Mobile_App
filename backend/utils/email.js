@@ -268,23 +268,49 @@ const getEventTemplate = ({ title, intro, rows = [], accent = '#0D9488', badge =
     `;
 };
 
-const sendEmail = async (to, subject, text, html) => {
+/**
+ * @param {string} to
+ * @param {string} subject
+ * @param {string} text  - plaintext fallback
+ * @param {string} html
+ * @param {object} [options]
+ * @param {Array<{name:string, content:Buffer|string}>} [options.attachments]
+ *        Files to attach. `content` may be a Buffer (encoded here) or a string
+ *        that is already base64. Attachments are passed inline to Brevo, so a
+ *        generated file never has to be uploaded anywhere first — see
+ *        utils/monthlyReport, which builds a PDF in memory and sends it without
+ *        ever touching disk or Cloudinary.
+ * @param {string} [options.senderName] - overrides the default "IECE Security".
+ * @param {string} [options.toName]
+ */
+const sendEmail = async (to, subject, text, html, options = {}) => {
     if (!process.env.BREVO_API_KEY || !brevo) {
         console.warn("[Brevo] No API Key provided. Email skipped.");
         return false;
     }
-    
+
     const senderEmail = process.env.BREVO_FROM_EMAIL || "info@iece.com";
+    const { attachments = [], senderName = 'IECE Security', toName = 'User' } = options;
 
     try {
-        const response = await brevo.transactionalEmails.sendTransacEmail({
+        const payload = {
             subject: subject,
-            sender: { "name": "IECE Security", "email": senderEmail },
-            to: [{ "email": to, "name": "User" }],
+            sender: { "name": senderName, "email": senderEmail },
+            to: [{ "email": to, "name": toName }],
             htmlContent: html || `<strong>${text}</strong>`,
             textContent: text
-        });
-        console.log(`[Brevo] Email sent to ${to} from ${senderEmail}`);
+        };
+
+        if (attachments.length) {
+            payload.attachment = attachments.map((a) => ({
+                name: a.name,
+                content: Buffer.isBuffer(a.content) ? a.content.toString('base64') : a.content,
+            }));
+        }
+
+        const response = await brevo.transactionalEmails.sendTransacEmail(payload);
+        const suffix = attachments.length ? ` with ${attachments.length} attachment(s)` : '';
+        console.log(`[Brevo] Email sent to ${to} from ${senderEmail}${suffix}`);
         return true;
     } catch (error) {
         console.error('[Brevo] Error sending email:', error);
@@ -345,12 +371,13 @@ const sendSubstitutionEmail = async (to, payload) => {
 };
 
 /**
- * Send a branded leave email to one recipient (request raised / approved /
+ * Send a branded event email to one recipient (a request raised / approved /
  * rejected). Plaintext fallback built from the same rows.
  * @param {string} to
  * @param {object} payload - { subject, title, intro, rows, accent, badge, footerNote }
+ * @param {string} tag - label used in the no-API-key stub log
  */
-const sendLeaveEmail = async (to, payload) => {
+const sendEventEmail = async (to, payload, tag = 'EVENT') => {
     const { subject, title, intro, rows = [], accent, badge, footerNote } = payload;
     const html = getEventTemplate({ title, intro, rows, accent, badge, footerNote });
     const text = [
@@ -366,10 +393,15 @@ const sendLeaveEmail = async (to, payload) => {
     ].join('\n');
 
     if (!process.env.BREVO_API_KEY) {
-        console.log(`[LEAVE-EMAIL-STUB] (No API Key) -> ${to}: ${title}`);
+        console.log(`[${tag}-EMAIL-STUB] (No API Key) -> ${to}: ${title}`);
         return true;
     }
     return await sendEmail(to, subject || title, text, html);
 };
 
-module.exports = { sendOtp, generateOtp, sendEmail, sendSubstitutionEmail, sendLeaveEmail };
+// Leave and School Visit share the same branded event template — only the
+// stub-log tag differs, so each feature's logs stay readable.
+const sendLeaveEmail = (to, payload) => sendEventEmail(to, payload, 'LEAVE');
+const sendSchoolVisitEmail = (to, payload) => sendEventEmail(to, payload, 'SCHOOL-VISIT');
+
+module.exports = { sendOtp, generateOtp, sendEmail, sendSubstitutionEmail, sendEventEmail, sendLeaveEmail, sendSchoolVisitEmail };

@@ -6,9 +6,10 @@ import { Calendar } from 'react-native-calendars';
 import { ThemeContext } from '../context/ThemeContext';
 import api from '../services/api';
 import CalendarLegend from './CalendarLegend';
-import { isOffToday } from '../utils/holiday';
+import { isOffToday, HOLIDAY_APPROVED_COLOR, HOLIDAY_PENDING_COLOR } from '../utils/holiday';
 import { buildCalendarMarks } from '../utils/calendarColors';
 import { deriveAttendanceActions, findTodayAttendance } from '../utils/attendanceActions';
+import { findActiveVisit } from '../utils/schoolVisitMarks';
 
 /**
  * The complete facial-attendance experience for one person: pick a school,
@@ -28,11 +29,15 @@ export default function AttendanceSection({ navigation }) {
 
   const [mySchools, setMySchools] = useState([]);        // schools assigned to me
   const [faceRegs, setFaceRegs] = useState([]);          // per-school face registrations
+  // Anonymous-location staff (heads attached to no school) — see the branch in
+  // the render below. They have no school to pick and no geofence to stand in.
+  const [anonymous, setAnonymous] = useState(false);
   const [selectedSchoolId, setSelectedSchoolId] = useState(null);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [substitutionLeaves, setSubstitutionLeaves] = useState([]);
   const [substitutionDuties, setSubstitutionDuties] = useState([]);
   const [leaveDays, setLeaveDays] = useState([]);
+  const [visitDays, setVisitDays] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -48,6 +53,7 @@ export default function AttendanceSection({ navigation }) {
         : (d.schoolId && typeof d.schoolId === 'object' ? [d.schoolId] : []);
       setMySchools(schools);
       setFaceRegs(Array.isArray(d.faceRegistrations) ? d.faceRegistrations : []);
+      setAnonymous(!!d.anonymousLocation);
 
       // Keep the current pick if it is still valid, otherwise default to the
       // first assigned school so attendance is usable the moment one is given.
@@ -67,6 +73,7 @@ export default function AttendanceSection({ navigation }) {
       setSubstitutionLeaves(res.data.substitutionLeaves || []);
       setSubstitutionDuties(res.data.substitutionDuties || []);
       setLeaveDays(res.data.leaveDays || []);
+      setVisitDays(res.data.visitDays || []);
     } catch (e) {
       console.log('AttendanceSection: could not load attendance', e?.response?.status);
     }
@@ -89,19 +96,37 @@ export default function AttendanceSection({ navigation }) {
     }, [])
   );
 
-  const isHolidayToday = isOffToday(holidays);
+  // Asked about the SELECTED school only. The calendar below shows the holidays
+  // of every school this person covers, but only the one they are checking in
+  // at can close their day — the server decides per school, and greying the
+  // buttons out for a school that is open would refuse attendance the API would
+  // have accepted.
+  const isHolidayToday = isOffToday(holidays, selectedSchoolId);
   const todayAtt = findTodayAttendance(attendanceRecords);
 
   const selSchool = mySchools.find((s) => String(s._id) === String(selectedSchoolId));
   const schoolName = selSchool?.name || 'this school';
-  const reg = faceRegs.find((r) => String(r.schoolId?._id || r.schoolId) === String(selectedSchoolId));
+  // An anonymous person has exactly ONE registration and it belongs to no
+  // school, so it is found by the absence of a schoolId rather than by matching
+  // one — String(null) would otherwise happily match the string 'null'.
+  const reg = anonymous
+    ? faceRegs.find((r) => !r.schoolId)
+    : faceRegs.find((r) => r.schoolId && String(r.schoolId?._id || r.schoolId) === String(selectedSchoolId));
   const regStatus = reg?.status || 'none';
+
+  // An approved school visit covering today suspends check-in/check-out.
+  const activeVisit = findActiveVisit(visitDays);
 
   const act = deriveAttendanceActions({
     todayAttendance: todayAtt,
-    selectedSchoolId,
+    // Anonymous staff have no school to select, but they are always "here", so
+    // the action rules need a stand-in for the school they are at.
+    selectedSchoolId: anonymous ? 'anonymous' : selectedSchoolId,
     regStatus,
-    isHolidayToday,
+    // No school means no school holiday can close their day.
+    isHolidayToday: anonymous ? false : isHolidayToday,
+    activeVisit,
+    anonymous,
   });
 
   const markedDates = buildCalendarMarks({
@@ -110,6 +135,7 @@ export default function AttendanceSection({ navigation }) {
     leaveDays,
     substitutionLeaves,
     substitutionDuties,
+    visitDays,
     todayMark: {
       customStyles: {
         container: { backgroundColor: '#E0E0E0', borderRadius: 8, borderWidth: 2, borderColor: theme.colors.primary },
@@ -120,8 +146,21 @@ export default function AttendanceSection({ navigation }) {
 
   return (
     <View>
+      {/* Anonymous location — this person belongs to no school, so there is
+          nothing to pick and nowhere they have to be. Said plainly once, at the
+          top, so the missing school picker reads as the rule it is rather than
+          as something that failed to load. */}
+      {anonymous && (
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', backgroundColor: theme.colors.primary + '12', borderColor: theme.colors.primary + '33', borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 14 }}>
+          <Ionicons name="navigate-circle-outline" size={18} color={theme.colors.primary} style={{ marginRight: 8, marginTop: 1 }} />
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 12.5, flex: 1, lineHeight: 18 }}>
+            <Text style={{ fontWeight: '700', color: theme.colors.textPrimary }}>Anonymous location.</Text> You are not tied to a school — register your face once, then check in and out from wherever you are working.
+          </Text>
+        </View>
+      )}
+
       {/* School picker — only worth showing when there is a choice to make. */}
-      {mySchools.length > 1 && (
+      {!anonymous && mySchools.length > 1 && (
         <View style={{ marginBottom: 14 }}>
           <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 8 }}>
             Select School for Attendance
@@ -149,8 +188,9 @@ export default function AttendanceSection({ navigation }) {
         </View>
       )}
 
-      {/* Actions for the selected school */}
-      {!selectedSchoolId ? (
+      {/* Actions for the selected school — or, for anonymous staff, for
+          wherever they are. */}
+      {!anonymous && !selectedSchoolId ? (
         <View style={{ backgroundColor: theme.colors.surface, borderRadius: 10, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: theme.colors.border }}>
           <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' }}>
             {loaded
@@ -160,14 +200,41 @@ export default function AttendanceSection({ navigation }) {
         </View>
       ) : (
         <View style={{ marginBottom: 12 }}>
-          {regStatus === 'none' && (
+          {/* A rejection is a "try again", not a dead end. The reason is shown
+              here — a push notification is easy to miss — and the button comes
+              straight back, so the person can re-record on the spot instead of
+              waiting for someone to reset anything. */}
+          {regStatus === 'rejected' && (
+            <View style={{ backgroundColor: '#FEE2E2', borderColor: '#EF4444', borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="close-circle-outline" size={16} color="#B91C1C" style={{ marginRight: 6 }} />
+                <Text style={{ color: '#B91C1C', fontSize: 12.5, fontWeight: '800', flex: 1 }}>
+                  {anonymous ? 'Registration rejected' : `Registration rejected — ${schoolName}`}
+                </Text>
+              </View>
+              {!!reg?.rejectionReason && (
+                <Text style={{ color: '#7F1D1D', fontSize: 12, marginTop: 6, lineHeight: 17 }}>
+                  {reg.rejectionReason}
+                </Text>
+              )}
+              <Text style={{ color: '#7F1D1D', fontSize: 12, marginTop: 6, lineHeight: 17 }}>
+                Please register again — your new recording goes back to the admin for approval.
+              </Text>
+            </View>
+          )}
+
+          {(regStatus === 'none' || regStatus === 'rejected') && (
             <TouchableOpacity
               style={[styles.actionBtn, { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '10' }]}
-              onPress={() => navigation.navigate('FaceRegistration', { schoolId: selectedSchoolId, schoolName })}
+              onPress={() => navigation.navigate('FaceRegistration', anonymous
+                ? { anonymous: true }
+                : { schoolId: selectedSchoolId, schoolName })}
             >
               <Ionicons name="scan-outline" size={20} color={theme.colors.primary} />
               <Text style={{ color: theme.colors.primary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>
-                Register Face for {schoolName}
+                {anonymous
+                  ? (regStatus === 'rejected' ? 'Register Face Again' : 'Register Your Face')
+                  : (regStatus === 'rejected' ? `Register Face Again for ${schoolName}` : `Register Face for ${schoolName}`)}
               </Text>
             </TouchableOpacity>
           )}
@@ -176,7 +243,7 @@ export default function AttendanceSection({ navigation }) {
             <View style={[styles.actionBtn, { borderColor: '#F59E0B', backgroundColor: '#FEF3C7' }]}>
               <Ionicons name="hourglass-outline" size={20} color="#D97706" />
               <Text style={{ color: '#D97706', fontSize: 13, marginLeft: 6, fontWeight: '700' }}>
-                Pending Approval — {schoolName}
+                {anonymous ? 'Pending Approval' : `Pending Approval — ${schoolName}`}
               </Text>
             </View>
           )}
@@ -185,7 +252,9 @@ export default function AttendanceSection({ navigation }) {
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity
                 style={[styles.actionBtn, { flex: 1, borderColor: '#4CAF50', backgroundColor: '#4CAF5010', opacity: act.canCheckIn ? 1 : 0.5 }]}
-                onPress={() => navigation.navigate('Attendance', { intent: 'login', schoolId: selectedSchoolId, schoolName })}
+                onPress={() => navigation.navigate('Attendance', anonymous
+                  ? { intent: 'login', anonymous: true }
+                  : { intent: 'login', schoolId: selectedSchoolId, schoolName })}
                 disabled={!act.canCheckIn}
               >
                 <Ionicons name={act.checkedInHere ? 'checkmark-done-outline' : 'log-in-outline'} size={20} color="#4CAF50" />
@@ -194,7 +263,9 @@ export default function AttendanceSection({ navigation }) {
 
               <TouchableOpacity
                 style={[styles.actionBtn, { flex: 1, borderColor: '#F44336', backgroundColor: '#F4433610', opacity: act.canCheckOut ? 1 : 0.5 }]}
-                onPress={() => navigation.navigate('Attendance', { intent: 'logout', schoolId: selectedSchoolId, schoolName })}
+                onPress={() => navigation.navigate('Attendance', anonymous
+                  ? { intent: 'logout', anonymous: true }
+                  : { intent: 'logout', schoolId: selectedSchoolId, schoolName })}
                 disabled={!act.canCheckOut}
               >
                 <Ionicons name={act.checkedOutToday ? 'checkmark-done-outline' : 'log-out-outline'} size={20} color="#F44336" />
@@ -224,11 +295,15 @@ export default function AttendanceSection({ navigation }) {
         </View>
       )}
 
-      {/* Holiday banner — Sundays are workable, only approved holidays close a school. */}
-      {isHolidayToday && (
-        <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#87CEEB' }}>
-          <Ionicons name="sunny-outline" size={16} color="#0277BD" style={{ marginRight: 8 }} />
-          <Text style={{ color: '#01579B', fontSize: 12, fontWeight: '600', flex: 1 }}>
+      {/* Holiday banner — Sundays are workable, only approved holidays close a
+          school, and a school holiday cannot close a day for someone who
+          belongs to no school. Takes its colour from the holiday constants, so
+          this banner and the holiday cell on the calendar below can never
+          disagree. */}
+      {!anonymous && isHolidayToday && (
+        <View style={{ backgroundColor: HOLIDAY_PENDING_COLOR, borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: HOLIDAY_APPROVED_COLOR }}>
+          <Ionicons name="sunny-outline" size={16} color={HOLIDAY_APPROVED_COLOR} style={{ marginRight: 8 }} />
+          <Text style={{ color: HOLIDAY_APPROVED_COLOR, fontSize: 12, fontWeight: '600', flex: 1 }}>
             Today is a holiday. Check-in and check-out are disabled.
           </Text>
         </View>

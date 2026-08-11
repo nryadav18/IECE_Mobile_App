@@ -6,9 +6,14 @@ import api from '../services/api';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Calendar } from 'react-native-calendars';
-import { buildCalendarMarks, CALENDAR_LEGEND } from '../utils/calendarColors';
+import { buildCalendarMarks, CALENDAR_COLORS, CALENDAR_LEGEND } from '../utils/calendarColors';
+import { buildSchoolVisitMarks } from '../utils/schoolVisitMarks';
 import CalendarLegend from '../components/CalendarLegend';
+import ApprovedBy from '../components/ApprovedBy';
+import { countApprovedHolidays } from '../utils/holiday';
 import VisitReportDetail from '../components/VisitReportDetail';
+import StaffLocationTrail from '../components/StaffLocationTrail';
+import { ADMIN_ROLES } from '../utils/roles';
 import { Skeleton, SkeletonProfile, SkeletonCard, SkeletonText, SkeletonStatCards, ShineSweep } from '../components/Skeleton';
 
 const { width } = Dimensions.get('window');
@@ -84,6 +89,12 @@ export default function UserProfileScreen({ route, navigation }) {
     // days they are covering for someone else (shown as On Substitution).
     substitutionLeaves = [],
     substitutionDuties = [],
+    // Approved school visits — on-duty days spent inspecting another school.
+    visitDays = [],
+    // School holidays for every school this person is assigned to. Days the
+    // school was shut are not days they failed to turn up, and this calendar
+    // used to show no difference between the two.
+    holidays = [],
   } = profileData;
 
   const currentSchools = schoolHistory.filter(s => s.isCurrent);
@@ -96,13 +107,21 @@ export default function UserProfileScreen({ route, navigation }) {
     const present = attendance.filter(a => a.status === 'Present').length;
     const partiallyPresent = attendance.filter(a => a.status === 'Partially Present').length;
     const absent = attendance.filter(a => a.status === 'Absent').length;
+    // School visits produce no attendance record (check-in is paused), so the
+    // day count comes from the approved windows. Counting the built marks reuses
+    // the same day-expansion — and the same runaway-range guard — as the calendar.
+    const schoolVisit = Object.keys(buildSchoolVisitMarks(visitDays)).length;
+    // Approved holidays only — a day that was merely REQUESTED off is not a day
+    // the school was shut, so it is never counted here even though it is still
+    // drawn on the calendar in the weaker pending style.
+    const holiday = countApprovedHolidays(holidays);
     let totalMinutes = 0;
     attendance.forEach(a => {
         if(a.totalTimeSpent) totalMinutes += a.totalTimeSpent;
     });
     const hours = Math.floor(totalMinutes / 60);
     const mins = totalMinutes % 60;
-    return { present, partiallyPresent, absent, totalTime: `${hours}h ${mins}m` };
+    return { present, partiallyPresent, absent, schoolVisit, holiday, totalTime: `${hours}h ${mins}m` };
   };
 
   const attSummary = getAttendanceSummary();
@@ -111,37 +130,62 @@ export default function UserProfileScreen({ route, navigation }) {
   // viewing this profile sees identical marks to what the person sees themselves.
   const getMarkedDates = () => buildCalendarMarks({
     attendance,
+    holidays,
     leaveDays,
     substitutionLeaves,
     substitutionDuties,
+    visitDays,
   });
+
+  // Raw check-in / check-out coordinates are shown for anonymous-location staff
+  // only — they are the ones with no school geofence standing behind their
+  // attendance — and only to the Admin and the CEO, the same two roles trusted
+  // with "Approved by" everywhere else in the app.
+  const canSeeLocations =
+    !!profile?.anonymousLocation && ADMIN_ROLES.includes(currentUser?.role);
 
   const renderTabs = () => {
     const tabs = ['Overview', 'Attendance', 'Activities', 'Reports'];
+    if (canSeeLocations) tabs.push('Locations');
+    // Four tabs share the width evenly, as they always have. A fifth would
+    // squeeze the labels to nothing, so past four the row scrolls instead.
+    const scrolls = tabs.length > 4;
+
+    const renderTab = (tab) => {
+      const isActive = activeTab === tab;
+      return (
+        <TouchableOpacity
+          key={tab}
+          style={[styles.tabBtn, scrolls && styles.tabBtnCompact, {
+            backgroundColor: isActive ? theme.colors.primary : 'transparent',
+            borderColor: isActive ? theme.colors.primary : theme.colors.border
+          }]}
+          onPress={() => setActiveTab(tab)}
+        >
+          <Text style={{
+            color: isActive ? '#fff' : theme.colors.textSecondary,
+            fontWeight: isActive ? 'bold' : 'normal',
+            fontSize: 13
+          }}>
+            {tab}
+          </Text>
+        </TouchableOpacity>
+      );
+    };
+
+    if (!scrolls) {
+      return <View style={styles.tabsContainer}>{tabs.map(renderTab)}</View>;
+    }
+
     return (
-      <View style={styles.tabsContainer}>
-        {tabs.map(tab => {
-          const isActive = activeTab === tab;
-          return (
-            <TouchableOpacity 
-              key={tab} 
-              style={[styles.tabBtn, { 
-                backgroundColor: isActive ? theme.colors.primary : 'transparent',
-                borderColor: isActive ? theme.colors.primary : theme.colors.border
-              }]}
-              onPress={() => setActiveTab(tab)}
-            >
-              <Text style={{ 
-                color: isActive ? '#fff' : theme.colors.textSecondary,
-                fontWeight: isActive ? 'bold' : 'normal',
-                fontSize: 13
-              }}>
-                {tab}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ flexGrow: 0 }}
+        contentContainerStyle={styles.tabsScrollContent}
+      >
+        {tabs.map(renderTab)}
+      </ScrollView>
     );
   };
 
@@ -154,8 +198,21 @@ export default function UserProfileScreen({ route, navigation }) {
           <Text style={[styles.title, { color: theme.colors.textPrimary, marginBottom: 0 }]}>Assignment Details</Text>
         </View>
         
-        {/* Current school(s) sit on top — where this person works right now. */}
-        {currentSchools.length === 0 ? (
+        {/* Current school(s) sit on top — where this person works right now.
+            An anonymous-location head has none BY DESIGN, so saying "no school
+            assigned" would read as something missing rather than as the setting
+            it is. */}
+        {profile?.anonymousLocation ? (
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', backgroundColor: theme.colors.primary + '12', borderRadius: 10, padding: 10 }}>
+            <Ionicons name="navigate-circle" size={18} color={theme.colors.primary} style={{ marginRight: 8, marginTop: 1 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: '700' }}>Anonymous Location</Text>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                Not tied to a school — checks in and out from anywhere.
+              </Text>
+            </View>
+          </View>
+        ) : currentSchools.length === 0 ? (
           <Text style={{ color: theme.colors.textSecondary }}>No school assigned.</Text>
         ) : (
           currentSchools.map((s, i) => (
@@ -298,7 +355,9 @@ export default function UserProfileScreen({ route, navigation }) {
         <View style={[styles.statBox, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
           <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Activities</Text>
           <Text style={{ color: theme.colors.primary, fontSize: 24, fontWeight: 'bold', marginVertical: 4 }}>{activities.length}</Text>
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 11 }}>Total Uploaded</Text>
+          {/* Counts uploads AND activities they were tagged in as an organiser
+              — which is what the list below shows, so the label says so. */}
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 11 }}>Uploaded & Tagged</Text>
         </View>
       </View>
     </View>
@@ -306,6 +365,34 @@ export default function UserProfileScreen({ route, navigation }) {
 
   const renderAttendance = () => (
     <View style={{ gap: 16 }}>
+      {/* Working-days summary. School visits are ON-DUTY days spent inspecting
+          another school, so they sit alongside Present rather than with the
+          absences — they just never produce a check-in record. Holidays are the
+          opposite kind of day again: nobody was expected in, so a blank on the
+          calendar there means the school was shut, not that anyone was missing.
+          Four tiles wrap two-by-two rather than being squeezed into one row. */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+        {[
+          { label: 'Present', value: attSummary.present, color: CALENDAR_COLORS.present },
+          { label: 'Partial', value: attSummary.partiallyPresent, color: CALENDAR_COLORS.partial },
+          { label: 'School Visit', value: attSummary.schoolVisit, color: CALENDAR_COLORS.schoolVisit },
+          { label: 'Holiday', value: attSummary.holiday, color: CALENDAR_COLORS.holiday },
+        ].map((s) => (
+          <View
+            key={s.label}
+            style={[
+              styles.statBox,
+              // flexBasis just under half leaves room for the gap, so exactly
+              // two tiles sit per row at any width.
+              { flexBasis: '47%', backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
+            ]}
+          >
+            <Text style={{ color: s.color, fontSize: 22, fontWeight: 'bold' }}>{s.value}</Text>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 2 }} numberOfLines={1}>{s.label}</Text>
+          </View>
+        ))}
+      </View>
+
       {/* Calendar */}
       <View style={[styles.card, { padding: 0, overflow: 'hidden', backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
         <Calendar
@@ -324,7 +411,10 @@ export default function UserProfileScreen({ route, navigation }) {
           markingType={'custom'}
           markedDates={getMarkedDates()}
         />
-        <CalendarLegend items={CALENDAR_LEGEND.filter(i => i.key !== 'holiday')} />
+        {/* The full legend now — this profile draws school holidays too, so
+            filtering that key out would leave a colour on the calendar with
+            nothing explaining it. */}
+        <CalendarLegend />
       </View>
 
       <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
@@ -416,11 +506,37 @@ export default function UserProfileScreen({ route, navigation }) {
 
         <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
           <Text style={[styles.title, { color: theme.colors.textPrimary }]}>Recent Activities</Text>
+          {/* Each row is the activity itself: its NAME (this read `act.title`,
+              a field the Activity model does not have, so every row showed a
+              blank line where the name belonged), and a tap that opens the same
+              full detail screen everyone else sees — photos, description,
+              school, organisers. Anyone who got far enough to open this profile
+              has already passed the permission check. */}
           {activities.slice(0, 5).map(act => (
-            <View key={act._id} style={{ borderBottomWidth: 1, borderBottomColor: theme.colors.border, paddingVertical: 10 }}>
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>{act.title}</Text>
+            <TouchableOpacity
+              key={act._id}
+              activeOpacity={0.7}
+              onPress={() => navigation.navigate('ActivityDetails', { activityId: act._id })}
+              style={{ borderBottomWidth: 1, borderBottomColor: theme.colors.border, paddingVertical: 10 }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: '600', flex: 1 }} numberOfLines={1}>
+                  {act.name || 'Untitled activity'}
+                </Text>
+                {/* This list mixes what they uploaded with what they were tagged
+                    in as an organiser — worth telling apart. */}
+                {String(act.uploaderId?._id || act.uploaderId) !== String(profile?._id) && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#0D948818', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, marginLeft: 8 }}>
+                    <Ionicons name="pricetag" size={10} color="#0D9488" />
+                    <Text style={{ color: '#0D9488', fontSize: 10, fontWeight: '800', marginLeft: 3 }}>TAGGED</Text>
+                  </View>
+                )}
+                <Ionicons name="chevron-forward" size={16} color={theme.colors.textSecondary} style={{ marginLeft: 6 }} />
+              </View>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>{new Date(act.createdAt).toLocaleDateString()}</Text>
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
+                  {new Date(act.activityDate || act.createdAt).toLocaleDateString()}
+                </Text>
                 <Text style={{ 
                   color: act.status === 'approved' ? '#10B981' : act.status === 'pending' ? '#F59E0B' : '#EF4444',
                   fontSize: 12, fontWeight: '600'
@@ -428,7 +544,10 @@ export default function UserProfileScreen({ route, navigation }) {
                   {act.status.toUpperCase()}
                 </Text>
               </View>
-            </View>
+              {/* A profile is where the Admin/CEO go to understand one person's
+                  record, so who signed each activity off belongs here. */}
+              <ApprovedBy record={act} compact style={{ marginTop: 6 }} />
+            </TouchableOpacity>
           ))}
           {activities.length === 0 && <Text style={{ color: theme.colors.textSecondary }}>No activities uploaded yet.</Text>}
         </View>
@@ -470,17 +589,25 @@ export default function UserProfileScreen({ route, navigation }) {
         )}
       </View>
       
-      {/* Activity Rejection Feedback (if any) */}
+      {/* Why an activity was turned down. This read `adminRemarks` and `title`,
+          neither of which exists on an Activity — the reason lives in
+          `rejectionRemark` and the name in `name` — so the section rendered
+          "No feedbacks available" no matter how many rejections there were. */}
       <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
         <Text style={[styles.title, { color: theme.colors.textPrimary }]}>Admin Feedbacks</Text>
-        {activities.filter(a => a.adminRemarks).length === 0 ? (
+        {activities.filter(a => a.rejectionRemark).length === 0 ? (
           <Text style={{ color: theme.colors.textSecondary }}>No feedbacks available.</Text>
         ) : (
-          activities.filter(a => a.adminRemarks).map(act => (
-            <View key={act._id} style={{ borderBottomWidth: 1, borderBottomColor: theme.colors.border, paddingVertical: 10 }}>
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Activity: {act.title}</Text>
-              <Text style={{ color: '#EF4444', fontSize: 13, marginTop: 4 }}>" {act.adminRemarks} "</Text>
-            </View>
+          activities.filter(a => a.rejectionRemark).map(act => (
+            <TouchableOpacity
+              key={act._id}
+              activeOpacity={0.7}
+              onPress={() => navigation.navigate('ActivityDetails', { activityId: act._id })}
+              style={{ borderBottomWidth: 1, borderBottomColor: theme.colors.border, paddingVertical: 10 }}
+            >
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: '600' }}>Activity: {act.name}</Text>
+              <Text style={{ color: '#EF4444', fontSize: 13, marginTop: 4 }}>" {act.rejectionRemark} "</Text>
+            </TouchableOpacity>
           ))
         )}
       </View>
@@ -518,6 +645,11 @@ export default function UserProfileScreen({ route, navigation }) {
         {activeTab === 'Attendance' && renderAttendance()}
         {activeTab === 'Activities' && renderActivities()}
         {activeTab === 'Reports' && renderReports()}
+        {/* Mounted only while the tab is open: a map that nobody is looking at
+            has no business holding a WebView / MapView alive. */}
+        {activeTab === 'Locations' && canSeeLocations && (
+          <StaffLocationTrail attendance={attendance} />
+        )}
       </ScrollView>
 
       <VisitReportDetail
@@ -555,6 +687,12 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     gap: 8,
   },
+  tabsScrollContent: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 8,
+  },
   tabBtn: {
     flex: 1,
     paddingVertical: 8,
@@ -562,6 +700,8 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
   },
+  // In the scrolling row a tab is as wide as its label, not a share of nothing.
+  tabBtnCompact: { flex: 0, paddingHorizontal: 18 },
   scrollContent: { flexGrow: 1, padding: 16, paddingBottom: 40 },
   card: { 
     padding: 16, 

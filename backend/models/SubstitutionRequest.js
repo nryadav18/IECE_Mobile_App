@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const decisionSchema = require('./decisionSchema');
 
 // A request to temporarily replace a staff member (the "subject") with a
 // substitute for a date window. Raised by a leader/head (or CEO/Admin),
@@ -85,6 +86,14 @@ const substitutionRequestSchema = new mongoose.Schema({
   decisionNote: {
     type: String,
     default: ''
+  },
+  // Snapshot of WHO decided this and what they did — the one field every screen
+  // reads to render "Approved by". Shown to the Admin and CEO only. Note that
+  // `approvedBy` above is set on a rejection too, so it cannot be trusted as the
+  // verb; this carries the actual action.
+  decidedBy: {
+    type: decisionSchema,
+    default: null
   }
 }, {
   timestamps: true

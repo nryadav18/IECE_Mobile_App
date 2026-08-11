@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const decisionSchema = require('./decisionSchema');
 
 const schoolHolidaySchema = new mongoose.Schema({
   schoolId: {
@@ -35,6 +36,19 @@ const schoolHolidaySchema = new mongoose.Schema({
   rejectionRemark: {
     type: String,
     default: ''
+  },
+  // When the decision was taken. `reviewedBy` alone told us who but never when,
+  // so a holiday approved months ago was indistinguishable from one approved
+  // this morning.
+  decisionAt: {
+    type: Date,
+    default: null
+  },
+  // Snapshot of WHO decided this and what they did — the one field every screen
+  // reads to render "Approved by". Shown to the Admin and CEO only.
+  decidedBy: {
+    type: decisionSchema,
+    default: null
   }
 }, {
   timestamps: true

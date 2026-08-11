@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import CustomAlert from '../components/CustomAlert';
+import ApprovedBy from '../components/ApprovedBy';
 import SidebarMenu from '../components/SidebarMenu';
 import NotificationBell from '../components/NotificationBell';
 import CountBadge from '../components/CountBadge';
@@ -15,6 +16,7 @@ import { useBadges } from '../context/BadgeContext';
 import VisitReportForm from '../components/VisitReportForm';
 import VisitReportDetail from '../components/VisitReportDetail';
 import { SectionSkeleton } from '../components/Skeleton';
+import LazyTab from '../components/LazyTab';
 import AttendanceSection from '../components/AttendanceSection';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import CreateActivityForm from '../components/CreateActivityForm';
@@ -243,7 +245,7 @@ export default function HeadPortal({ navigation, route }) {
           }
         >
           {/* ---------- HOME: activity feed of all my teams + my school ---------- */}
-          <View style={{ display: activeTab === 'Home' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'Home'}>
             <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>Team Activity Feed</Text>
             <Text style={{ color: theme.colors.textSecondary, marginBottom: 16, fontSize: 13 }}>
               Activities from everyone across your teams and your school.
@@ -281,13 +283,16 @@ export default function HeadPortal({ navigation, route }) {
                   {act.schoolId?.name ? (
                     <Text style={{ color: theme.colors.textSecondary, marginTop: 2, fontSize: 12 }}>{act.schoolId.name}</Text>
                   ) : null}
+                  {/* Admin/CEO only — heads see their own queue, not each other's
+                      decisions. */}
+                  <ApprovedBy record={act} compact style={{ marginTop: 8 }} />
                 </TouchableOpacity>
               ))
             )}
-          </View>
+          </LazyTab>
 
           {/* ---------- MY TEAMS: teams → members → profile drill-in ---------- */}
-          <View style={{ display: activeTab === 'MyTeams' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'MyTeams'}>
             {!selectedTeam ? (
               <>
                 <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>My Teams</Text>
@@ -359,23 +364,23 @@ export default function HeadPortal({ navigation, route }) {
                 )}
               </>
             )}
-          </View>
+          </LazyTab>
 
           {/* ---------- ATTENDANCE: same facial attendance as every other
                IECE staff member. Heads do school field work too, so they
                register, check in and check out exactly like a trainer. ---------- */}
-          <View style={{ display: activeTab === 'Attendance' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'Attendance'}>
             <AttendanceSection navigation={navigation} />
-          </View>
+          </LazyTab>
 
           {/* ---------- APPLY SCHOOL HOLIDAY: heads work in schools too, so
                they can request a holiday for theirs like anyone else. ---------- */}
-          <View style={{ display: activeTab === 'SchoolHoliday' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'SchoolHoliday'}>
             <ApplyHolidaySection onChanged={fetchData} />
-          </View>
+          </LazyTab>
 
           {/* ---------- LOG VISIT: create + review visit reports ---------- */}
-          <View style={{ display: activeTab === 'LogVisit' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'LogVisit'}>
             <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
               <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary, marginBottom: 6 }]}>Log Visit Report</Text>
               <Text style={{ color: theme.colors.textSecondary, fontSize: 13, lineHeight: 20, marginBottom: 14 }}>
@@ -416,6 +421,7 @@ export default function HeadPortal({ navigation, route }) {
                     <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 }}>
                       By {r.teamLeaderId?.name || '—'} · {r.dateOfInspection ? new Date(r.dateOfInspection).toLocaleDateString() : ''}
                     </Text>
+                    <ApprovedBy record={r} compact style={{ marginTop: 6 }} />
                   </View>
                   <View style={{ backgroundColor: statusColor(r.status) + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginRight: 8 }}>
                     <Text style={{ color: statusColor(r.status), fontSize: 11, fontWeight: '700', textTransform: 'capitalize' }}>{r.status}</Text>
@@ -424,16 +430,16 @@ export default function HeadPortal({ navigation, route }) {
                 </TouchableOpacity>
               ))
             )}
-          </View>
+          </LazyTab>
 
           {/* ---------- PUBLISH ACTIVITY ---------- */}
-          <View style={{ display: activeTab === 'PublishActivity' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'PublishActivity'}>
             <CreateActivityForm onActivityCreated={fetchData} />
-          </View>
+          </LazyTab>
 
           {/* ---------- MANAGE ACTIVITIES: only the ones this head published,
                so every Edit / Delete offered here is one the API will allow. ---------- */}
-          <View style={{ display: activeTab === 'ManageActivities' ? 'flex' : 'none' }}>
+          <LazyTab active={activeTab === 'ManageActivities'}>
             {myActivities.length === 0 ? (
               <View style={{ alignItems: 'center', marginTop: 40 }}>
                 <Ionicons name="calendar-outline" size={48} color={theme.colors.border} />
@@ -480,7 +486,7 @@ export default function HeadPortal({ navigation, route }) {
                 </View>
               ))
             )}
-          </View>
+          </LazyTab>
         </ScrollView>
       )}
 
@@ -518,10 +524,12 @@ export default function HeadPortal({ navigation, route }) {
         onSelectTab={(t) => { setSelectedTeam(null); setMembers([]); selectTab(t); }}
         actions={[
           { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
-          { label: 'Approvals', icon: 'checkmark-done-outline', onPress: () => navigation.navigate('Approvals') },
+          // Activities only — facial registrations are now the Admin's alone.
+          { label: 'Activity Approvals', icon: 'checkmark-done-outline', onPress: () => navigation.navigate('Approvals') },
           { label: 'Substitution Requests', icon: 'swap-horizontal-outline', onPress: () => navigation.navigate('Substitution') },
           { label: 'Meeting Corner', icon: 'videocam-outline', onPress: () => navigation.navigate('MeetingCorner') },
           { label: 'Apply Leave', icon: 'calendar-outline', onPress: () => navigation.navigate('Leave') },
+          { label: 'School Visit', icon: 'business-outline', onPress: () => navigation.navigate('SchoolVisit') },
           { label: 'Notifications', icon: 'notifications-outline', badge: unread || 0, onPress: () => navigation.navigate('Notifications') },
           { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
           { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },

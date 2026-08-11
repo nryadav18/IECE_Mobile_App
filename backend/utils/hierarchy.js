@@ -134,9 +134,11 @@ function getMeetingRecipientScopeFilter(user) {
 }
 
 /**
- * Everyone allowed to APPROVE OR REJECT something raised by `subject` — used
- * for both facial-registration requests and uploaded activities, so the two
- * always follow the same chain of command.
+ * Everyone allowed to APPROVE OR REJECT an ACTIVITY uploaded by `subject`.
+ *
+ * Facial registrations used to run through here too. They no longer do — they
+ * are the Admin's alone now (see FACE_APPROVERS in roles.js) — so this describes
+ * the activity chain of command only.
  *
  *   trainer                     -> their team leader (the explicit teamLeaderId
  *                                  link AND the leaders of their team) plus the
@@ -264,36 +266,46 @@ function approverLabelFor(subject) {
 }
 
 /**
- * Recipients for an APPROVED substitution: everyone in the team circle of BOTH
- * the subject and the substitute (their teammates + the heads overseeing those
- * teams), plus the two people themselves, plus CEO + Admin.
+ * Recipients for an APPROVED substitution: ONLY the people the substitution
+ * actually concerns —
+ *   - the person being replaced (subject) and the substitute themselves
+ *   - whoever raised the request
+ *   - the subject's direct team leader (they lose a team member)
+ *   - the heads overseeing the subject's team
+ *   - Admin + CEO
  *
- * @param {Array<object>} persons - user docs (subject, substitute)
+ * This deliberately does NOT fan out to every member of both teams. That older
+ * "team circle" behaviour meant a routine substitution notified (and emailed)
+ * a dozen-plus uninvolved colleagues, which is exactly the notification noise
+ * the app was asked to stop. Teammates who need to know are told by their
+ * leader; the app only notifies people with a stake in the decision.
+ *
+ * @param {object} subject    - user doc of the person being replaced
+ * @param {object} substitute - user doc of the person covering
+ * @param {object|string} raiser - user doc (or id) of whoever raised it
  * @returns {Promise<string[]>} de-duplicated recipient ids (strings)
  */
-async function getTeamCircleRecipientIds(persons) {
-  const User = getUser();
+async function getSubstitutionApprovalRecipientIds(subject, substitute, raiser) {
   const ids = new Set();
-  const teamIds = new Set();
 
-  for (const p of persons) {
-    if (!p) continue;
-    ids.add(idStr(p._id));
-    if (p.teamId) teamIds.add(idStr(p.teamId));
-    (p.teamIds || []).forEach((t) => teamIds.add(idStr(t)));
-  }
+  if (subject) ids.add(idStr(subject._id));
+  if (substitute) ids.add(idStr(substitute._id));
+  if (raiser) ids.add(idStr(raiser._id || raiser));
 
-  const involvedTeams = [...teamIds];
-  if (involvedTeams.length > 0) {
-    // Every member of any involved team (leaders + trainers).
-    const members = await User.find({ teamId: { $in: involvedTeams } }).select('_id');
-    members.forEach((m) => ids.add(idStr(m._id)));
-    // Every head overseeing any involved team.
-    const heads = await User.find({
-      role: { $in: HEAD_ROLES },
-      teamIds: { $in: involvedTeams }
-    }).select('_id');
-    heads.forEach((h) => ids.add(idStr(h._id)));
+  if (subject) {
+    // The subject's direct team leader — they are the one who has to work
+    // around the gap, so they are the one teammate who is always told.
+    if (subject.teamLeaderId) ids.add(idStr(subject.teamLeaderId));
+
+    // Heads overseeing the subject's team.
+    if (subject.teamId) {
+      (await getHeadIdsOverTeam(subject.teamId)).forEach((id) => ids.add(idStr(id)));
+    }
+    // A head carries teamIds rather than a single teamId; notify the heads who
+    // share oversight of those teams.
+    for (const t of subject.teamIds || []) {
+      (await getHeadIdsOverTeam(t)).forEach((id) => ids.add(idStr(id)));
+    }
   }
 
   (await getAdminRecipientIds()).forEach((id) => ids.add(idStr(id)));
@@ -350,6 +362,39 @@ async function getLeaveApprovalRecipientIds(applicant) {
   return [...ids];
 }
 
+/**
+ * Recipients for an APPROVED school visit: the person themselves, their team
+ * leader, the heads over their team, and the CEO — the same reporting line as
+ * an approved leave, because those are the people who need to know a staff
+ * member is off-site.
+ *
+ * The Admin is the approver (acts, isn't re-notified), and the visited school's
+ * chairman is deliberately NOT notified — chairmen never see staff attendance
+ * status, exactly as with leave and substitution.
+ *
+ * @param {object} applicant - Mongoose user doc (role, _id, teamId, teamLeaderId, teamIds)
+ * @returns {Promise<string[]>} de-duplicated recipient ids (strings)
+ */
+async function getSchoolVisitApprovalRecipientIds(applicant) {
+  const ids = new Set();
+
+  ids.add(idStr(applicant._id));
+
+  if (applicant.teamLeaderId) ids.add(idStr(applicant.teamLeaderId));
+
+  if (applicant.teamId) {
+    (await getHeadIdsOverTeam(applicant.teamId)).forEach((id) => ids.add(idStr(id)));
+  }
+  // Heads carry teamIds instead of a single teamId.
+  for (const t of applicant.teamIds || []) {
+    (await getHeadIdsOverTeam(t)).forEach((id) => ids.add(idStr(id)));
+  }
+
+  (await getCeoRecipientIds()).forEach((id) => ids.add(idStr(id)));
+
+  return [...ids];
+}
+
 module.exports = {
   getAdminRecipientIds,
   getAdminOnlyRecipientIds,
@@ -363,6 +408,7 @@ module.exports = {
   canApproveFor,
   getApprovalSubjectFilter,
   approverLabelFor,
-  getTeamCircleRecipientIds,
+  getSubstitutionApprovalRecipientIds,
   getLeaveApprovalRecipientIds,
+  getSchoolVisitApprovalRecipientIds,
 };

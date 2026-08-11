@@ -5,6 +5,7 @@ const { sendPushNotification } = require('./pushNotification');
 const { istDateKey, isSunday, approvedHolidaySchoolIds } = require('./holiday');
 const { getSubjectsOnLeaveSet } = require('./substitutionStatus');
 const { getUsersOnLeaveSet } = require('./leaveStatus');
+const { getUsersOnVisitSet } = require('./schoolVisitStatus');
 const { FIELD_STAFF } = require('./roles');
 
 // IST is a fixed offset of UTC+5:30 (India observes no daylight saving).
@@ -55,13 +56,16 @@ async function sendCheckinReminders() {
     });
     const checkedInSet = new Set(checkedInIds.map((id) => id.toString()));
 
-    // People on substitution leave OR approved personal leave today are excused —
-    // don't nudge them.
-    const [subLeaveSet, personalLeaveSet] = await Promise.all([
+    // People on substitution leave, approved personal leave, or an approved
+    // school visit today are excused — don't nudge them. (A school visit is
+    // on-duty time, but they physically cannot check in, so a reminder would
+    // only ask for something the app refuses to accept.)
+    const [subLeaveSet, personalLeaveSet, onVisitSet] = await Promise.all([
       getSubjectsOnLeaveSet(new Date()),
       getUsersOnLeaveSet(new Date()),
+      getUsersOnVisitSet(new Date()),
     ]);
-    const onLeaveSet = new Set([...subLeaveSet, ...personalLeaveSet]);
+    const onLeaveSet = new Set([...subLeaveSet, ...personalLeaveSet, ...onVisitSet]);
 
     // Everyone who marks attendance — trainers, (trainee) team leaders AND
     // heads — who can actually check in (approved face) and has a registered
@@ -137,6 +141,10 @@ async function sendCheckoutReminders() {
       return;
     }
 
+    // A visit approved after someone had already checked in leaves them unable
+    // to check out — don't nag them for something the app now blocks.
+    const onVisitSet = await getUsersOnVisitSet(new Date());
+
     let sent = 0;
     for (const att of pending) {
       const user = att.trainerId;
@@ -144,6 +152,7 @@ async function sendCheckoutReminders() {
       // anything else, and skip users without a registered push token.
       if (!user || !user.expoPushToken) continue;
       if (!FIELD_STAFF.includes(user.role)) continue;
+      if (onVisitSet.has(user._id.toString())) continue;
       // Skip schools that are on an approved holiday today.
       if (att.schoolId && holidaySchoolIds.has(att.schoolId.toString())) continue;
 

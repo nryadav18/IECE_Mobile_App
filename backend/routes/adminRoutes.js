@@ -13,6 +13,7 @@ const {
   getTeamById,
   deleteTeam,
   getUsersPaginated,
+  getDirectory,
   updateUser,
   deleteUser,
   getPendingFacialRegistrations,
@@ -22,6 +23,7 @@ const {
   verifyAndCreateAdmin,
   resendAdminOtps
 } = require('../controllers/adminController');
+const { runMonthlyReport, getMonthlyReportRuns, requestMonthlyReport, getMonthlyReportSubjects } = require('../controllers/monthlyReportController');
 const { protect, authorize } = require('../middleware/auth');
 const { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES } = require('../utils/roles');
 
@@ -37,6 +39,10 @@ router.get(
   authorize(...ADMIN_ROLES, ...LEADER_ROLES, 'trainer', ...HEAD_ROLES),
   getUsersPaginated
 );
+
+// The flat name/email/role directory behind people-pickers that must offer
+// every login regardless of role (e.g. a banner's "Invisible to" list).
+router.get('/directory', authorize(...ADMIN_ROLES), getDirectory);
 
 // Teams: admin manages them; heads/CEO may list them (read-only for CEO).
 router.get('/teams', authorize(...ADMIN_ROLES, ...HEAD_ROLES), getTeams);
@@ -69,5 +75,19 @@ router.post('/create-admin/resend', authorize('creator_admin'), resendAdminOtps)
 router.get('/pending-face-registrations', authorize('creator_admin'), getPendingFacialRegistrations);
 router.put('/approve-face-registration/:id/:schoolId', authorize('creator_admin'), approveFacialRegistration);
 router.delete('/face-registration/:id/:schoolId', authorize('creator_admin'), deleteFacialRegistration);
+
+// Monthly performance report. Normally nobody touches these — the report is a
+// cron that fires at 06:00 IST on the 1st. They exist so a failed send can be
+// re-issued without waiting a month: re-running skips anyone already delivered.
+// Re-issuing is admin-only; the CEO may read the delivery log, matching their
+// read-only role everywhere else.
+router.post('/monthly-report/run', authorize('creator_admin'), runMonthlyReport);
+router.get('/monthly-report/runs', authorize(...ADMIN_ROLES), getMonthlyReportRuns);
+// The Admin portal's "Monthly Performance Report" section: pick a month and a
+// person or team, and the report is emailed to the requesting admin — and only
+// to them. Admin-only, matching every other write action in this file; the CEO
+// still receives the automatic organisation report on the 1st.
+router.get('/monthly-report/subjects', authorize('creator_admin'), getMonthlyReportSubjects);
+router.post('/monthly-report/request', authorize('creator_admin'), requestMonthlyReport);
 
 module.exports = router;

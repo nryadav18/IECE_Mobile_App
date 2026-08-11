@@ -63,9 +63,27 @@ function resolveTarget(data = {}) {
     case 'substitution_rejected':
       return { screen: 'Notifications' };
 
-    // An activity's status changed → the uploader opens it to see the outcome
-    // (and the rejection reason, if any).
+    // A school visit was raised → only the Admin is notified, and only the Admin
+    // has the approval queue, so this one is unambiguous.
+    case 'school_visit_request':
+      return { screen: 'SchoolVisit', params: { initialTab: 'approvals' } };
+
+    // A school visit was decided, or its report is now due → the applicant (a
+    // leader/head) opens their own list. The wider approval audience includes
+    // the CEO, who has no SchoolVisit screen, so those land on the inbox
+    // instead — the screen simply is not registered for them.
+    case 'school_visit_rejected':
+    case 'school_visit_report_due':
+      return { screen: 'SchoolVisit', params: { initialTab: 'mine' } };
+    case 'school_visit_approved':
+    case 'school_visit_updated':
+      return { screen: 'Notifications' };
+
+    // An activity's status changed, or one you were tagged in as an organiser
+    // has been approved → open it. Both carry the activity id, and the detail
+    // screen is registered for every authenticated role.
     case 'activity_status_update':
+    case 'activity_tagged':
       return relatedId
         ? { screen: 'ActivityDetails', params: { activityId: relatedId } }
         : { screen: 'Home' };

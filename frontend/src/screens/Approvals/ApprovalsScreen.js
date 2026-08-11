@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { ThemeContext } from '../../context/ThemeContext';
+import { AuthContext } from '../../context/AuthContext';
 import { useAlert } from '../../context/AlertContext';
 import { roleLabel } from '../../utils/roles';
 import Avatar from '../../components/Avatar';
@@ -16,25 +17,36 @@ import {
   getPendingFaceApprovals, getPendingActivityApprovals,
   approveFaceRegistration, rejectFaceRegistration,
   approveActivity, rejectActivity, approvalError,
+  faceRegistrationKey,
 } from '../../services/approvals';
 
 /**
  * Everything waiting on this person's decision, in one place.
  *
- * The queues are scoped by the SERVER to the people this approver is actually
- * responsible for — a team leader sees their trainers, a head sees their
- * leaders, Admin/CEO see everyone. So anything shown here can genuinely be
- * actioned; there is no "you don't have permission" surprise on tap.
+ * Two queues, two different audiences:
  *
- * Nothing can be rejected without a reason, and that reason is delivered to the
- * person concerned.
+ *  - FACE SCANS are the Admin's alone. Admitting a face into the attendance
+ *    system is an identity decision, so it is not delegated down the hierarchy.
+ *    For everyone else the tab does not exist and the endpoint would refuse
+ *    them anyway — the screen simply becomes the activities queue.
+ *
+ *  - ACTIVITIES stay scoped by the SERVER to the people this approver is
+ *    actually responsible for: a team leader sees their trainers, a head sees
+ *    their whole teams, Admin/CEO see everyone.
+ *
+ * So anything shown here can genuinely be actioned; there is no "you don't have
+ * permission" surprise on tap. Nothing can be rejected without a reason, and
+ * that reason is delivered to the person concerned.
  */
 export default function ApprovalsScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
+  const { user } = useContext(AuthContext);
   const { showAlert } = useAlert();
   const insets = useSafeAreaInsets();
 
-  const [tab, setTab] = useState('faces'); // 'faces' | 'activities'
+  const canReviewFaces = user?.role === 'creator_admin';
+
+  const [tab, setTab] = useState(canReviewFaces ? 'faces' : 'activities'); // 'faces' | 'activities'
   const [faces, setFaces] = useState([]);       // [{ user, reg }]
   const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -48,7 +60,9 @@ export default function ApprovalsScreen({ navigation }) {
     if (isRefresh) setRefreshing(true);
     try {
       const [faceRes, actRes] = await Promise.allSettled([
-        getPendingFaceApprovals(),
+        // Not even asked for unless it can be acted on — otherwise every team
+        // leader opening this screen would fire a request the server rejects.
+        canReviewFaces ? getPendingFaceApprovals() : Promise.resolve({ data: [] }),
         getPendingActivityApprovals(),
       ]);
 
@@ -68,11 +82,17 @@ export default function ApprovalsScreen({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [canReviewFaces]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const faceKey = (row) => `${row.user._id}_${row.reg?.schoolId?._id || row.reg?.schoolId}`;
+  // Identifies one (person, registration) pair. Goes through the shared helper
+  // so a school-less registration gets a real key instead of "…_undefined",
+  // which would collide with every other school-less row.
+  const faceKey = (row) => `${row.user._id}_${faceRegistrationKey(row.reg)}`;
+
+  // What this registration lets them do — a school, or anywhere at all.
+  const faceWhere = (row) => row.reg?.schoolId?.name || 'Anonymous location (no school)';
 
   /* ---------------- face registrations ---------------- */
 
@@ -80,9 +100,15 @@ export default function ApprovalsScreen({ navigation }) {
     const key = faceKey(row);
     setBusyKey(key);
     try {
-      await approveFaceRegistration(row.user._id, row.reg?.schoolId?._id || row.reg?.schoolId);
+      await approveFaceRegistration(row.user._id, faceRegistrationKey(row.reg));
       setFaces((prev) => prev.filter((r) => faceKey(r) !== key));
-      showAlert('Approved', `${row.user.name} can now mark attendance at ${row.reg?.schoolId?.name || 'that school'}.`, 'success');
+      showAlert(
+        'Approved',
+        row.reg?.schoolId?.name
+          ? `${row.user.name} can now mark attendance at ${row.reg.schoolId.name}.`
+          : `${row.user.name} can now check in and out from any location.`,
+        'success'
+      );
     } catch (e) {
       showAlert('Error', approvalError(e), 'error');
     } finally {
@@ -113,7 +139,7 @@ export default function ApprovalsScreen({ navigation }) {
     try {
       if (rejecting.kind === 'face') {
         const row = rejecting.row;
-        await rejectFaceRegistration(row.user._id, row.reg?.schoolId?._id || row.reg?.schoolId, reason);
+        await rejectFaceRegistration(row.user._id, faceRegistrationKey(row.reg), reason);
         const key = faceKey(row);
         setFaces((prev) => prev.filter((r) => faceKey(r) !== key));
         showAlert('Rejected', `${row.user.name} has been told why and can register again.`, 'success');
@@ -199,16 +225,22 @@ export default function ApprovalsScreen({ navigation }) {
           <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={{ color: theme.colors.textPrimary, fontSize: 19, fontWeight: '700', marginLeft: 12, flex: 1 }}>Approvals</Text>
+          <Text style={{ color: theme.colors.textPrimary, fontSize: 19, fontWeight: '700', marginLeft: 12, flex: 1 }}>
+            {canReviewFaces ? 'Approvals' : 'Activity Approvals'}
+          </Text>
           <NotificationBell navigation={navigation} />
         </View>
       </View>
 
-      {/* Queue switcher */}
-      <View style={{ flexDirection: 'row', margin: 16, marginBottom: 8, padding: 4, borderRadius: 14, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border }}>
-        <Tab id="faces" label="Face Scans" count={faces.length} icon="scan-outline" />
-        <Tab id="activities" label="Activities" count={activities.length} icon="images-outline" />
-      </View>
+      {/* Queue switcher — only a switcher when there are two queues to switch
+          between. Face scans belong to the Admin, so for everyone else this
+          screen is simply the activities queue. */}
+      {canReviewFaces && (
+        <View style={{ flexDirection: 'row', margin: 16, marginBottom: 8, padding: 4, borderRadius: 14, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border }}>
+          <Tab id="faces" label="Face Scans" count={faces.length} icon="scan-outline" />
+          <Tab id="activities" label="Activities" count={activities.length} icon="images-outline" />
+        </View>
+      )}
 
       <ScrollView
         style={{ flex: 1 }}
@@ -240,9 +272,13 @@ export default function ApprovalsScreen({ navigation }) {
                   </View>
 
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
-                    <Ionicons name="business-outline" size={14} color={theme.colors.textSecondary} />
+                    <Ionicons
+                      name={row.reg?.schoolId?.name ? 'business-outline' : 'navigate-circle-outline'}
+                      size={14}
+                      color={theme.colors.textSecondary}
+                    />
                     <Text style={{ color: theme.colors.textSecondary, fontSize: 12.5, marginLeft: 6, flex: 1 }} numberOfLines={1}>
-                      {row.reg?.schoolId?.name || 'School'}
+                      {faceWhere(row)}
                     </Text>
                   </View>
 
@@ -325,7 +361,7 @@ export default function ApprovalsScreen({ navigation }) {
         title={rejecting?.kind === 'face' ? 'Reject Face Registration' : 'Reject Activity'}
         subject={
           rejecting?.kind === 'face'
-            ? `${rejecting.row.user.name} — ${rejecting.row.reg?.schoolId?.name || 'school'}`
+            ? `${rejecting.row.user.name} — ${faceWhere(rejecting.row)}`
             : rejecting?.activity
               ? `"${rejecting.activity.name}" by ${rejecting.activity.uploaderId?.name || 'unknown'}`
               : ''

@@ -12,8 +12,10 @@ import { roleLabel } from '../../utils/roles';
 import { prettyDate, dayCountInclusive } from '../../utils/dates';
 import Avatar from '../../components/Avatar';
 import StatusBadge from '../../components/StatusBadge';
+import ApprovedBy from '../../components/ApprovedBy';
 import NotificationBell from '../../components/NotificationBell';
 import ApplyLeaveForm from '../../components/ApplyLeaveForm';
+import EmergencyLeaveSection from '../../components/EmergencyLeaveSection';
 import { SkeletonList } from '../../components/Skeleton';
 import { getLeaveRequests, cancelLeave, leaveError } from '../../services/leave';
 
@@ -26,11 +28,15 @@ export default function LeaveScreen({ navigation, route }) {
   // Only the Admin decides leave requests.
   const isApprover = user?.role === 'creator_admin';
 
+  // The Admin's third tab is the one place leave flows downward — see
+  // EmergencyLeaveSection. It is admin-only by construction: this screen is the
+  // only route to it, and only `creator_admin` ever renders these tabs.
   const TABS = useMemo(
     () =>
       isApprover
         ? [
             { key: 'approvals', label: 'Approvals', icon: 'checkmark-done-outline' },
+            { key: 'emergency', label: 'Emergency', icon: 'flash-outline' },
             { key: 'history', label: 'History', icon: 'time-outline' },
           ]
         : [
@@ -105,7 +111,7 @@ export default function LeaveScreen({ navigation, route }) {
     ]);
   };
 
-  const RequestCard = ({ req, actionable }) => (
+  const RequestCard = ({ req }) => (
     <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
         <Avatar name={req.applicant?.name} size={40} />
@@ -117,6 +123,12 @@ export default function LeaveScreen({ navigation, route }) {
             {roleLabel(req.applicant?.role)}
           </Text>
         </View>
+        {req.isEmergency && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#DC262618', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3, marginRight: 6 }}>
+            <Ionicons name="flash" size={11} color="#DC2626" />
+            <Text style={{ color: '#DC2626', fontSize: 10.5, fontWeight: '800', marginLeft: 3 }}>EMERGENCY</Text>
+          </View>
+        )}
         <StatusBadge status={req.status} />
       </View>
 
@@ -143,17 +155,27 @@ export default function LeaveScreen({ navigation, route }) {
         </View>
       )}
 
+      {/* Who decided it. Renders itself away for anyone but the Admin/CEO, and
+          for requests still waiting on a decision. */}
+      <ApprovedBy record={req} compact style={{ marginTop: 8 }} />
+
       {/* Actions */}
-      {actionable && req.status === 'pending' && (
+      {/* The Admin opens a PENDING request to decide it and an APPROVED one to
+          change its dates, so both lead to the same screen — only the promise
+          on the button changes. A decided-and-closed request (rejected or
+          cancelled) has nothing left to do, so it stays a plain card. */}
+      {isApprover && (req.status === 'pending' || req.status === 'approved') && (
         <TouchableOpacity
           style={[styles.reviewBtn, { backgroundColor: theme.colors.primary }]}
           onPress={() => navigation.navigate('LeaveApproval', { requestId: req._id })}
         >
-          <Ionicons name="eye-outline" size={16} color="#fff" />
-          <Text style={styles.reviewBtnText}>View & Decide</Text>
+          <Ionicons name={req.status === 'pending' ? 'eye-outline' : 'create-outline'} size={16} color="#fff" />
+          <Text style={styles.reviewBtnText}>
+            {req.status === 'pending' ? 'View & Decide' : 'View / Edit Dates'}
+          </Text>
         </TouchableOpacity>
       )}
-      {!actionable && req.status === 'pending' && (
+      {!isApprover && req.status === 'pending' && (
         <TouchableOpacity
           style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', opacity: busyId === req._id ? 0.5 : 1 }}
           disabled={busyId === req._id}
@@ -179,7 +201,7 @@ export default function LeaveScreen({ navigation, route }) {
     </View>
   );
 
-  const renderList = (items, { actionable, emptyIcon, emptyText }) => {
+  const renderList = (items, { emptyIcon, emptyText }) => {
     if (loadingList) return <SkeletonList count={4} avatar lines={2} trailing style={{ marginTop: 4 }} />;
     if (!items.length) return <EmptyState icon={emptyIcon} text={emptyText} />;
     return (
@@ -191,7 +213,7 @@ export default function LeaveScreen({ navigation, route }) {
         }
       >
         {items.map((req) => (
-          <RequestCard key={req._id} req={req} actionable={actionable} />
+          <RequestCard key={req._id} req={req} />
         ))}
       </ScrollView>
     );
@@ -258,11 +280,12 @@ export default function LeaveScreen({ navigation, route }) {
           />
         )}
         {activeTab === 'mine' &&
-          renderList(mine, { actionable: false, emptyIcon: 'time-outline', emptyText: 'You haven’t applied for any leave yet.' })}
+          renderList(mine, { emptyIcon: 'time-outline', emptyText: 'You haven’t applied for any leave yet.' })}
+        {activeTab === 'emergency' && <EmergencyLeaveSection />}
         {activeTab === 'approvals' &&
-          renderList(approvals, { actionable: true, emptyIcon: 'checkmark-done-outline', emptyText: 'No pending leave requests to review.' })}
+          renderList(approvals, { emptyIcon: 'checkmark-done-outline', emptyText: 'No pending leave requests to review.' })}
         {activeTab === 'history' &&
-          renderList(history, { actionable: false, emptyIcon: 'time-outline', emptyText: 'No leave requests yet.' })}
+          renderList(history, { emptyIcon: 'time-outline', emptyText: 'No leave requests yet.' })}
       </KeyboardAvoidingView>
     </View>
   );

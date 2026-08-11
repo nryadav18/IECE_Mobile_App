@@ -113,7 +113,6 @@ async function seed() {
       associationYear: ASSOC_YEARS[schoolCount % ASSOC_YEARS.length],
       classCoverage: '8th to 10th',
       state: STATES[schoolCount % STATES.length],
-      totalStrength: 80 + schoolCount * 5,
     });
   };
 

@@ -10,6 +10,7 @@ import { MotiView } from 'moti';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import CustomAlert from '../components/CustomAlert';
+import ApprovedBy from '../components/ApprovedBy';
 import CustomDropdown from '../components/CustomDropdown';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import CreateActivityForm from '../components/CreateActivityForm';
@@ -23,12 +24,14 @@ import { useBadges } from '../context/BadgeContext';
 import { Image } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
-import { isOffToday } from '../utils/holiday';
+import { isOffToday, HOLIDAY_APPROVED_COLOR, HOLIDAY_PENDING_COLOR } from '../utils/holiday';
 import { buildCalendarMarks } from '../utils/calendarColors';
 import { deriveAttendanceActions, findTodayAttendance } from '../utils/attendanceActions';
+import { findActiveVisit } from '../utils/schoolVisitMarks';
 import CalendarLegend from '../components/CalendarLegend';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import { SectionSkeleton } from '../components/Skeleton';
+import LazyTab from '../components/LazyTab';
 import { useSectionTransition } from '../hooks/useSectionTransition';
 
 const TAB_ITEMS = [
@@ -76,6 +79,8 @@ export default function TeamLeaderPortal({ navigation, route }) {
   // Windows where THIS user is covering for someone else -> painted On Substitution.
   const [substitutionDuties, setSubstitutionDuties] = useState([]);
   const [leaveDays, setLeaveDays] = useState([]);
+  // Approved school visits -> painted On School Visit (on-duty, off-site).
+  const [visitDays, setVisitDays] = useState([]);
   const [faceStatus, setFaceStatus] = useState('none'); // aggregate: 'none' | 'pending' | 'approved'
   const [mySchools, setMySchools] = useState([]);        // [{ _id, name }] assigned schools
   const [faceRegs, setFaceRegs] = useState([]);          // per-school face registrations
@@ -157,6 +162,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
       setSubstitutionLeaves(attendanceRes.data.substitutionLeaves || []);
       setSubstitutionDuties(attendanceRes.data.substitutionDuties || []);
       setLeaveDays(attendanceRes.data.leaveDays || []);
+      setVisitDays(attendanceRes.data.visitDays || []);
     } catch (err) {
       console.log('Error fetching attendance', err);
     }
@@ -192,6 +198,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
         setSubstitutionLeaves(attendanceRes.value.data.substitutionLeaves || []);
         setSubstitutionDuties(attendanceRes.value.data.substitutionDuties || []);
         setLeaveDays(attendanceRes.value.data.leaveDays || []);
+        setVisitDays(attendanceRes.value.data.visitDays || []);
       }
       // Log any individual failures without discarding the successful results.
       [reportsRes, trainersRes, activitiesRes, attendanceRes].forEach((r, i) => {
@@ -246,9 +253,12 @@ export default function TeamLeaderPortal({ navigation, route }) {
   // the list can never take the tab down).
   const todayAtt = findTodayAttendance(attendanceRecords);
 
-  // Today is a non-working day only when the school has an approved holiday.
+  // Today is a non-working day only when the SELECTED school has an approved
+  // holiday. The calendar shows every school's closures, but only the one being
+  // marked at can close this day — the server checks per school, so asking
+  // about all of them would grey out buttons the API would have accepted.
   // Sundays stay workable — check-in / check-out remain enabled on them.
-  const isHolidayToday = isOffToday(holidays);
+  const isHolidayToday = isOffToday(holidays, selectedSchoolId);
 
   const getInputStyle = (field) => {
     const isFocused = focusFields[field];
@@ -359,7 +369,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
       }
     >
 
-      <View style={{ display: activeTab === 'Reports' ? 'flex' : 'none' }}>
+      <LazyTab active={activeTab === 'Reports'}>
         {/* Log Visit — launches the full IECE EGM Visit report form */}
         <MotiView
           style={[styles.formCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
@@ -387,9 +397,9 @@ export default function TeamLeaderPortal({ navigation, route }) {
             </TouchableOpacity>
           )}
         </MotiView>
-      </View>
+      </LazyTab>
 
-      <View style={{ display: activeTab === 'MyReports' ? 'flex' : 'none' }}>
+      <LazyTab active={activeTab === 'MyReports'}>
         {reports.length === 0 ? (
            <View style={{ alignItems: 'center', marginTop: 40 }}>
              <Ionicons name="document-text-outline" size={48} color={theme.colors.border} />
@@ -431,6 +441,10 @@ export default function TeamLeaderPortal({ navigation, route }) {
                        </Text>
                      </View>
                    </View>
+
+                   {/* The "Approver:" line above names whoever currently runs the
+                       school — this names who ACTUALLY decided it. Admin/CEO only. */}
+                   <ApprovedBy record={report} compact style={{ marginTop: 10 }} />
 
                    <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
@@ -474,9 +488,9 @@ export default function TeamLeaderPortal({ navigation, route }) {
              );
            })
         )}
-      </View>
+      </LazyTab>
 
-      <View style={{ display: activeTab === 'MyTeam' ? 'flex' : 'none' }}>
+      <LazyTab active={activeTab === 'MyTeam'}>
         {trainers.length === 0 ? (
            <View style={{ alignItems: 'center', marginTop: 40 }}>
              <Ionicons name="people-outline" size={48} color={theme.colors.border} />
@@ -499,9 +513,9 @@ export default function TeamLeaderPortal({ navigation, route }) {
              </View>
            ))
         )}
-      </View>
+      </LazyTab>
 
-      <View style={{ display: activeTab === 'Attendance' ? 'flex' : 'none', marginTop: 16 }}>
+      <LazyTab active={activeTab === 'Attendance'} style={{ marginTop: 16 }}>
         {/* School selector — shown when the leader works under multiple schools */}
         {mySchools.length > 1 && (
           <View style={{ marginBottom: 14 }}>
@@ -547,17 +561,38 @@ export default function TeamLeaderPortal({ navigation, route }) {
             selectedSchoolId,
             regStatus,
             isHolidayToday,
+            // An approved school visit pauses check-in/check-out entirely.
+            activeVisit: findActiveVisit(visitDays),
           });
 
           return (
             <View style={{ marginBottom: 12 }}>
-              {regStatus === 'none' && (
+              {/* A rejection is a "try again", not a dead end — the reason is
+                  shown and the button comes straight back. */}
+              {regStatus === 'rejected' && (
+                <View style={{ backgroundColor: '#FEE2E2', borderColor: '#EF4444', borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="close-circle-outline" size={16} color="#B91C1C" style={{ marginRight: 6 }} />
+                    <Text style={{ color: '#B91C1C', fontSize: 12.5, fontWeight: '800', flex: 1 }}>Registration rejected — {schoolName}</Text>
+                  </View>
+                  {!!reg?.rejectionReason && (
+                    <Text style={{ color: '#7F1D1D', fontSize: 12, marginTop: 6, lineHeight: 17 }}>{reg.rejectionReason}</Text>
+                  )}
+                  <Text style={{ color: '#7F1D1D', fontSize: 12, marginTop: 6, lineHeight: 17 }}>
+                    Please register again — your new recording goes back to the admin for approval.
+                  </Text>
+                </View>
+              )}
+
+              {(regStatus === 'none' || regStatus === 'rejected') && (
                 <TouchableOpacity
                   style={[styles.actionBtn, { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '10' }]}
                   onPress={() => navigation.navigate('FaceRegistration', { schoolId: selectedSchoolId, schoolName })}
                 >
                   <Ionicons name="scan-outline" size={20} color={theme.colors.primary} />
-                  <Text style={{ color: theme.colors.primary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>Register Face for {schoolName}</Text>
+                  <Text style={{ color: theme.colors.primary, fontSize: 13, marginLeft: 6, fontWeight: '600' }}>
+                    {regStatus === 'rejected' ? `Register Face Again for ${schoolName}` : `Register Face for ${schoolName}`}
+                  </Text>
                 </TouchableOpacity>
               )}
 
@@ -613,9 +648,9 @@ export default function TeamLeaderPortal({ navigation, route }) {
         })()}
 
         {isHolidayToday && (
-          <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#87CEEB' }}>
-            <Ionicons name="sunny-outline" size={16} color="#0277BD" style={{ marginRight: 8 }} />
-            <Text style={{ color: '#01579B', fontSize: 12, fontWeight: '600', flex: 1 }}>Today is a holiday. Check-in and check-out are disabled.</Text>
+          <View style={{ backgroundColor: HOLIDAY_PENDING_COLOR, borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: HOLIDAY_APPROVED_COLOR }}>
+            <Ionicons name="sunny-outline" size={16} color={HOLIDAY_APPROVED_COLOR} style={{ marginRight: 8 }} />
+            <Text style={{ color: HOLIDAY_APPROVED_COLOR, fontSize: 12, fontWeight: '600', flex: 1 }}>Today is a holiday. Check-in and check-out are disabled.</Text>
           </View>
         )}
 
@@ -635,6 +670,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
                 attendance: attendanceRecords,
                 holidays,
                 leaveDays,
+                visitDays,
                 // Days someone else was approved to cover for this person —
                 // they are not expected in, so these read as On Leave.
                 substitutionLeaves,
@@ -661,17 +697,17 @@ export default function TeamLeaderPortal({ navigation, route }) {
           />
           <CalendarLegend />
         </View>
-      </View>
+      </LazyTab>
 
-      <View style={{ display: activeTab === 'SchoolHoliday' ? 'flex' : 'none', marginTop: 16 }}>
+      <LazyTab active={activeTab === 'SchoolHoliday'} style={{ marginTop: 16 }}>
         <ApplyHolidaySection onChanged={fetchHolidays} />
-      </View>
+      </LazyTab>
 
-      <View style={{ display: activeTab === 'Events' ? 'flex' : 'none' }}>
+      <LazyTab active={activeTab === 'Events'}>
         <CreateActivityForm onActivityCreated={fetchData} />
-      </View>
+      </LazyTab>
 
-      <View style={{ display: activeTab === 'ManageEvents' ? 'flex' : 'none', marginTop: 16 }}>
+      <LazyTab active={activeTab === 'ManageEvents'} style={{ marginTop: 16 }}>
         {myActivities.length === 0 ? (
            <View style={{ alignItems: 'center', marginTop: 40 }}>
              <Ionicons name="calendar-outline" size={48} color={theme.colors.border} />
@@ -708,7 +744,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
              </View>
            ))
         )}
-      </View>
+      </LazyTab>
 
     </ScrollView>
       )}
@@ -722,10 +758,12 @@ export default function TeamLeaderPortal({ navigation, route }) {
       onSelectTab={selectTab}
       actions={[
         { label: 'My Profile', icon: 'person-outline', onPress: () => navigation.navigate('UserProfile', { userId: 'me' }) },
-        { label: 'Approvals', icon: 'checkmark-done-outline', onPress: () => navigation.navigate('Approvals') },
+        // Activities only — facial registrations are now the Admin's alone.
+        { label: 'Activity Approvals', icon: 'checkmark-done-outline', onPress: () => navigation.navigate('Approvals') },
         { label: 'Substitution Requests', icon: 'swap-horizontal-outline', onPress: () => navigation.navigate('Substitution') },
         { label: 'Meeting Corner', icon: 'videocam-outline', onPress: () => navigation.navigate('MeetingCorner') },
         { label: 'Apply Leave', icon: 'calendar-outline', onPress: () => navigation.navigate('Leave') },
+        { label: 'School Visit', icon: 'business-outline', onPress: () => navigation.navigate('SchoolVisit') },
         { label: 'Notifications', icon: 'notifications-outline', badge: unread || 0, onPress: () => navigation.navigate('Notifications') },
         { label: 'Back to Dashboard', icon: 'home-outline', onPress: () => navigation.goBack() },
         { label: 'Logout', icon: 'log-out-outline', danger: true, onPress: () => logout() },

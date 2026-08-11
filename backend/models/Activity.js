@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const decisionSchema = require('./decisionSchema');
 
 const activitySchema = new mongoose.Schema({
   name: {
@@ -37,6 +38,16 @@ const activitySchema = new mongoose.Schema({
   },
   rejectionRemark: {
     type: String
+  },
+  // Snapshot of WHO decided this and what they did — the one field every screen
+  // reads to render "Approved by". Shown to the Admin and CEO only.
+  //
+  // Activities are the flow where this matters most: they are decided by team
+  // leaders, by heads, AND by either admin, so before this field the Admin had
+  // no way at all to tell which of them let something through.
+  decidedBy: {
+    type: decisionSchema,
+    default: null
   },
   // "Star Activity" — a head can highlight a standout activity. Once starred it
   // is flagged everywhere the activity is shown (team members, admin, CEO).

@@ -2,6 +2,7 @@ const VisitReport = require('../models/VisitReport');
 const User = require('../models/User');
 const { HEAD_ROLES, LEADER_ROLES } = require('../utils/roles');
 const { sendPushNotification } = require('../utils/pushNotification');
+const { decisionOf, trail } = require('../utils/approvalTrail');
 
 const REPORT_FIELDS = [
   'trainerId',
@@ -115,15 +116,34 @@ exports.updateReportStatus = async (req, res) => {
       return res.status(400).json({ success: false, error: 'A reason for rejection is required' });
     }
 
+    const decidedAt = new Date();
     const report = await VisitReport.findByIdAndUpdate(
       req.params.id,
-      { status, rejectionRemark, chairmanFeedback: feedback.trim() },
+      {
+        status,
+        rejectionRemark,
+        chairmanFeedback: feedback.trim(),
+        decisionAt: decidedAt,
+        decidedBy: decisionOf(req.user, status, decidedAt),
+      },
       { returnDocument: 'after', runValidators: true }
-    );
+    ).populate('teamLeaderId', 'name role');
 
     if (!report) {
       return res.status(404).json({ success: false, error: 'Report not found' });
     }
+
+    trail({
+      entityType: 'visit_report',
+      entityId: report._id,
+      entityLabel: `Visit report · ${report.personMet || ''}`.trim(),
+      subject: report.teamLeaderId,
+      actor: req.user,
+      action: status,
+      note: status === 'rejected' ? rejectionRemark || '' : feedback.trim(),
+      school: report.schoolId,
+      at: decidedAt,
+    });
 
     // Send notification back to TL
     let msg = `Your visit report has been ${status} by the chairman.`;
@@ -132,7 +152,9 @@ exports.updateReportStatus = async (req, res) => {
     }
     const tlTitle = `Visit Report ${status.charAt(0).toUpperCase() + status.slice(1)}`;
 
-    const tl = await User.findById(report.teamLeaderId);
+    // teamLeaderId is populated above (name/role only), so re-fetch the full
+    // user by id for the push token.
+    const tl = await User.findById(report.teamLeaderId?._id || report.teamLeaderId);
     if (tl && tl.expoPushToken) {
       await sendPushNotification(tl.expoPushToken, tlTitle, msg, { type: 'report_status_update', relatedId: report._id.toString() });
     }
@@ -188,8 +210,19 @@ exports.updateReport = async (req, res) => {
       report.discussionContext = legacy.discussionContext;
     }
 
+    const decidedAt = new Date();
     if (req.body.status !== undefined && ['pending', 'approved', 'rejected'].includes(req.body.status)) {
       report.status = req.body.status;
+      // This route can decide a report too, so it has to record the decider —
+      // otherwise an approval made from the edit screen stays anonymous while
+      // the same approval made from the review screen does not.
+      if (req.body.status === 'pending') {
+        report.decidedBy = null;
+        report.decisionAt = null;
+      } else if (req.body.status !== previousStatus) {
+        report.decidedBy = decisionOf(req.user, req.body.status, decidedAt);
+        report.decisionAt = decidedAt;
+      }
     }
 
     if (req.body.rejectionRemark !== undefined) {
@@ -197,6 +230,20 @@ exports.updateReport = async (req, res) => {
     }
 
     await report.save();
+
+    if (req.body.status && req.body.status !== previousStatus && req.body.status !== 'pending') {
+      trail({
+        entityType: 'visit_report',
+        entityId: report._id,
+        entityLabel: `Visit report · ${report.personMet || ''}`.trim(),
+        subject: { _id: report.teamLeaderId },
+        actor: req.user,
+        action: req.body.status,
+        note: req.body.rejectionRemark || '',
+        school: report.schoolId,
+        at: decidedAt,
+      });
+    }
 
     if (req.body.status && req.body.status !== previousStatus) {
       // Send notification back to TL
@@ -224,7 +271,11 @@ exports.updateReport = async (req, res) => {
       }
     } else if (previousStatus === 'approved' || previousStatus === 'rejected') {
       if (isTL) {
+        // Back into the queue as a fresh report — the previous decision was on a
+        // version that no longer exists, so its approver goes with it.
         report.status = 'pending';
+        report.decidedBy = null;
+        report.decisionAt = null;
         await report.save();
         await notifyChairmanForApproval(report, req.user.id);
       }

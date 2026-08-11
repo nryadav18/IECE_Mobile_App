@@ -8,6 +8,7 @@ import { ThemeContext } from '../context/ThemeContext';
 import api from '../services/api';
 import { Skeleton, ShineSweep } from '../components/Skeleton';
 import CustomAlert from '../components/CustomAlert';
+import ApprovedBy from '../components/ApprovedBy';
 import CustomDropdown from '../components/CustomDropdown';
 import MultiSelectField from '../components/MultiSelectField';
 import TeamMultiSelectModal from '../components/TeamMultiSelectModal';
@@ -41,6 +42,7 @@ export default function ManageScreen({ navigation }) {
     name: '',
     email: '',
     password: '',
+    anonymousLocation: false,
     schoolIds: [],
     teamLeaderId: '',
     teamId: '',
@@ -108,6 +110,7 @@ export default function ManageScreen({ navigation }) {
       name: item.name || '',
       email: item.email || '',
       password: '',
+      anonymousLocation: !!item.anonymousLocation,
       schoolIds: Array.isArray(item.schoolIds) && item.schoolIds.length
         ? item.schoolIds.map(s => s?._id || s)
         : (item.schoolId ? [item.schoolId?._id || item.schoolId] : []),
@@ -127,12 +130,19 @@ export default function ManageScreen({ navigation }) {
       return;
     }
     
+    const isHeadEdit = HEAD_ROLES.includes(editingUser?.role);
+    const goingAnonymous = isHeadEdit && editForm.anonymousLocation;
+
     setUpdating(true);
     try {
       const payload = {
         name: editForm.name,
         email: editForm.email,
-        schoolIds: editForm.schoolIds,
+        // A head switched to Anonymous Location belongs to no school by
+        // definition, so the empty list travels WITH the flag — sending the old
+        // schools alongside it is what lets the two states half-apply.
+        ...(isHeadEdit ? { anonymousLocation: !!editForm.anonymousLocation } : null),
+        schoolIds: goingAnonymous ? [] : editForm.schoolIds,
         teamLeaderId: editForm.teamLeaderId || undefined,
         teamId: editForm.teamId || undefined,
         teamIds: HEAD_ROLES.includes(editingUser?.role) ? editForm.teamIds : undefined,
@@ -155,6 +165,17 @@ export default function ManageScreen({ navigation }) {
     }
   };
 
+  // "Created by" for the staff table. Only the Admin and CEO ever receive
+  // createdByAdmin (the server strips it for everyone else), and accounts made
+  // by the onboarding scripts or before this field existed have none — those
+  // read "—" rather than inventing a creator.
+  const createdByText = (item) => {
+    const c = item?.createdByAdmin;
+    if (!c?.name) return '—';
+    const label = roleLabel(c.role);
+    return label ? `${c.name} (${label})` : c.name;
+  };
+
   // Normalize a user's per-school face registrations into what the picker needs.
   // `schoolId` arrives populated ({_id, name}) but may be a bare id on older
   // payloads, so fall back to looking the name up in the schools list.
@@ -162,8 +183,15 @@ export default function ManageScreen({ navigation }) {
     (user?.faceRegistrations || []).map((reg) => {
       const raw = reg.schoolId;
       const id = raw?._id || raw;
+      // No school at all: an anonymous-location head's single registration. It
+      // is addressed by the literal 'anonymous' rather than by an id — see
+      // services/approvals.
+      // decidedBy rides along so the picker can show which admin let this face
+      // into the attendance system. It is only present for Admin/CEO callers —
+      // the server strips it for everyone else.
+      if (!id) return { id: 'anonymous', name: 'Anonymous location (no school)', status: reg.status, decidedBy: reg.decidedBy };
       const name = raw?.name || schools.find((s) => s._id === String(id))?.name || 'Unknown school';
-      return { id: String(id), name, status: reg.status };
+      return { id: String(id), name, status: reg.status, decidedBy: reg.decidedBy };
     });
 
   const handleDeleteFaceRegistration = (user) => {
@@ -279,6 +307,10 @@ export default function ManageScreen({ navigation }) {
   };
 
   const getSchoolName = (user) => {
+    // An anonymous-location head has no school BY DESIGN, so "None" would read
+    // as something missing rather than as the setting it is.
+    if (user?.anonymousLocation && HEAD_ROLES.includes(user.role)) return 'Anonymous Location';
+
     // Prefer the multi-school list; fall back to the legacy single school.
     if (Array.isArray(user?.schoolIds) && user.schoolIds.length) {
       const names = user.schoolIds.map((s) =>
@@ -354,12 +386,13 @@ export default function ManageScreen({ navigation }) {
 
   // Column widths per tab — kept in sync with the real header/rows below so the
   // skeleton rows line up perfectly with the loaded table (feels seamless).
+  // (The trailing 150 on each row is the "Created By" column.)
   const skeletonColumns = {
-    Schools: [60, 140, 120, 170, 90, 85, 85],
-    Trainers: [60, 120, 170, 140, 120, 100],
-    Heads: [60, 140, 190, 130, 130],
-    TeamLeaders: [60, 130, 150, 180, 150, 130, 100],
-  }[activeTab] || [60, 140, 170, 130, 120];
+    Schools: [60, 140, 120, 170, 90, 85, 85, 150],
+    Trainers: [60, 120, 170, 140, 120, 100, 150],
+    Heads: [60, 140, 190, 130, 130, 150],
+    TeamLeaders: [60, 130, 150, 180, 150, 130, 100, 150],
+  }[activeTab] || [60, 140, 170, 130, 120, 150];
 
   const renderSkeletonTable = () => (
     <ScrollView key={`sk-${activeTab}`} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, paddingVertical: 10 }}>
@@ -579,6 +612,9 @@ export default function ManageScreen({ navigation }) {
                     <View style={[styles.thContainer, { width: 85 }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Classes</Text>
                     </View>
+                    <View style={[styles.thContainer, { width: 150 }]}>
+                      <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Created By</Text>
+                    </View>
                     <View style={[styles.thContainer, { width: 80, alignItems: 'center' }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary, textAlign: 'center' }]}>Actions</Text>
                     </View>
@@ -600,6 +636,9 @@ export default function ManageScreen({ navigation }) {
                     <View style={[styles.thContainer, { width: 100, alignItems: 'center' }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary, textAlign: 'center' }]}>Face Status</Text>
                     </View>
+                    <View style={[styles.thContainer, { width: 150 }]}>
+                      <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Created By</Text>
+                    </View>
                     <View style={[styles.thContainer, { width: 100, alignItems: 'center' }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary, textAlign: 'center' }]}>Actions</Text>
                     </View>
@@ -617,6 +656,9 @@ export default function ManageScreen({ navigation }) {
                     </View>
                     <View style={[styles.thContainer, { width: 130 }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Teams</Text>
+                    </View>
+                    <View style={[styles.thContainer, { width: 150 }]}>
+                      <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Created By</Text>
                     </View>
                     <View style={[styles.thContainer, { width: 100, alignItems: 'center' }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary, textAlign: 'center' }]}>Actions</Text>
@@ -641,6 +683,9 @@ export default function ManageScreen({ navigation }) {
                     </View>
                     <View style={[styles.thContainer, { width: 100, alignItems: 'center' }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary, textAlign: 'center' }]}>Face Status</Text>
+                    </View>
+                    <View style={[styles.thContainer, { width: 150 }]}>
+                      <Text style={[styles.thText, { color: theme.colors.textPrimary }]}>Created By</Text>
                     </View>
                     <View style={[styles.thContainer, { width: 100, alignItems: 'center' }]}>
                       <Text style={[styles.thText, { color: theme.colors.textPrimary, textAlign: 'center' }]}>Actions</Text>
@@ -689,6 +734,9 @@ export default function ManageScreen({ navigation }) {
                           <View style={[styles.tdContainer, { width: 85 }]}>
                             <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{item.schoolId?.classCoverage || 'N/A'}</Text>
                           </View>
+                          <View style={[styles.tdContainer, { width: 150 }]}>
+                            <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{createdByText(item)}</Text>
+                          </View>
                         </>
                       ) : activeTab === 'Trainers' ? (
                         <>
@@ -722,6 +770,9 @@ export default function ManageScreen({ navigation }) {
                               </View>
                             )}
                           </View>
+                          <View style={[styles.tdContainer, { width: 150 }]}>
+                            <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{createdByText(item)}</Text>
+                          </View>
                         </>
                       ) : activeTab === 'Heads' ? (
                         <>
@@ -740,6 +791,9 @@ export default function ManageScreen({ navigation }) {
                             <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>
                               {(item.teamIds || []).map(t => t?.name || '').filter(Boolean).join(', ') || `${item.teamIds?.length || 0} team(s)`}
                             </Text>
+                          </View>
+                          <View style={[styles.tdContainer, { width: 150 }]}>
+                            <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{createdByText(item)}</Text>
                           </View>
                         </>
                       ) : (
@@ -776,6 +830,9 @@ export default function ManageScreen({ navigation }) {
                                 <Text style={[styles.badgeText, { color: theme.colors.textSecondary }]}>None</Text>
                               </View>
                             )}
+                          </View>
+                          <View style={[styles.tdContainer, { width: 150 }]}>
+                            <Text style={[styles.tdText, { color: theme.colors.textSecondary }]} numberOfLines={1}>{createdByText(item)}</Text>
                           </View>
                         </>
                       )}
@@ -1013,13 +1070,55 @@ export default function ManageScreen({ navigation }) {
 
                 {HEAD_ROLES.includes(editingUser?.role) && (
                   <>
-                    <MultiSelectField
-                      label="Assign School(s)"
-                      data={schools}
-                      selectedIds={editForm.schoolIds}
-                      onChange={(ids) => setEditForm({ ...editForm, schoolIds: ids })}
-                      placeholder="Select one or more schools"
-                    />
+                    {/* Heads only: work anywhere, attached to no school.
+                        Switching it on here detaches their schools (the stint
+                        stays in their school history) and takes effect the
+                        moment Save is pressed — from then on they can check in
+                        and out from anywhere, with no geofence. Switching it
+                        off brings the school picker back and asks for schools
+                        again, because a head with neither is not a valid state. */}
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => setEditForm({
+                        ...editForm,
+                        anonymousLocation: !editForm.anonymousLocation,
+                        schoolIds: !editForm.anonymousLocation ? [] : (editForm.schoolIds || []),
+                      })}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'flex-start',
+                        borderWidth: 1,
+                        borderRadius: 10,
+                        padding: 14,
+                        marginTop: 12,
+                        marginBottom: 4,
+                        borderColor: editForm.anonymousLocation ? theme.colors.primary : theme.colors.border,
+                        backgroundColor: editForm.anonymousLocation ? theme.colors.primary + '10' : 'transparent',
+                      }}
+                    >
+                      <Ionicons
+                        name={editForm.anonymousLocation ? 'checkbox' : 'square-outline'}
+                        size={22}
+                        color={editForm.anonymousLocation ? theme.colors.primary : theme.colors.textSecondary}
+                        style={{ marginRight: 10, marginTop: 1 }}
+                      />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 14 }}>Anonymous Location</Text>
+                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12.5, marginTop: 3, lineHeight: 18 }}>
+                          No school assigned — checks in and out from anywhere, with no location check.
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    {!editForm.anonymousLocation && (
+                      <MultiSelectField
+                        label="Assign School(s)"
+                        data={schools}
+                        selectedIds={editForm.schoolIds}
+                        onChange={(ids) => setEditForm({ ...editForm, schoolIds: ids })}
+                        placeholder="Select one or more schools"
+                      />
+                    )}
                     <Text style={[styles.inputLabel, { color: theme.colors.textSecondary, marginTop: 12 }]}>Assign Team(s)</Text>
                     <TouchableOpacity
                       style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.background, justifyContent: 'center' }]}
@@ -1172,6 +1271,7 @@ export default function ManageScreen({ navigation }) {
                             <Text style={[styles.faceSchoolStatus, { color: statusColor }]}>
                               {approved ? 'Approved' : 'Pending approval'}
                             </Text>
+                            <ApprovedBy record={reg} compact style={{ marginTop: 5 }} />
                           </View>
                           <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
                         </TouchableOpacity>

@@ -40,12 +40,21 @@ const nameOf = (v, fallback) => (v && v.name) || fallback;
  * @param {string}  opts.selectedSchoolId school currently selected in the portal
  * @param {string}  opts.regStatus        'none' | 'pending' | 'approved' for THAT school
  * @param {boolean} opts.isHolidayToday   school is closed today
+ * @param {object}  opts.activeVisit      the approved school visit covering today
+ *                                        ({ toDate, schoolName }), or null
+ * @param {boolean} opts.anonymous        anonymous-location staff: no school at
+ *                                        all, so "which school am I at?" has no
+ *                                        meaning — wherever they are IS here,
+ *                                        and there is never another school to
+ *                                        send them back to.
  */
 export function deriveAttendanceActions({
   todayAttendance,
   selectedSchoolId,
   regStatus = 'none',
   isHolidayToday = false,
+  activeVisit = null,
+  anonymous = false,
 } = {}) {
   const here = selectedSchoolId ? String(selectedSchoolId) : null;
 
@@ -65,26 +74,48 @@ export function deriveAttendanceActions({
   const checkedInToday = !!(todayAttendance && todayAttendance.checkInTime);
   const checkedOutToday = !!(todayAttendance && todayAttendance.checkOutTime);
 
-  // School-scoped facts.
-  const checkedInHere = checkedInToday && inSchoolId === here;
-  const checkedInElsewhere = checkedInToday && inSchoolId !== here;
-  const checkedOutHere = checkedOutToday && outSchoolId === here;
+  // School-scoped facts. For anonymous staff there is only ever one place —
+  // wherever they happen to be — so every "here" is true and "elsewhere" can
+  // never arise. Without this a day they checked in on would read as having
+  // started at some other school, and the buttons would offer to send them
+  // back to it.
+  const checkedInHere = checkedInToday && (anonymous || inSchoolId === here);
+  const checkedInElsewhere = !anonymous && checkedInToday && inSchoolId !== here;
+  const checkedOutHere = checkedOutToday && (anonymous || outSchoolId === here);
   const approvedHere = regStatus === 'approved';
 
-  // A day that started at one school and finished at another.
-  const splitDay = checkedOutToday && !!inSchoolId && !!outSchoolId && inSchoolId !== outSchoolId;
+  // A day that started at one school and finished at another. Impossible for
+  // anonymous staff, who have no school on either end.
+  const splitDay = !anonymous && checkedOutToday && !!inSchoolId && !!outSchoolId && inSchoolId !== outSchoolId;
 
-  const canCheckIn = approvedHere && !checkedInToday && !isHolidayToday;
+  // An approved school visit suspends BOTH actions for its whole window — the
+  // person is off inspecting another school, so they cannot be here to mark
+  // attendance. The server refuses these calls too; hiding the buttons just
+  // stops people walking into an error. It resumes on its own once the window
+  // ends, with no action from anyone.
+  const onSchoolVisit = !!activeVisit;
+
+  const canCheckIn = approvedHere && !checkedInToday && !isHolidayToday && !onSchoolVisit;
   // The key rule: check-out is allowed at ANY school this person is approved
   // for, not only the one they checked in at.
-  const canCheckOut = approvedHere && checkedInToday && !checkedOutToday && !isHolidayToday;
+  const canCheckOut = approvedHere && checkedInToday && !checkedOutToday && !isHolidayToday && !onSchoolVisit;
 
   // A short line explaining anything the buttons alone cannot say — chiefly
   // "you started your day somewhere else". Null when the buttons speak for
   // themselves.
   let notice = null;
 
-  if (checkedOutToday) {
+  if (onSchoolVisit) {
+    // Outranks every other notice — nothing else about today is actionable.
+    const until = activeVisit.toDate
+      ? new Date(activeVisit.toDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      : null;
+    const where = activeVisit.schoolName ? ` to ${activeVisit.schoolName}` : '';
+    notice = {
+      tone: 'info',
+      text: `You are on an approved school visit${where}${until ? ` until ${until}` : ''}. These days are already marked "On School Visit" — check-in and check-out resume automatically once it ends.`,
+    };
+  } else if (checkedOutToday) {
     if (splitDay) {
       notice = {
         tone: 'info',
@@ -122,6 +153,7 @@ export function deriveAttendanceActions({
   }
 
   return {
+    onSchoolVisit,
     checkedInToday,
     checkedOutToday,
     checkedInHere,

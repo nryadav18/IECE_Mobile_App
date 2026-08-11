@@ -26,10 +26,6 @@ const schoolSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Please add a state (e.g., Kerala, Tamil Nadu)']
   },
-  totalStrength: {
-    type: Number,
-    default: 0
-  },
   mouPdfUrl: {
     type: String,
     default: null

@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const decisionSchema = require('./decisionSchema');
 
 // A person may work under multiple schools. Face registration is anchored
 // per-school: each school the person is assigned to gets its own face
@@ -7,10 +8,17 @@ const bcrypt = require('bcryptjs');
 // leader / head register their face separately at each school and check
 // in / out at any of them independently.
 const faceRegistrationSchema = new mongoose.Schema({
+  // The school this registration belongs to.
+  //
+  // NULL for an anonymous-location head (see `anonymousLocation` below): they
+  // are attached to no school, so their single registration anchors nothing and
+  // is found by the ABSENCE of a schoolId rather than by matching one. Never
+  // compare this with `String(fr.schoolId) === String(x)` without first ruling
+  // out the null case — `String(null)` is the truthy-looking string 'null'.
   schoolId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'School',
-    required: true
+    default: null
   },
   status: {
     type: String,
@@ -31,6 +39,13 @@ const faceRegistrationSchema = new mongoose.Schema({
   },
   reviewedAt: {
     type: Date,
+    default: null
+  },
+  // Snapshot of WHO decided this registration and what they did — the one field
+  // every screen reads to render "Approved by". Shown to the Admin and CEO only.
+  // Cleared along with reviewedBy/reviewedAt when the person re-registers.
+  decidedBy: {
+    type: decisionSchema,
     default: null
   },
   faceEmbedding: {
@@ -114,6 +129,17 @@ const userSchema = new mongoose.Schema({
     ],
     required: [true, 'Please assign a role']
   },
+  // The Admin who created this login. Set for every account created from inside
+  // the app; null for accounts seeded by the onboarding scripts or predating
+  // this field. Rendered as "Created by" on the IECE Staff list, Admin/CEO only.
+  //
+  // Named createdByAdmin rather than createdBy on purpose: Meeting.createdBy is
+  // a public "posted by" that every viewer is meant to see, and the response
+  // filter that hides approver identity matches on field NAME.
+  createdByAdmin: {
+    type: decisionSchema,
+    default: null
+  },
   teamLeaderId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -145,6 +171,26 @@ const userSchema = new mongoose.Schema({
     type: [mongoose.Schema.Types.ObjectId],
     ref: 'Team',
     default: []
+  },
+  // ANONYMOUS LOCATION — heads only.
+  //
+  // A head who works across many places rather than out of one campus. When
+  // this is on they are attached to NO school (schoolIds is empty and stays
+  // empty), they register their face once with no school behind it, and their
+  // check-in / check-out is never measured against a geofence — they can mark
+  // attendance from anywhere. GPS is still recorded on each row for auditing;
+  // it simply never decides anything.
+  //
+  // Consequences that follow from having no school, all of them deliberate:
+  // their attendance rows carry a null schoolId (so they never appear in any
+  // per-school report or count), and no school holiday can close their day.
+  // Face approval is unchanged — the Admin still reviews the recording.
+  //
+  // Use isAnonymousStaff() from utils/anonymousLocation rather than reading
+  // this flag directly, so the heads-only rule is applied everywhere.
+  anonymousLocation: {
+    type: Boolean,
+    default: false
   },
   timetablePdfUrl: {
     type: String,

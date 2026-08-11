@@ -70,6 +70,7 @@ export default function EditUserModal({ visible, user, role, schools, teamLeader
         name: user.name || '',
         email: user.email || '',
         password: '', // Leave blank unless they want to change it
+        anonymousLocation: !!user.anonymousLocation,
         schoolIds,
         teamLeaderId: user.teamLeaderId ? user.teamLeaderId._id : '',
         schoolName: user.schoolId ? user.schoolId.name : '',
@@ -95,7 +96,13 @@ export default function EditUserModal({ visible, user, role, schools, teamLeader
       if (role === 'trainer') {
         payload.schoolIds = formData.schoolIds;
         payload.teamLeaderId = formData.teamLeaderId;
-      } else if (LEADER_ROLES.includes(role) || HEAD_ROLES.includes(role)) {
+      } else if (HEAD_ROLES.includes(role)) {
+        // Heads can be switched between working out of schools and working
+        // anonymously. Sending an empty school list alongside the flag keeps
+        // the server's two states from ever half-applying.
+        payload.anonymousLocation = !!formData.anonymousLocation;
+        payload.schoolIds = formData.anonymousLocation ? [] : formData.schoolIds;
+      } else if (LEADER_ROLES.includes(role)) {
         payload.schoolIds = formData.schoolIds;
       } else if (role === 'chairman') {
         payload.schoolName = formData.schoolName;
@@ -220,7 +227,44 @@ export default function EditUserModal({ visible, user, role, schools, teamLeader
               </>
             )}
 
-            {(LEADER_ROLES.includes(role) || HEAD_ROLES.includes(role)) && (
+            {/* Heads only: work anywhere, attached to no school. Switching it
+                on here detaches their schools (the stint stays in their school
+                history); switching it off asks for schools again. */}
+            {HEAD_ROLES.includes(role) && (
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setFormData({
+                  ...formData,
+                  anonymousLocation: !formData.anonymousLocation,
+                  schoolIds: !formData.anonymousLocation ? [] : (formData.schoolIds || []),
+                })}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'flex-start',
+                  borderWidth: 1,
+                  borderRadius: 10,
+                  padding: 14,
+                  marginBottom: 16,
+                  borderColor: formData.anonymousLocation ? theme.colors.primary : theme.colors.border,
+                  backgroundColor: formData.anonymousLocation ? theme.colors.primary + '10' : 'transparent',
+                }}
+              >
+                <Ionicons
+                  name={formData.anonymousLocation ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={formData.anonymousLocation ? theme.colors.primary : theme.colors.textSecondary}
+                  style={{ marginRight: 10, marginTop: 1 }}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 14 }}>Anonymous Location</Text>
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 12.5, marginTop: 3, lineHeight: 18 }}>
+                    No school assigned — checks in and out from anywhere, with no location check.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {(LEADER_ROLES.includes(role) || HEAD_ROLES.includes(role)) && !formData.anonymousLocation && (
               <MultiSelectField
                 label="Assign School(s)"
                 data={schools}

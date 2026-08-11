@@ -213,13 +213,18 @@ export default function PendingRegistrationsScreen({ navigation }) {
     }
   };
 
-  // Stable key for a (user, school) registration pair.
-  const itemKey = (item) => `${item.user._id}_${item.reg?.schoolId?._id || item.reg?.schoolId}`;
+  // Stable key for a (user, registration) pair. A school-less registration —
+  // an anonymous-location head's — is addressed by the literal 'anonymous', so
+  // it gets a real key instead of "…_undefined".
+  const regKey = (item) => {
+    const schoolId = item.reg?.schoolId?._id || item.reg?.schoolId;
+    return schoolId ? String(schoolId) : 'anonymous';
+  };
+  const itemKey = (item) => `${item.user._id}_${regKey(item)}`;
 
   const handleApprove = async (item) => {
     try {
-      const schoolId = item.reg?.schoolId?._id || item.reg?.schoolId;
-      const response = await api.put(`/admin/approve-face-registration/${item.user._id}/${schoolId}`);
+      const response = await api.put(`/admin/approve-face-registration/${item.user._id}/${regKey(item)}`);
       if (response.data.success) {
         showAlert('Approved!', 'Facial registration has been approved successfully.', 'success');
         setRegistrations(prev => prev.filter(i => itemKey(i) !== itemKey(item)));
@@ -233,8 +238,7 @@ export default function PendingRegistrationsScreen({ navigation }) {
 
   const handleReject = async (item) => {
     try {
-      const schoolId = item.reg?.schoolId?._id || item.reg?.schoolId;
-      const response = await api.delete(`/admin/face-registration/${item.user._id}/${schoolId}`);
+      const response = await api.delete(`/admin/face-registration/${item.user._id}/${regKey(item)}`);
       if (response.data.success) {
         showAlert('Rejected', 'Registration has been rejected and cleared.', 'success');
         setRegistrations(prev => prev.filter(i => itemKey(i) !== itemKey(item)));
@@ -297,7 +301,7 @@ export default function PendingRegistrationsScreen({ navigation }) {
               </View>
             </View>
             <Text style={[styles.schoolText, { color: theme.colors.textSecondary }]} numberOfLines={1}>
-              <Ionicons name="business-outline" size={12} color={theme.colors.textSecondary} /> {reg.schoolId?.name || 'No School Assigned'}
+              <Ionicons name="business-outline" size={12} color={theme.colors.textSecondary} /> {reg.schoolId?.name || 'Anonymous location (no school)'}
             </Text>
             <Text style={[styles.emailText, { color: theme.colors.textSecondary }]} numberOfLines={1}>
               {user.email}
@@ -373,7 +377,7 @@ export default function PendingRegistrationsScreen({ navigation }) {
               <View style={[styles.detailsBox, { borderColor: theme.colors.border }]}>
                 <DetailRow icon="person-outline"          label="Name"   value={selUser.name}               theme={theme} />
                 <DetailRow icon="mail-outline"            label="Email"  value={selUser.email}              theme={theme} />
-                <DetailRow icon="business-outline"        label="School" value={selReg.schoolId?.name || 'N/A'} theme={theme} />
+                <DetailRow icon="business-outline"        label="School" value={selReg.schoolId?.name || 'Anonymous location (no school)'} theme={theme} />
                 <DetailRow icon="shield-checkmark-outline" label="Role"  value={roleLabel} valueColor={roleColor} theme={theme} />
               </View>
 

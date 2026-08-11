@@ -2,8 +2,10 @@ const User = require('../models/User');
 const Attendance = require('../models/Attendance');
 const VisitReport = require('../models/VisitReport');
 const Activity = require('../models/Activity');
+const SchoolHoliday = require('../models/SchoolHoliday');
 const { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES } = require('../utils/roles');
 const { getApprovedLeaveWindows } = require('../utils/leaveStatus');
+const { getApprovedVisitWindows } = require('../utils/schoolVisitStatus');
 const { getSubjectLeaveWindows, getSubstituteDutyWindows } = require('../utils/substitutionStatus');
 
 // Flatten a user's schoolHistory into the shape the profile screen renders:
@@ -69,6 +71,9 @@ exports.getUserProfile = async (req, res) => {
         .populate('schoolIds')
         .populate('schoolHistory.schoolId', 'name state isDeleted')
         .populate('faceRegistrations.schoolId', 'name state')
+        // Resolves "Approved by" for face registrations decided before the
+        // decidedBy snapshot existed. Admin/CEO only — see approverVisibility.
+        .populate('faceRegistrations.reviewedBy', 'name role')
         .populate('teamLeaderId', 'name email')
         .populate('teamId', 'name');
 
@@ -114,14 +119,38 @@ exports.getUserProfile = async (req, res) => {
         ]
     }).sort('-createdAt');
 
-    // Approved leave + substitution windows — so anyone authorized to view this
-    // profile sees the SAME "On Leave" / "On Substitution" days on the calendar as
-    // the person does in their own portal.
-    const [leaveDays, substitutionLeaves, substitutionDuties] = await Promise.all([
+    // Approved leave + substitution + school-visit windows — so anyone authorized
+    // to view this profile sees the SAME "On Leave" / "On Substitution" /
+    // "On School Visit" days on the calendar as the person does in their own
+    // portal. (Chairmen never reach this endpoint — see the auth check above.)
+    const [leaveDays, substitutionLeaves, substitutionDuties, visitDays] = await Promise.all([
       getApprovedLeaveWindows(userId),
       getSubjectLeaveWindows(userId),
       getSubstituteDutyWindows(userId),
+      getApprovedVisitWindows(userId),
     ]);
+
+    // The school holidays of EVERY school this person is assigned to, so an
+    // authority reading this profile sees the same closed days the person sees
+    // in their own portal. Without this, days the school was shut looked like
+    // days they simply failed to turn up — the calendar showed nothing at all.
+    //
+    // Rejected requests are dropped (they never happened); pending ones are
+    // kept and drawn in the weaker "asked for, not granted" style.
+    const holidaySchoolIds = (user.schoolIds || [])
+      .map((s) => s?._id || s)
+      .filter(Boolean);
+    if (holidaySchoolIds.length === 0 && user.schoolId) {
+      holidaySchoolIds.push(user.schoolId?._id || user.schoolId);
+    }
+    const holidays = holidaySchoolIds.length
+      ? await SchoolHoliday.find({
+          schoolId: { $in: holidaySchoolIds },
+          status: { $ne: 'rejected' },
+        })
+          .populate('schoolId', 'name')
+          .sort({ date: -1 })
+      : [];
 
     res.status(200).json({
       success: true,
@@ -133,7 +162,9 @@ exports.getUserProfile = async (req, res) => {
          activities,
          leaveDays,
          substitutionLeaves,
-         substitutionDuties
+         substitutionDuties,
+         visitDays,
+         holidays
       }
     });
   } catch (error) {

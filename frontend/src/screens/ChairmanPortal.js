@@ -296,7 +296,6 @@ export default function ChairmanPortal({ navigation, route }) {
               {[
                 { icon: 'calendar-outline', label: 'Association', value: school.associationYear || 'N/A' },
                 { icon: 'library-outline', label: 'Class Coverage', value: school.classCoverage || 'N/A' },
-                { icon: 'people-outline', label: 'Total Strength', value: String(school.totalStrength || 0) },
                 { icon: 'person-outline', label: 'Faculty', value: String(faculty.length) },
               ].map((info) => (
                 <View key={info.label} style={[styles.infoTile, { backgroundColor: theme.colors.background, borderColor: theme.colors.border }]}>

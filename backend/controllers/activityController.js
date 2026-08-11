@@ -5,6 +5,7 @@ const { sendPushNotification } = require('../utils/pushNotification');
 const { notify } = require('../utils/notify');
 const { getApproverIdsFor, canApproveFor } = require('../utils/hierarchy');
 const { ROLE_LABELS } = require('../utils/roleLabels');
+const { decisionOf, trail } = require('../utils/approvalTrail');
 
 const roleLabel = (role) => ROLE_LABELS[role] || role;
 
@@ -39,18 +40,27 @@ exports.getActivities = async (req, res) => {
       if (req.query.schoolId) query.schoolId = req.query.schoolId;
       if (req.query.uploaderId) query.uploaderId = req.query.uploaderId;
     } else if (role === 'trainer') {
-      // Trainer: only their own activities.
-      query.uploaderId = req.user._id;
+      // Trainer: their own activities, plus any they were TAGGED in as an
+      // organiser. Being named on an activity is the same claim to it as having
+      // uploaded it — they were there and they ran it — so it belongs in their
+      // feed rather than only in the uploader's.
+      query.$or = [{ uploaderId: req.user._id }, { organizers: req.user._id }];
     } else if (LEADER_ROLES.includes(role)) {
       // (Trainee) Team Leader: their school's activities + their team members' (and own) activities.
       const teamMemberIds = await User.find({ teamLeaderId: req.user._id }).distinct('_id');
-      const orClauses = [{ uploaderId: { $in: [...teamMemberIds, req.user._id] } }];
+      const orClauses = [
+        { uploaderId: { $in: [...teamMemberIds, req.user._id] } },
+        { organizers: req.user._id },
+      ];
       if (req.user.schoolId) orClauses.push({ schoolId: req.user.schoolId });
       query.$or = orClauses;
     } else if (HEAD_ROLES.includes(role)) {
       // Head: activities of everyone in the teams they oversee + their own school + self.
       const memberIds = await User.find({ teamId: { $in: req.user.teamIds || [] } }).distinct('_id');
-      const orClauses = [{ uploaderId: { $in: [...memberIds, req.user._id] } }];
+      const orClauses = [
+        { uploaderId: { $in: [...memberIds, req.user._id] } },
+        { organizers: req.user._id },
+      ];
       if (req.user.schoolId) orClauses.push({ schoolId: req.user.schoolId });
       query.$or = orClauses;
     }
@@ -133,14 +143,31 @@ exports.updateActivity = async (req, res) => {
 
     if (req.user.role === 'creator_admin') {
       // Admin edits are trusted: auto-approve and don't send it back into the
-      // approval queue (no re-approval notification to admins).
+      // approval queue (no re-approval notification to admins). It is still an
+      // approval, and the Admin who made it is still the one accountable for it.
+      const decidedAt = new Date();
       activity.status = 'approved';
+      activity.decidedBy = decisionOf(req.user, 'auto_approved', decidedAt);
       await activity.save();
+      trail({
+        entityType: 'activity',
+        entityId: activity._id,
+        entityLabel: activity.name,
+        subject: { _id: activity.uploaderId },
+        actor: req.user,
+        action: 'auto_approved',
+        note: 'Approved automatically as part of an Admin edit.',
+        school: activity.schoolId,
+        at: decidedAt,
+      });
     } else if (previousStatus === 'approved' || previousStatus === 'rejected') {
       // Edited after a decision — it goes back to the uploader's approver as a
-      // fresh request, and the old rejection reason no longer applies.
+      // fresh request, and the old rejection reason no longer applies. The old
+      // approver must go with it: they signed off on something that no longer
+      // exists, and leaving their name on it would misattribute the new version.
       activity.status = 'pending';
       activity.rejectionRemark = undefined;
+      activity.decidedBy = null;
       await activity.save();
       try {
         await notifyApproversForActivity(activity, req.user);
@@ -183,10 +210,27 @@ exports.updateActivityStatus = async (req, res) => {
       return res.status(403).json({ success: false, error: 'This activity is not yours to decide.' });
     }
 
+    const decidedAt = new Date();
     existing.status = status;
     existing.rejectionRemark = status === 'rejected' ? rejectionRemark.trim() : undefined;
+    // Until now the approver's name existed only inside the notification text
+    // below and was thrown away with it, which is precisely why an activity
+    // approved by one of three leaders could not be traced afterwards.
+    existing.decidedBy = decisionOf(req.user, status, decidedAt);
     await existing.save();
     const activity = existing;
+
+    trail({
+      entityType: 'activity',
+      entityId: activity._id,
+      entityLabel: activity.name,
+      subject: uploader,
+      actor: req.user,
+      action: status,
+      note: activity.rejectionRemark || '',
+      school: activity.schoolId,
+      at: decidedAt,
+    });
 
     // Tell the uploader who decided and, when rejected, exactly why.
     const decidedBy = `${req.user.name} (${roleLabel(req.user.role)})`;
@@ -205,6 +249,29 @@ exports.updateActivityStatus = async (req, res) => {
       });
     } catch (e) {
       console.error('Activity status notification error:', e.message);
+    }
+
+    // Everyone tagged as an organiser gets told the moment it is published —
+    // the activity now appears on their Home screen, and expecting them to
+    // notice that on their own is how a tag goes unseen. The uploader is
+    // excluded: they already got the decision notification above.
+    if (status === 'approved') {
+      try {
+        const organizerIds = (activity.organizers || [])
+          .map(String)
+          .filter((id) => id !== String(activity.uploaderId));
+
+        if (organizerIds.length) {
+          await notify(organizerIds, {
+            type: 'activity_tagged',
+            title: '🏷️ You Were Tagged in an Activity',
+            body: `"${activity.name}" — the activity you were tagged in as an organiser — has been approved and now appears on your home screen.`,
+            data: { relatedId: String(activity._id), activityId: String(activity._id) },
+          });
+        }
+      } catch (e) {
+        console.error('Organizer tag notification error:', e.message);
+      }
     }
 
     // The school no longer approves activities, but it is still their school —

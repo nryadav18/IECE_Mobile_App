@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ThemeContext } from '../context/ThemeContext';
 import { REPORT_SECTIONS } from '../utils/visitReport';
 import { roleLabel } from '../utils/roles';
+import ApprovedBy from './ApprovedBy';
 
 const statusColor = (status) => (status === 'approved' ? '#4CAF50' : status === 'rejected' ? '#F44336' : '#F59E0B');
 
@@ -115,6 +116,9 @@ export default function VisitReportDetail({ visible, report, onClose, reviewMode
             <Row theme={theme} label="School" value={report.schoolId?.name || form.schoolName || '—'} />
             {report.chairmanFeedback ? <Row theme={theme} label="Feedback" value={report.chairmanFeedback} /> : null}
             {report.rejectionRemark ? <Row theme={theme} label="Reject reason" value={report.rejectionRemark} /> : null}
+            {/* Which authority signed it off. Admin/CEO only — the chairman
+                reviewing their own school's report sees nothing here. */}
+            <ApprovedBy record={report} style={{ marginTop: 4 }} />
           </View>
 
           {REPORT_SECTIONS.map(section => (

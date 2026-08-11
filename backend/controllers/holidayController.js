@@ -1,6 +1,7 @@
 const SchoolHoliday = require('../models/SchoolHoliday');
 const School = require('../models/School');
 const { notifyUserById, notifyRole } = require('../utils/pushNotification');
+const { decisionOf, trail } = require('../utils/approvalTrail');
 
 // @desc    Apply for a school holiday (goes to admin for approval)
 // @route   POST /api/holidays
@@ -65,9 +66,14 @@ exports.getHolidays = async (req, res) => {
     if (role === 'creator_admin') {
       if (req.query.schoolId) query.schoolId = req.query.schoolId;
     } else {
-      // Field staff → only their own school's holidays.
-      if (!req.user.schoolId) return res.status(200).json({ success: true, data: [] });
-      query.schoolId = req.user.schoolId;
+      // Field staff → the holidays of EVERY school they are assigned to. Using
+      // the legacy single `schoolId` here meant someone covering three schools
+      // only ever saw the first one closing, and was blind to the other two.
+      // (`schoolIds` falls back to the legacy field for un-migrated users.)
+      const mine = (req.user.schoolIds || []).filter(Boolean);
+      const schoolIds = mine.length ? mine : (req.user.schoolId ? [req.user.schoolId] : []);
+      if (schoolIds.length === 0) return res.status(200).json({ success: true, data: [] });
+      query.schoolId = { $in: schoolIds };
     }
 
     if (req.query.status) query.status = req.query.status;
@@ -75,6 +81,10 @@ exports.getHolidays = async (req, res) => {
     const holidays = await SchoolHoliday.find(query)
       .populate('schoolId', 'name')
       .populate('appliedBy', 'name role')
+      // Only for the Admin/CEO "Approved by" line, and only worth the lookup for
+      // holidays decided before the decidedBy snapshot existed. The response
+      // filter drops it again for everyone else.
+      .populate('reviewedBy', 'name role')
       .sort({ date: -1 });
 
     res.status(200).json({ success: true, data: holidays });
@@ -94,7 +104,9 @@ exports.reviewHoliday = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid status' });
     }
 
-    const holiday = await SchoolHoliday.findById(req.params.id).populate('appliedBy', 'role');
+    const holiday = await SchoolHoliday.findById(req.params.id)
+      .populate('appliedBy', 'name role')
+      .populate('schoolId', 'name');
     if (!holiday) return res.status(404).json({ success: false, message: 'Holiday request not found' });
 
     // Authorization: admin only.
@@ -102,12 +114,27 @@ exports.reviewHoliday = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Only an admin can review holiday requests' });
     }
 
+    const decidedAt = new Date();
     holiday.status = status;
     holiday.reviewedBy = req.user._id;
     holiday.rejectionRemark = status === 'rejected' ? (rejectionRemark || '') : '';
+    holiday.decisionAt = decidedAt;
+    holiday.decidedBy = decisionOf(req.user, status, decidedAt);
     await holiday.save();
 
     res.status(200).json({ success: true, data: holiday });
+
+    trail({
+      entityType: 'holiday',
+      entityId: holiday._id,
+      entityLabel: `School holiday · ${holiday.date}`,
+      subject: holiday.appliedBy,
+      actor: req.user,
+      action: status,
+      note: holiday.rejectionRemark || holiday.reason || '',
+      school: holiday.schoolId,
+      at: decidedAt,
+    });
 
     // Notify the applicant of the decision. `role` (trainer / team_leader) lets
     // the app open the right portal when the notification is tapped.

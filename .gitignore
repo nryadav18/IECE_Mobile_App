@@ -76,3 +76,9 @@ yarn-error.*
 /android
 frontend/ios/
 frontend/android/
+
+# Monthly performance reports dropped by `node scripts/testMonthlyReport.js --save`.
+# The feature itself never writes a PDF to disk — these are local inspection
+# copies only, and none of them belong in the repository.
+backend/Performance_Report_*.pdf
+backend/IECE_Monthly_Performance_*.pdf

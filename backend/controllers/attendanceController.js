@@ -6,7 +6,12 @@ const FormData = require('form-data');
 const cloudinary = require('cloudinary').v2;
 const { notifyRole } = require('../utils/pushNotification');
 const { notify } = require('../utils/notify');
-const { getApproverIdsFor, approverLabelFor } = require('../utils/hierarchy');
+const { getAdminOnlyRecipientIds } = require('../utils/hierarchy');
+const {
+  isAnonymousStaff,
+  findAnonymousRegistration,
+  findSchoolRegistration,
+} = require('../utils/anonymousLocation');
 const { ROLE_LABELS } = require('../utils/roleLabels');
 
 const roleLabel = (role) => ROLE_LABELS[role] || role;
@@ -18,6 +23,7 @@ const {
   getSubstituteDutyWindows,
 } = require('../utils/substitutionStatus');
 const { getApprovedLeaveWindows } = require('../utils/leaveStatus');
+const { getApprovedVisitWindows, getActiveVisit } = require('../utils/schoolVisitStatus');
 const {
   DISPLAY_RADIUS_M,
   MAX_REGISTRATION_ACCURACY_M,
@@ -224,7 +230,7 @@ exports.verifyFace = async (req, res) => {
 
 exports.getMyAttendance = async (req, res) => {
   try {
-    const [attendanceRecords, substitutionLeaves, substitutionDuties, leaveDays] = await Promise.all([
+    const [attendanceRecords, substitutionLeaves, substitutionDuties, leaveDays, visitDays] = await Promise.all([
       Attendance.find({ trainerId: req.user._id })
         .populate('schoolId', 'name state')
         // Populated too, so a day split across two schools can be shown as
@@ -240,6 +246,10 @@ exports.getMyAttendance = async (req, res) => {
       getSubstituteDutyWindows(req.user._id),
       // Approved personal leave windows — painted as "On Leave" on the calendar.
       getApprovedLeaveWindows(req.user._id),
+      // Approved school-visit windows — painted "On School Visit". Unlike the
+      // three above these are ON-DUTY days (working, just off-site), so they
+      // count as worked in every attendance summary.
+      getApprovedVisitWindows(req.user._id),
     ]);
 
     res.status(200).json({
@@ -247,7 +257,8 @@ exports.getMyAttendance = async (req, res) => {
       data: attendanceRecords,
       substitutionLeaves,
       substitutionDuties,
-      leaveDays
+      leaveDays,
+      visitDays
     });
   } catch (error) {
     console.error(error);
@@ -257,26 +268,10 @@ exports.getMyAttendance = async (req, res) => {
 
 exports.registerFaceV2 = async (req, res) => {
   try {
-    const { lat, lng, accuracy, schoolId } = req.body;
+    const { lat, lng, accuracy } = req.body;
 
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Please upload an image' });
-    }
-
-    // This fix becomes the permanent geofence anchor for this school, so a
-    // vague or bogus reading is refused up front — accepting one here is what
-    // makes later check-ins report absurd distances.
-    const coords = parseCoordinates(lat, lng);
-    if (!coords.ok) {
-      return res.status(400).json({ success: false, message: coords.message });
-    }
-    const acc = parseAccuracy(accuracy, MAX_REGISTRATION_ACCURACY_M);
-    if (!acc.ok) {
-      return res.status(400).json({ success: false, message: acc.message });
-    }
-
-    if (!schoolId) {
-      return res.status(400).json({ success: false, message: 'Please select which school you are registering at.' });
     }
 
     const user = await User.findById(req.user.id);
@@ -284,10 +279,45 @@ exports.registerFaceV2 = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // The person must actually be assigned to this school to register there.
-    const assigned = (user.schoolIds || []).map(String);
-    if (!assigned.includes(String(schoolId))) {
-      return res.status(400).json({ success: false, message: 'You are not assigned to this school.' });
+    // An anonymous-location head registers ONCE, against no school. Nothing is
+    // being anchored, so the strict location rules below would only be an
+    // obstacle: a fix is recorded if the phone offers one and skipped if it
+    // does not. Everyone else is anchoring a permanent geofence and is held to
+    // the full standard.
+    const anonymous = isAnonymousStaff(user);
+    const schoolId = anonymous ? null : req.body.schoolId;
+
+    let coords = { ok: true, lat: null, lng: null };
+    let acc = { ok: true, accuracy: null };
+
+    if (anonymous) {
+      // Best-effort: parse what arrived, keep it if it is usable, never refuse.
+      const parsed = parseCoordinates(lat, lng);
+      if (parsed.ok) coords = parsed;
+      const parsedAcc = parseAccuracy(accuracy, Number.POSITIVE_INFINITY);
+      if (parsedAcc.ok) acc = parsedAcc;
+    } else {
+      // This fix becomes the permanent geofence anchor for this school, so a
+      // vague or bogus reading is refused up front — accepting one here is what
+      // makes later check-ins report absurd distances.
+      coords = parseCoordinates(lat, lng);
+      if (!coords.ok) {
+        return res.status(400).json({ success: false, message: coords.message });
+      }
+      acc = parseAccuracy(accuracy, MAX_REGISTRATION_ACCURACY_M);
+      if (!acc.ok) {
+        return res.status(400).json({ success: false, message: acc.message });
+      }
+
+      if (!schoolId) {
+        return res.status(400).json({ success: false, message: 'Please select which school you are registering at.' });
+      }
+
+      // The person must actually be assigned to this school to register there.
+      const assigned = (user.schoolIds || []).map(String);
+      if (!assigned.includes(String(schoolId))) {
+        return res.status(400).json({ success: false, message: 'You are not assigned to this school.' });
+      }
     }
 
     const formData = new FormData();
@@ -323,13 +353,16 @@ exports.registerFaceV2 = async (req, res) => {
       console.error('Cloudinary upload failed:', err);
     }
 
+    // For an anonymous head this is a note of where they happened to be, not an
+    // anchor anything is measured against; it may legitimately be empty.
     const registrationLocation = { lat: coords.lat, lng: coords.lng };
 
-    // Upsert the per-school registration. Re-registering resets it to pending
-    // so the admin approves the fresh capture for that school again.
-    const existing = (user.faceRegistrations || []).find(
-      (fr) => String(fr.schoolId) === String(schoolId)
-    );
+    // Upsert the registration. Re-registering resets it to pending so the admin
+    // approves the fresh capture again. An anonymous head has exactly one,
+    // matched by having NO school rather than by matching one.
+    const existing = anonymous
+      ? findAnonymousRegistration(user)
+      : findSchoolRegistration(user, schoolId);
     if (existing) {
       existing.status = 'pending';
       existing.faceEmbedding = embedding;
@@ -340,9 +373,10 @@ exports.registerFaceV2 = async (req, res) => {
       existing.rejectionReason = null;
       existing.reviewedBy = null;
       existing.reviewedAt = null;
+      existing.decidedBy = null;
     } else {
       user.faceRegistrations.push({
-        schoolId,
+        schoolId: schoolId || null,
         status: 'pending',
         faceEmbedding: embedding,
         registrationLocation,
@@ -361,7 +395,7 @@ exports.registerFaceV2 = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: `Facial registration sent to ${approverLabelFor(user)} for approval`,
+      message: 'Facial registration sent to the admin for approval',
       data: {
         schoolId,
         status: 'pending'
@@ -372,18 +406,23 @@ exports.registerFaceV2 = async (req, res) => {
     // must never throw — the outer catch could not answer anymore, and an
     // escaping rejection would take the process down.
     try {
-      const school = await School.findById(schoolId).select('name');
-      const schoolName = school ? school.name : 'a school';
+      let schoolName = 'a school';
+      if (schoolId) {
+        const school = await School.findById(schoolId).select('name');
+        if (school) schoolName = school.name;
+      }
+      const where = anonymous ? 'anonymous location (no school)' : schoolName;
 
-      // Up the chain of command, not straight to the admin: a trainer's request
-      // goes to their team leader, a leader's to their head, a head's to
-      // Admin/CEO — who are also always included as a fallback.
-      const approverIds = await getApproverIdsFor(user);
+      // Straight to the Admin, who is now the only person who may decide a
+      // facial registration (see FACE_APPROVERS). Notifying the team leader or
+      // head would only ask them for a decision the app refuses to let them
+      // make. Activity approvals still follow the chain of command.
+      const approverIds = await getAdminOnlyRecipientIds();
       await notify(approverIds, {
         type: 'face_registration_pending',
         title: '🧑‍💼 New Facial Registration',
-        body: `${user.name} (${roleLabel(user.role)}) submitted a facial registration for ${schoolName} for your approval.`,
-        data: { userId: String(user._id), schoolId: String(schoolId) },
+        body: `${user.name} (${roleLabel(user.role)}) submitted a facial registration for ${where} for your approval.`,
+        data: { userId: String(user._id), schoolId: schoolId ? String(schoolId) : 'anonymous' },
       });
     } catch (err) {
       console.error('Face-registration notification error:', err.message);
@@ -397,28 +436,44 @@ exports.registerFaceV2 = async (req, res) => {
 
 exports.verifyFaceV2 = async (req, res) => {
   try {
-    const { lat, lng, accuracy, intent, schoolId } = req.body;
+    const { lat, lng, accuracy, intent } = req.body;
 
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Please upload an image' });
     }
 
-    const coords = parseCoordinates(lat, lng);
-    if (!coords.ok) {
-      return res.status(400).json({ success: false, message: coords.message });
-    }
-    const acc = parseAccuracy(accuracy, MAX_VERIFICATION_ACCURACY_M);
-    if (!acc.ok) {
-      return res.status(400).json({ success: false, message: acc.message });
-    }
-
-    if (!schoolId) {
-      return res.status(400).json({ success: false, message: 'Please select which school you are marking attendance at.' });
-    }
-
     const user = await User.findById(req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // An anonymous-location head marks attendance from wherever they are. There
+    // is no school to name and no anchor to measure against, so location is
+    // recorded when the phone can supply it and never gates anything.
+    const anonymous = isAnonymousStaff(user);
+    const schoolId = anonymous ? null : req.body.schoolId;
+
+    let coords = { ok: true, lat: null, lng: null };
+    let acc = { ok: true, accuracy: null };
+
+    if (anonymous) {
+      const parsed = parseCoordinates(lat, lng);
+      if (parsed.ok) coords = parsed;
+      const parsedAcc = parseAccuracy(accuracy, Number.POSITIVE_INFINITY);
+      if (parsedAcc.ok) acc = parsedAcc;
+    } else {
+      coords = parseCoordinates(lat, lng);
+      if (!coords.ok) {
+        return res.status(400).json({ success: false, message: coords.message });
+      }
+      acc = parseAccuracy(accuracy, MAX_VERIFICATION_ACCURACY_M);
+      if (!acc.ok) {
+        return res.status(400).json({ success: false, message: acc.message });
+      }
+
+      if (!schoolId) {
+        return res.status(400).json({ success: false, message: 'Please select which school you are marking attendance at.' });
+      }
     }
 
     // Being substituted: someone else was approved to cover for this user, so
@@ -434,6 +489,22 @@ exports.verifyFaceV2 = async (req, res) => {
       });
     }
 
+    // On an approved school visit: the person is out inspecting another school,
+    // so they cannot be at their own. Check-in AND check-out are paused for the
+    // whole window and resume automatically the day after it ends — the day is
+    // already recorded as "On School Visit" (on-duty) on their calendar.
+    const activeVisit = await getActiveVisit(user._id, new Date());
+    if (activeVisit) {
+      const until = new Date(activeVisit.toDate).toLocaleDateString('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric',
+      });
+      const where = activeVisit.school ? ` to ${activeVisit.school.name}` : '';
+      return res.status(400).json({
+        success: false,
+        message: `You are on an approved school visit${where} until ${until}. Check-in and check-out are paused until then — these days are already marked "On School Visit".`,
+      });
+    }
+
     // Substitution duty: if this user is an approved SUBSTITUTE whose window
     // covers today, they are temporarily deployed away from their registered
     // school, so the geofence check is skipped (identity is still verified via
@@ -441,28 +512,42 @@ exports.verifyFaceV2 = async (req, res) => {
     const substituteAssignment = await getActiveSubstituteAssignment(user._id, new Date());
     const geofenceBypassed = Boolean(substituteAssignment);
 
-    // Resolve the per-school registration for the selected school. Everything
-    // downstream (geofence anchor, face embedding) is scoped to THIS school.
-    const reg = (user.faceRegistrations || []).find(
-      (fr) => String(fr.schoolId) === String(schoolId)
-    );
+    // Resolve the registration behind this attempt. Everything downstream (the
+    // geofence anchor, the face embedding) comes from it. For an anonymous head
+    // that is their single school-less registration; for everyone else it is
+    // scoped to the school they picked.
+    const reg = anonymous
+      ? findAnonymousRegistration(user)
+      : findSchoolRegistration(user, schoolId);
     if (!reg) {
-      return res.status(400).json({ success: false, message: 'You have not registered your face for this school yet.' });
+      return res.status(400).json({
+        success: false,
+        message: anonymous
+          ? 'You have not registered your face yet.'
+          : 'You have not registered your face for this school yet.',
+      });
     }
     if (reg.status !== 'approved') {
-      return res.status(400).json({ success: false, message: 'Your facial registration for this school is not approved yet.' });
+      return res.status(400).json({
+        success: false,
+        message: anonymous
+          ? 'Your facial registration is not approved yet.'
+          : 'Your facial registration for this school is not approved yet.',
+      });
     }
 
     // Block check-in / check-out on approved holidays for THIS school. Sundays
-    // are NOT blocked — trainers sometimes work them.
-    if (await isSchoolOffDay(schoolId)) {
+    // are NOT blocked — trainers sometimes work them. An anonymous head belongs
+    // to no school, so no school's holiday can close their day.
+    if (!anonymous && await isSchoolOffDay(schoolId)) {
       return res.status(400).json({ success: false, message: 'Attendance is disabled today — it is a holiday.' });
     }
 
     // 1. Location check against this school's own registration anchor.
     //    Skipped entirely for an active substitute — they may check in/out
-    //    anywhere for the duration of their approved window.
-    if (!geofenceBypassed) {
+    //    anywhere for the duration of their approved window — and for an
+    //    anonymous head, who has no anchor to be measured against at all.
+    if (!geofenceBypassed && !anonymous) {
       const registeredLat = reg.registrationLocation && reg.registrationLocation.lat;
       const registeredLng = reg.registrationLocation && reg.registrationLocation.lng;
 
@@ -528,10 +613,12 @@ exports.verifyFaceV2 = async (req, res) => {
       // this school's own registration, so the face was matched against the
       // embedding approved HERE and the geofence was measured against THIS
       // school's anchor. The day is simply recorded as spanning both.
-      const movedSchools = String(existingAttendance.schoolId) !== String(schoolId);
+      // An anonymous head has no school on either end, so a day can never
+      // "span two schools" for them.
+      const movedSchools = !anonymous && String(existingAttendance.schoolId) !== String(schoolId);
 
       existingAttendance.checkOutTime = new Date();
-      existingAttendance.checkOutSchoolId = schoolId;
+      existingAttendance.checkOutSchoolId = schoolId || null;
       existingAttendance.checkOutLocation = { lat: coords.lat, lng: coords.lng, accuracy: acc.accuracy };
       existingAttendance.status = 'Present';
 
@@ -560,7 +647,7 @@ exports.verifyFaceV2 = async (req, res) => {
       // expected, but the day starts once — the second school is captured by
       // checking OUT there, not by checking in again.
       if (existingAttendance) {
-        if (String(existingAttendance.schoolId) !== String(schoolId)) {
+        if (!anonymous && String(existingAttendance.schoolId) !== String(schoolId)) {
           const checkedInSchool = await School.findById(existingAttendance.schoolId).select('name');
           const name = checkedInSchool ? checkedInSchool.name : 'another school';
           const advice = existingAttendance.checkOutTime
@@ -576,7 +663,9 @@ exports.verifyFaceV2 = async (req, res) => {
 
       const attendance = await Attendance.create({
         trainerId: user._id,
-        schoolId,
+        // Null for an anonymous head — a real day's work that belongs to no
+        // school, and therefore to no school's numbers.
+        schoolId: schoolId || null,
         date: new Date(),
         status: 'Partially Present',
         checkInTime: new Date(),

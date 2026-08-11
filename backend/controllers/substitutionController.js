@@ -4,11 +4,12 @@ const { notify } = require('../utils/notify');
 const { sendSubstitutionEmail } = require('../utils/email');
 const {
   getUpwardRecipientIds,
-  getTeamCircleRecipientIds,
+  getSubstitutionApprovalRecipientIds,
   getSubjectScopeFilter,
 } = require('../utils/hierarchy');
 const { ADMIN_ROLES, FIELD_STAFF } = require('../utils/roles');
 const { ROLE_LABELS } = require('../utils/roleLabels');
+const { decisionOf, trail } = require('../utils/approvalTrail');
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -320,7 +321,7 @@ exports.approveRequest = async (req, res) => {
   try {
     const { substituteId, fromDate, toDate } = req.body;
 
-    const request = await SubstitutionRequest.findById(req.params.id).populate('subject', 'name role teamId teamIds schoolIds');
+    const request = await SubstitutionRequest.findById(req.params.id).populate('subject', 'name role teamId teamIds teamLeaderId schoolIds');
     if (!request) return res.status(404).json({ success: false, message: 'Request not found' });
     if (request.status !== 'pending') {
       return res.status(400).json({ success: false, message: `This request is already ${request.status}` });
@@ -374,20 +375,34 @@ exports.approveRequest = async (req, res) => {
       });
     }
 
+    const decidedAt = new Date();
     request.substitute = substitute._id;
     request.approvedBy = req.user._id;
     request.approvedFromDate = from;
     request.approvedToDate = to;
     request.status = 'approved';
-    request.decisionAt = new Date();
+    request.decisionAt = decidedAt;
+    request.decidedBy = decisionOf(req.user, 'approved', decidedAt);
     await request.save();
 
     const populated = await populateRequest(SubstitutionRequest.findById(request._id));
     res.status(200).json({ success: true, data: populated });
 
-    // ---- Notify the team circle of BOTH people + CEO/Admin ----
+    trail({
+      entityType: 'substitution',
+      entityId: request._id,
+      entityLabel: `${substitute.name} substituting for ${request.subject.name} · ${formatDate(from)} – ${formatDate(to)}`,
+      subject: request.subject,
+      actor: req.user,
+      action: 'approved',
+      at: decidedAt,
+    });
+
+    // ---- Notify ONLY the people this substitution concerns ----
+    // (subject, substitute, raiser, subject's leader + heads, Admin/CEO) —
+    // not every member of both teams, which used to spam the whole org.
     const subject = request.subject;
-    const recipientIds = await getTeamCircleRecipientIds([subject, substitute]);
+    const recipientIds = await getSubstitutionApprovalRecipientIds(subject, substitute, request.raisedBy);
 
     const rows = [
       { label: 'Staff being substituted', value: `${subject.name} (${roleLabel(subject.role)})` },
@@ -427,7 +442,9 @@ exports.approveRequest = async (req, res) => {
 exports.rejectRequest = async (req, res) => {
   try {
     const { note } = req.body;
-    const request = await SubstitutionRequest.findById(req.params.id).populate('raisedBy', 'name role');
+    const request = await SubstitutionRequest.findById(req.params.id)
+      .populate('raisedBy', 'name role')
+      .populate('subject', 'name role');
     if (!request) return res.status(404).json({ success: false, message: 'Request not found' });
     if (request.status !== 'pending') {
       return res.status(400).json({ success: false, message: `This request is already ${request.status}` });
@@ -436,14 +453,27 @@ exports.rejectRequest = async (req, res) => {
       return res.status(403).json({ success: false, message: 'A CEO-raised request must be handled by the Admin.' });
     }
 
+    const decidedAt = new Date();
     request.status = 'rejected';
     request.approvedBy = req.user._id;
-    request.decisionAt = new Date();
+    request.decisionAt = decidedAt;
     request.decisionNote = (note || '').trim();
+    request.decidedBy = decisionOf(req.user, 'rejected', decidedAt);
     await request.save();
 
     const populated = await populateRequest(SubstitutionRequest.findById(request._id));
     res.status(200).json({ success: true, data: populated });
+
+    trail({
+      entityType: 'substitution',
+      entityId: request._id,
+      entityLabel: `Substitution · ${formatDate(request.fromDate)} – ${formatDate(request.toDate)}`,
+      subject: request.subject,
+      actor: req.user,
+      action: 'rejected',
+      note: request.decisionNote,
+      at: decidedAt,
+    });
 
     // Tell the raiser it was declined.
     dispatch(
@@ -478,7 +508,7 @@ exports.rejectRequest = async (req, res) => {
 // @access  Private (raiser or Admin)
 exports.cancelRequest = async (req, res) => {
   try {
-    const request = await SubstitutionRequest.findById(req.params.id);
+    const request = await SubstitutionRequest.findById(req.params.id).populate('subject', 'name role');
     if (!request) return res.status(404).json({ success: false, message: 'Request not found' });
 
     const isOwner = String(request.raisedBy) === String(req.user._id);
@@ -489,11 +519,23 @@ exports.cancelRequest = async (req, res) => {
       return res.status(400).json({ success: false, message: `Only pending requests can be cancelled (this one is ${request.status})` });
     }
 
+    const decidedAt = new Date();
     request.status = 'cancelled';
-    request.decisionAt = new Date();
+    request.decisionAt = decidedAt;
+    request.decidedBy = decisionOf(req.user, 'cancelled', decidedAt);
     await request.save();
 
     res.status(200).json({ success: true, data: request });
+
+    trail({
+      entityType: 'substitution',
+      entityId: request._id,
+      entityLabel: `Substitution · ${formatDate(request.fromDate)} – ${formatDate(request.toDate)}`,
+      subject: request.subject,
+      actor: req.user,
+      action: 'cancelled',
+      at: decidedAt,
+    });
   } catch (error) {
     console.error('cancelRequest error:', error);
     res.status(500).json({ success: false, message: 'Server error' });

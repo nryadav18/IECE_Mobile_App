@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useCallback } from 'react';
+import React, { createContext, useState, useContext, useCallback, useMemo } from 'react';
 import CustomAlert from '../components/CustomAlert';
 
 export const AlertContext = createContext();
@@ -37,8 +37,14 @@ export const AlertProvider = ({ children }) => {
     setAlertState((prev) => ({ ...prev, visible: false }));
   }, []);
 
+  // showAlert / hideAlert are already stable, but the object wrapping them was
+  // rebuilt on every render — including every time an alert opens or closes.
+  // That handed all 30 consumer screens a new context value and re-rendered
+  // them just to show a dialog that renders below, not inside, them.
+  const alertApi = useMemo(() => ({ showAlert, hideAlert }), [showAlert, hideAlert]);
+
   return (
-    <AlertContext.Provider value={{ showAlert, hideAlert }}>
+    <AlertContext.Provider value={alertApi}>
       {children}
       <CustomAlert
         visible={alertState.visible}

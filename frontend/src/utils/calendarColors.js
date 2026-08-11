@@ -9,6 +9,7 @@
 import { toYMD } from './dates';
 import { SUBSTITUTION_MARK_COLOR, buildSubstitutionMarks } from './substitutionMarks';
 import { LEAVE_MARK_COLOR, buildLeaveMarks } from './leaveMarks';
+import { SCHOOL_VISIT_MARK_COLOR, buildSchoolVisitMarks } from './schoolVisitMarks';
 import { HOLIDAY_APPROVED_COLOR, buildHolidayMarks, dayKey } from './holiday';
 
 export const CALENDAR_COLORS = {
@@ -17,7 +18,8 @@ export const CALENDAR_COLORS = {
   absent: '#EF4444',              // red    — absent
   leave: LEAVE_MARK_COLOR,        // pink   — on approved leave
   substitution: SUBSTITUTION_MARK_COLOR, // purple — covering / being covered
-  holiday: HOLIDAY_APPROVED_COLOR, // sky    — approved holiday
+  schoolVisit: SCHOOL_VISIT_MARK_COLOR,  // teal   — on an approved school visit (ON DUTY)
+  holiday: HOLIDAY_APPROVED_COLOR, // deep blue — school closed (APPROVED holiday)
   unknown: '#9CA3AF',             // grey   — record with no/unknown status
 };
 
@@ -70,7 +72,11 @@ export function buildAttendanceMarks(records = []) {
  *  4. today               — only drawn if nothing else claimed today's cell.
  *  5. leave + substitutionLeaves — days this person is NOT expected at work,
  *     either on approved personal leave or because someone else was approved to
- *     replace them. Strongest: an authorized absence is the final word.
+ *     replace them. An authorized absence outranks everything above it.
+ *  6. visitDays           — approved school visits. Strongest of all: the Admin
+ *     signed off on the person being off-site, check-in is blocked server-side
+ *     for the whole window, and unlike the layer above it means ON DUTY, not
+ *     absent — so it must never be hidden by a stale record or an overlap.
  *
  * @param {object}   [opts]
  * @param {Array}    [opts.attendance]           attendance records
@@ -78,6 +84,7 @@ export function buildAttendanceMarks(records = []) {
  * @param {Array}    [opts.leaveDays]            approved personal leave windows
  * @param {Array}    [opts.substitutionLeaves]   windows where they were REPLACED
  * @param {Array}    [opts.substitutionDuties]   windows where they are COVERING
+ * @param {Array}    [opts.visitDays]            approved school-visit windows
  * @param {object}   [opts.todayMark]            style for today's cell (omit to skip)
  */
 export function buildCalendarMarks({
@@ -86,6 +93,7 @@ export function buildCalendarMarks({
   leaveDays = [],
   substitutionLeaves = [],
   substitutionDuties = [],
+  visitDays = [],
   todayMark,
 } = {}) {
   const marks = {
@@ -101,7 +109,13 @@ export function buildCalendarMarks({
   }
 
   // Being replaced is an authorized absence, so it reads the same as leave.
-  return { ...marks, ...buildLeaveMarks([...leaveDays, ...substitutionLeaves]) };
+  // An approved school visit paints last — it is on-duty time the Admin signed
+  // off on, and the server refuses check-in for those days regardless.
+  return {
+    ...marks,
+    ...buildLeaveMarks([...leaveDays, ...substitutionLeaves]),
+    ...buildSchoolVisitMarks(visitDays),
+  };
 }
 
 // Canonical legend (colour key shown under every calendar). `items` on
@@ -113,5 +127,6 @@ export const CALENDAR_LEGEND = [
   { key: 'absent', label: 'Absent', color: CALENDAR_COLORS.absent },
   { key: 'leave', label: 'On Leave', color: CALENDAR_COLORS.leave },
   { key: 'substitution', label: 'On Substitution', color: CALENDAR_COLORS.substitution },
-  { key: 'holiday', label: 'Holiday', color: CALENDAR_COLORS.holiday },
+  { key: 'schoolVisit', label: 'On School Visit', color: CALENDAR_COLORS.schoolVisit },
+  { key: 'holiday', label: 'School Holiday', color: CALENDAR_COLORS.holiday },
 ];

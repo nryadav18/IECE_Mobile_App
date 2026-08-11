@@ -250,17 +250,35 @@ export function SkeletonForm({ fields = 4, style }) {
   );
 }
 
-/** MONITORING: a section title over a 2-column grid of selectable tiles. */
+/**
+ * MONITORING: the live dashboard's shape — a status strip, the hero ring with
+ * its legend, then the 2-column grid of tappable count tiles. Mirrors
+ * MonitoringDashboard so the loader predicts the layout that follows.
+ */
 export function SkeletonMonitoring({ tiles = 6, style }) {
   return (
     <View style={[{ overflow: 'hidden' }, style]}>
-      <Skeleton plain width={'45%'} height={20} radius={9} style={{ marginBottom: 16 }} />
+      <Skeleton plain width={'100%'} height={46} radius={15} style={{ marginBottom: 12 }} />
+      <Skeleton plain width={'100%'} height={38} radius={13} style={{ marginBottom: 14 }} />
+
+      <SkeletonCard sweep={false} style={{ marginBottom: 14 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <SkeletonCircle plain size={140} />
+          <View style={{ flex: 1, marginLeft: 14 }}>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} plain width={'85%'} height={11} radius={6} style={{ marginBottom: 10 }} />
+            ))}
+          </View>
+        </View>
+        <Skeleton plain width={'100%'} height={10} radius={5} style={{ marginTop: 12 }} />
+      </SkeletonCard>
+
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
         {Array.from({ length: tiles }).map((_, i) => (
           <SkeletonCard key={i} sweep={false} style={{ width: '47%', flexGrow: 1 }}>
-            <SkeletonCircle plain size={34} style={{ marginBottom: 12 }} />
-            <Skeleton plain width={'70%'} height={13} radius={7} style={{ marginBottom: 8 }} />
-            <Skeleton plain width={'45%'} height={10} radius={5} />
+            <Skeleton plain width={'60%'} height={10} radius={5} style={{ marginBottom: 10 }} />
+            <Skeleton plain width={'40%'} height={22} radius={8} style={{ marginBottom: 8 }} />
+            <Skeleton plain width={'70%'} height={9} radius={5} />
           </SkeletonCard>
         ))}
       </View>

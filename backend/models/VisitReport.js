@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const decisionSchema = require('./decisionSchema');
 
 const visitReportSchema = new mongoose.Schema({
   // Author of the report (the inspecting EGM: team leader / trainee TL / head).
@@ -54,6 +55,21 @@ const visitReportSchema = new mongoose.Schema({
   // The reviewing school authority's mandatory feedback / comment on the report.
   chairmanFeedback: {
     type: String
+  },
+  // Snapshot of WHO decided this and what they did — the one field every screen
+  // reads to render "Approved by". Shown to the Admin and CEO only.
+  //
+  // Reports were previously announced as "approved by the chairman" with no
+  // record of WHICH chairman, which is unusable once a person runs more than one
+  // school or a school changes hands.
+  decidedBy: {
+    type: decisionSchema,
+    default: null
+  },
+  // When the decision was taken.
+  decisionAt: {
+    type: Date,
+    default: null
   },
   timestamp: {
     type: Date,

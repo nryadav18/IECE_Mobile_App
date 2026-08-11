@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useMemo, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const ThemeContext = createContext();
@@ -85,7 +85,13 @@ export const ThemeProvider = ({ children }) => {
     }
   };
 
-  const toggleTheme = async () => {
+  // Depends on isDarkMode on purpose. Reading the next value out of a functional
+  // setState updater would not work here: React runs the updater during the
+  // following render, so the value would still be undefined by the time
+  // AsyncStorage is written and the choice would never persist. Re-creating
+  // this callback when isDarkMode changes costs nothing — the memo below
+  // already has to rebuild on exactly that change.
+  const toggleTheme = useCallback(async () => {
     try {
       const nextMode = !isDarkMode;
       setIsDarkMode(nextMode);
@@ -93,16 +99,18 @@ export const ThemeProvider = ({ children }) => {
     } catch (e) {
       console.log('Error saving theme:', e);
     }
-  };
+  }, [isDarkMode]);
 
-  const theme = isDarkMode ? darkTheme : lightTheme;
-
-  const themeValue = {
-    theme,
-    ...theme,
-    isDarkMode,
-    toggleTheme
-  };
+  // 68 files read this context. Spreading a fresh object into the provider on
+  // every render gave all of them a new value identity each time, so any
+  // re-render of this provider re-rendered two thirds of the app for a theme
+  // that had not changed. Memoised on isDarkMode — the only thing that can
+  // actually change the theme — so consumers now re-render only on a real
+  // light/dark switch.
+  const themeValue = useMemo(() => {
+    const theme = isDarkMode ? darkTheme : lightTheme;
+    return { theme, ...theme, isDarkMode, toggleTheme };
+  }, [isDarkMode, toggleTheme]);
 
   return (
     <ThemeContext.Provider value={themeValue}>

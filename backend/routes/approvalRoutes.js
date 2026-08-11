@@ -5,7 +5,7 @@ const {
   getPendingActivities,
 } = require('../controllers/approvalController');
 const { protect, authorize } = require('../middleware/auth');
-const { LEADER_ROLES, HEAD_ROLES, ADMIN_ROLES } = require('../utils/roles');
+const { LEADER_ROLES, HEAD_ROLES, ADMIN_ROLES, FACE_APPROVERS } = require('../utils/roles');
 
 const router = express.Router();
 
@@ -16,8 +16,11 @@ const APPROVERS = [...LEADER_ROLES, ...HEAD_ROLES, ...ADMIN_ROLES];
 
 router.use(protect, authorize(...APPROVERS));
 
-router.get('/face', getPendingFaceRegistrations);
-router.put('/face/:userId/:schoolId', reviewFaceRegistration);
+// Facial registrations are the Admin's alone — see FACE_APPROVERS. Activities
+// stay with whoever sits above the uploader, so the two queues no longer share
+// an audience even though they still share a screen.
+router.get('/face', authorize(...FACE_APPROVERS), getPendingFaceRegistrations);
+router.put('/face/:userId/:schoolId', authorize(...FACE_APPROVERS), reviewFaceRegistration);
 
 router.get('/activities', getPendingActivities);
 

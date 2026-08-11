@@ -25,18 +25,21 @@ import FaceRegistrationScreen from '../screens/Trainer/FaceRegistrationScreen';
 import AttendanceScreen from '../screens/Trainer/AttendanceScreen';
 import PendingRegistrationsScreen from '../screens/Admin/PendingRegistrationsScreen';
 import CreateAdminScreen from '../screens/Admin/CreateAdminScreen';
+import ApprovalLogScreen from '../screens/Admin/ApprovalLogScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import SubstitutionScreen from '../screens/Substitution/SubstitutionScreen';
 import RaiseSubstitutionScreen from '../screens/Substitution/RaiseSubstitutionScreen';
 import SubstitutionApprovalScreen from '../screens/Substitution/SubstitutionApprovalScreen';
 import LeaveScreen from '../screens/Leave/LeaveScreen';
 import LeaveApprovalScreen from '../screens/Leave/LeaveApprovalScreen';
+import SchoolVisitScreen from '../screens/SchoolVisit/SchoolVisitScreen';
+import SchoolVisitApprovalScreen from '../screens/SchoolVisit/SchoolVisitApprovalScreen';
 import MeetingCornerScreen from '../screens/Meeting/MeetingCornerScreen';
 import MeetingDetailScreen from '../screens/Meeting/MeetingDetailScreen';
 import CreateMeetingScreen from '../screens/Meeting/CreateMeetingScreen';
 import ApprovalsScreen from '../screens/Approvals/ApprovalsScreen';
 import FaceRegistrationReviewScreen from '../screens/Approvals/FaceRegistrationReviewScreen';
-import { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES, LEAVE_APPLICANT_ROLES, MEETING_VIEWER_ROLES, MEETING_CREATOR_ROLES } from '../utils/roles';
+import { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES, LEAVE_APPLICANT_ROLES, SCHOOL_VISIT_APPLICANT_ROLES, MEETING_VIEWER_ROLES, MEETING_CREATOR_ROLES } from '../utils/roles';
 
 const Stack = createStackNavigator();
 
@@ -58,7 +61,20 @@ const AppNavigator = () => {
   }
 
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    // freezeOnBlur is the single biggest smoothness win in the app.
+    //
+    // Every screen left behind on the stack stays MOUNTED (that is what keeps
+    // its scroll position and data when you go back). Without freezing, those
+    // screens also keep RE-RENDERING: a context update — the badge poll every
+    // 30s, a theme toggle, a socket push — re-rendered the Admin portal, the
+    // Manage screen and every other portal underneath the one you were
+    // actually looking at. On a stack four deep that is four heavy trees
+    // recomputing for something only the top screen can show.
+    //
+    // react-native-screens suspends the render tree of any screen that is not
+    // focused and resumes it on the way back, with its state untouched. Nothing
+    // is unmounted and nothing is refetched — only the wasted work stops.
+    <Stack.Navigator screenOptions={{ headerShown: false, freezeOnBlur: true }}>
       {user ? (
         <>
           <Stack.Screen name="Home" component={DashboardScreen} />
@@ -69,13 +85,23 @@ const AppNavigator = () => {
           <Stack.Screen name="Notifications" component={NotificationsScreen} />
 
           {/* Approvals hub — anyone who can ever BE an approver: (trainee) team
-              leaders, heads, Admin and CEO. The API scopes each queue to the
-              people that person is actually responsible for. */}
+              leaders, heads, Admin and CEO. The API scopes the activity queue to
+              the people that person is actually responsible for. */}
           {[...LEADER_ROLES, ...HEAD_ROLES, ...ADMIN_ROLES].includes(user.role) && (
-            <>
-              <Stack.Screen name="Approvals" component={ApprovalsScreen} />
-              <Stack.Screen name="FaceRegistrationReview" component={FaceRegistrationReviewScreen} />
-            </>
+            <Stack.Screen name="Approvals" component={ApprovalsScreen} />
+          )}
+          {/* Reviewing a face scan is the Admin's alone, so the screen behind
+              that queue is registered for the Admin alone. */}
+          {user.role === 'creator_admin' && (
+            <Stack.Screen name="FaceRegistrationReview" component={FaceRegistrationReviewScreen} />
+          )}
+
+          {/* The Approval Log — who approved what, across every feature. There
+              are several admins and one CEO, and this is where they find out
+              which of them took a given decision. Registered for those two
+              roles only; the API refuses everyone else independently. */}
+          {ADMIN_ROLES.includes(user.role) && (
+            <Stack.Screen name="ApprovalLog" component={ApprovalLogScreen} />
           )}
 
           {/* Substitution feature — raisers (leaders/heads) + approvers (CEO/Admin). */}
@@ -98,6 +124,16 @@ const AppNavigator = () => {
           {/* Only the Admin reviews leave requests. */}
           {user.role === 'creator_admin' && (
             <Stack.Screen name="LeaveApproval" component={LeaveApprovalScreen} />
+          )}
+
+          {/* School Visit feature — applicants (leaders + heads only, NOT
+              trainers) + the Admin approver. CEO is only notified. */}
+          {[...SCHOOL_VISIT_APPLICANT_ROLES, 'creator_admin'].includes(user.role) && (
+            <Stack.Screen name="SchoolVisit" component={SchoolVisitScreen} />
+          )}
+          {/* Only the Admin reviews school visit requests. */}
+          {user.role === 'creator_admin' && (
+            <Stack.Screen name="SchoolVisitApproval" component={SchoolVisitApprovalScreen} />
           )}
 
           {/* Meeting Corner — everyone except chairman can view; leaders/heads/

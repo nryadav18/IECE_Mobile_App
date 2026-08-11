@@ -36,6 +36,12 @@ const FRESH_FIX_MS = 30000;
  *  - locationOptions: how precise the GPS fix must be. Defaults to the
  *    everyday ATTENDANCE_FIX; face registration passes the stricter
  *    REGISTRATION_FIX because that fix is stored as a permanent anchor.
+ *  - locationRequired: whether a fix is a precondition at all. True everywhere
+ *    a geofence is enforced — no fix, no attendance. FALSE for anonymous-
+ *    location staff, whose position is never compared to anything: their
+ *    location is recorded when the phone can supply one and simply omitted
+ *    when it cannot, rather than standing between them and their attendance.
+ *    `onSubmit` then receives `null` for location.
  */
 export default function FaceCapture({
   title = 'Face Scan',
@@ -47,6 +53,7 @@ export default function FaceCapture({
   onError,
   onCancel,
   locationOptions = ATTENDANCE_FIX,
+  locationRequired = true,
 }) {
   const insets = useSafeAreaInsets();
   const cameraRef = useRef(null);
@@ -105,7 +112,10 @@ export default function FaceCapture({
       const { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
       if (!mountedRef.current) return;
 
-      setHasPermission(cameraStatus === 'granted' && micStatus === 'granted' && locationStatus === 'granted');
+      // Location is only a hard requirement where it decides something. For
+      // anonymous-location staff the camera and microphone are enough.
+      const mediaOk = cameraStatus === 'granted' && micStatus === 'granted';
+      setHasPermission(locationRequired ? mediaOk && locationStatus === 'granted' : mediaOk);
       if (locationStatus !== 'granted') return;
 
       // Warm the GPS receiver up while the user reads the on-screen guide, so
@@ -168,15 +178,20 @@ export default function FaceCapture({
     // Pin down where we are BEFORE recording. Attendance is only as trustworthy
     // as this fix, so a vague or stale one stops the flow here rather than
     // being saved and breaking every future check-in.
-    let location;
+    let location = null;
     try {
       location = await resolveLocation();
     } catch (err) {
       // A cancellation means the screen closed — there is nobody to tell.
       if (!mountedRef.current || err instanceof LocationCancelled) return;
-      setPhase('guide');
-      onError && onError(err?.message || 'Could not get your location. Please try again.');
-      return;
+      // Where location decides nothing, failing to get one is not a failure:
+      // carry on and record the attendance without it.
+      if (locationRequired) {
+        setPhase('guide');
+        onError && onError(err?.message || 'Could not get your location. Please try again.');
+        return;
+      }
+      location = null;
     }
     if (!mountedRef.current) return;
 

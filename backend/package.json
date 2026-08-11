@@ -9,7 +9,8 @@
     "create:schools": "node create_schools_chairmen.js",
     "create:leaders": "node create_team_leaders.js",
     "create:trainers": "node create_trainers.js",
-    "sync:occasions": "node scripts/sync-occasions.js"
+    "sync:occasions": "node scripts/sync-occasions.js",
+    "test:report": "node scripts/testMonthlyReport.js"
   },
   "keywords": [],
   "author": "",
@@ -31,6 +32,8 @@
     "mongoose": "^9.6.3",
     "multer": "^2.1.1",
     "multer-storage-cloudinary": "^4.0.0",
-    "node-cron": "^4.5.0"
+    "node-cron": "^4.5.0",
+    "pdfkit": "^0.19.1",
+    "socket.io": "^4.8.3"
   }
 }

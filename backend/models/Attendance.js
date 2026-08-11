@@ -6,12 +6,17 @@ const attendanceSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  // The school this person CHECKED IN at. Kept required and unchanged so every
-  // existing read keeps working.
+  // The school this person CHECKED IN at.
+  //
+  // NULL only for an anonymous-location head (see User.anonymousLocation), who
+  // belongs to no school at all — their day is real work, it just happened
+  // nowhere in particular. Every per-school query goes through
+  // Attendance.schoolFilter(), which such a row simply never matches, so it is
+  // counted in the person's own calendar and profile and in no school's totals.
   schoolId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'School',
-    required: true
+    default: null
   },
   // The school this person CHECKED OUT at. Staff assigned to several schools
   // routinely work one in the morning and another in the afternoon, so the day

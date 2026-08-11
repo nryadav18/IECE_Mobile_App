@@ -1,6 +1,7 @@
 const Notification = require('../models/Notification');
 const LeaveRequest = require('../models/LeaveRequest');
 const SubstitutionRequest = require('../models/SubstitutionRequest');
+const SchoolVisitRequest = require('../models/SchoolVisitRequest');
 const SchoolHoliday = require('../models/SchoolHoliday');
 const User = require('../models/User');
 
@@ -60,6 +61,7 @@ exports.getBadges = async (req, res) => {
     // Actionable "pending" sections depend on who can approve what.
     if (role === 'creator_admin') {
       jobs.leave = LeaveRequest.countDocuments({ status: 'pending' });
+      jobs.schoolVisit = SchoolVisitRequest.countDocuments({ status: 'pending' });
       jobs.substitution = SubstitutionRequest.countDocuments({ status: 'pending' });
       jobs.faces = User.countDocuments({ 'faceRegistrations.status': 'pending' });
       jobs.holidays = SchoolHoliday.countDocuments({ status: 'pending' });

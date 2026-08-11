@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
 import { ThemeContext } from '../context/ThemeContext';
 import { useAlert } from '../context/AlertContext';
+import ApprovedBy from './ApprovedBy';
 
 const STATUS_COLORS = {
   pending: '#F59E0B',
@@ -84,6 +85,9 @@ export default function SchoolHolidayApprovals({ refreshKey }) {
           <Text style={{ fontSize: 10, fontWeight: '800', color: STATUS_COLORS[h.status] || '#999', textTransform: 'uppercase' }}>{h.status}</Text>
         </View>
       </View>
+
+      {/* Which admin closed this school that day. */}
+      <ApprovedBy record={h} compact style={{ marginTop: 10 }} />
 
       {showActions && (
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>

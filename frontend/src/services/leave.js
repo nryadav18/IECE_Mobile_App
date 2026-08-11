@@ -7,12 +7,36 @@ import api from './api';
 export const applyLeave = ({ reason, fromDate, toDate, proofs }) =>
   api.post('/leaves', { reason, fromDate, toDate, proofs }).then((r) => r.data);
 
-export const getLeaveRequests = ({ status, mine } = {}) => {
+export const getLeaveRequests = ({ status, mine, emergency } = {}) => {
   const params = {};
   if (status) params.status = status;
   if (mine) params.mine = true;
+  // Tri-state on purpose: undefined = everything, true = only emergency leaves
+  // the Admin granted, false = only self-applied requests.
+  if (emergency !== undefined) params.emergency = String(emergency);
   return api.get('/leaves', { params }).then((r) => r.data);
 };
+
+// ---- Emergency leave (Admin only) ----
+
+// Staff the Admin may grant an emergency leave to. Shaped for StaffSearchList.
+export const getLeaveStaff = (search = '') =>
+  api.get('/leaves/staff', { params: { search, limit: 100 } }).then((r) => r.data);
+
+// Grant an emergency leave. A 409 carrying `conflicts` means the person already
+// has something booked; re-call with force: true to go ahead anyway.
+export const createEmergencyLeave = ({ applicantId, reason, fromDate, toDate, force }) =>
+  api.post('/leaves/emergency', { applicantId, reason, fromDate, toDate, force }).then((r) => r.data);
+
+// Change a leave's window — pending or approved. Same 409/force contract.
+export const updateLeaveDates = (id, { fromDate, toDate, force }) =>
+  api.post(`/leaves/${id}/dates`, { fromDate, toDate, force }).then((r) => r.data);
+
+// The clash list a 409 came back with, or [] for any other failure.
+export const leaveConflicts = (e) => e?.response?.data?.conflicts || [];
+
+// Did this failure mean "there are clashes, confirm to override"?
+export const needsConfirmation = (e) => e?.response?.status === 409 && !!e?.response?.data?.requiresConfirmation;
 
 export const getLeaveRequest = (id) =>
   api.get(`/leaves/${id}`).then((r) => r.data);

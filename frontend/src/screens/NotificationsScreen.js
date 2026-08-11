@@ -8,7 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { ThemeContext } from '../context/ThemeContext';
 import { AuthContext } from '../context/AuthContext';
 import { useBadges } from '../context/BadgeContext';
-import { canUseLeave, canUseMeetings } from '../utils/roles';
+import { canUseLeave, canUseMeetings, canUseSchoolVisit } from '../utils/roles';
 import {
   getNotifications, markNotificationRead, markAllNotificationsRead,
 } from '../services/inbox';
@@ -21,9 +21,18 @@ const META = {
   leave_request: { icon: 'calendar', color: '#F59E0B' },
   leave_approved: { icon: 'checkmark-circle', color: '#27AE60' },
   leave_rejected: { icon: 'close-circle', color: '#F44336' },
+  leave_emergency: { icon: 'flash', color: '#DC2626' },
+  leave_updated: { icon: 'create-outline', color: '#0D9488' },
+  leave_cancelled: { icon: 'arrow-undo-circle', color: '#DC2626' },
+  school_visit_request: { icon: 'business', color: '#F59E0B' },
+  school_visit_approved: { icon: 'checkmark-circle', color: '#0D9488' },
+  school_visit_updated: { icon: 'calendar', color: '#0D9488' },
+  school_visit_rejected: { icon: 'close-circle', color: '#F44336' },
+  school_visit_report_due: { icon: 'document-text', color: '#0D9488' },
   meeting_new: { icon: 'videocam', color: '#2D8CFF' },
   meeting_updated: { icon: 'create-outline', color: '#F59E0B' },
   face_rejected: { icon: 'close-circle', color: '#EF4444' },
+  activity_tagged: { icon: 'pricetag', color: '#0D9488' },
   default: { icon: 'notifications', color: '#10B981' },
 };
 
@@ -82,8 +91,31 @@ export default function NotificationsScreen({ navigation }) {
       // Leave screen exists for applicants + the Admin (not CEO).
       if (item.type === 'leave_request') {
         navigation.navigate('Leave', { initialTab: 'approvals' });
-      } else if (item.type === 'leave_approved' || item.type === 'leave_rejected') {
+      } else if (
+        item.type === 'leave_approved' ||
+        item.type === 'leave_rejected' ||
+        // An emergency leave the Admin granted, a window the Admin moved, or an
+        // emergency leave withdrawn — all land on the same list as any other
+        // outcome, where the person can see the dates that now apply.
+        item.type === 'leave_emergency' ||
+        item.type === 'leave_updated' ||
+        item.type === 'leave_cancelled'
+      ) {
         navigation.navigate('Leave', { initialTab: 'mine' });
+      }
+    }
+    // School Visit screen exists for leaders/heads + the Admin (not CEO, not
+    // trainers) — guard before navigating or the route simply won't be there.
+    if (canUseSchoolVisit(user?.role)) {
+      if (item.type === 'school_visit_request') {
+        navigation.navigate('SchoolVisit', { initialTab: 'approvals' });
+      } else if (
+        item.type === 'school_visit_approved' ||
+        item.type === 'school_visit_updated' ||
+        item.type === 'school_visit_rejected' ||
+        item.type === 'school_visit_report_due'
+      ) {
+        navigation.navigate('SchoolVisit', { initialTab: 'mine' });
       }
     }
     // Both approval queues live in the same hub.
@@ -91,8 +123,9 @@ export default function NotificationsScreen({ navigation }) {
       navigation.navigate('Approvals');
     }
     // An activity decision — open the activity so the uploader sees the outcome
-    // and, if rejected, the reason.
-    if (item.type === 'activity_status_update' && item.data?.activityId) {
+    // and, if rejected, the reason. Same destination for an organiser who was
+    // tagged in one that just went live.
+    if ((item.type === 'activity_status_update' || item.type === 'activity_tagged') && item.data?.activityId) {
       navigation.navigate('ActivityDetails', { activityId: item.data.activityId });
     }
     // Open the meeting itself when we know which one; the corner is the

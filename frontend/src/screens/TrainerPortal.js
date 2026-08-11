@@ -9,6 +9,7 @@ import { MotiView } from 'moti';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import CustomAlert from '../components/CustomAlert';
+import ApprovedBy from '../components/ApprovedBy';
 import CreateActivityForm from '../components/CreateActivityForm';
 import EditActivityModal from '../components/EditActivityModal';
 import SidebarMenu from '../components/SidebarMenu';
@@ -17,7 +18,7 @@ import CountBadge from '../components/CountBadge';
 import { useBadges } from '../context/BadgeContext';
 import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
-import { isOffToday } from '../utils/holiday';
+import { isOffToday, HOLIDAY_APPROVED_COLOR, HOLIDAY_PENDING_COLOR } from '../utils/holiday';
 import { buildCalendarMarks } from '../utils/calendarColors';
 import { deriveAttendanceActions, findTodayAttendance } from '../utils/attendanceActions';
 import CalendarLegend from '../components/CalendarLegend';
@@ -251,9 +252,12 @@ export default function TrainerPortal({ navigation, route }) {
   // the list can never take the tab down).
   const todayAtt = findTodayAttendance(attendanceRecords);
 
-  // Today is a non-working day only when the school has an approved holiday.
+  // Today is a non-working day only when the SELECTED school has an approved
+  // holiday. The calendar shows every school's closures, but only the one being
+  // marked at can close this day — the server checks per school, so asking
+  // about all of them would grey out buttons the API would have accepted.
   // Sundays stay workable — check-in / check-out remain enabled on them.
-  const isHolidayToday = isOffToday(holidays);
+  const isHolidayToday = isOffToday(holidays, selectedSchoolId);
 
   const renderProgressTab = () => {
     return (
@@ -332,11 +336,6 @@ export default function TrainerPortal({ navigation, route }) {
                 <Text style={[styles.detailValue, { color: theme.colors.textPrimary }]}>
                   {new Date(school.startDate).toLocaleDateString()}
                 </Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Ionicons name="people-outline" size={16} color={theme.colors.textSecondary} style={styles.detailIcon} />
-                <Text style={[styles.detailLabel, { color: theme.colors.textSecondary }]}>Strength:</Text>
-                <Text style={[styles.detailValue, { color: theme.colors.textPrimary }]}>{school.totalStrength || 0}</Text>
               </View>
               <View style={styles.detailRow}>
                 <Ionicons name="time-outline" size={16} color={theme.colors.textSecondary} style={styles.detailIcon} />
@@ -451,13 +450,34 @@ export default function TrainerPortal({ navigation, route }) {
 
             return (
               <View>
-                {regStatus === 'none' && (
+                {/* A rejection is a "try again", not a dead end. The reason is
+                    shown here — a push notification is easy to miss — and the
+                    button comes straight back, so the trainer can re-record on
+                    the spot instead of waiting for anyone to reset anything. */}
+                {regStatus === 'rejected' && (
+                  <View style={{ backgroundColor: '#FEE2E2', borderColor: '#EF4444', borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="close-circle-outline" size={16} color="#B91C1C" style={{ marginRight: 6 }} />
+                      <Text style={{ color: '#B91C1C', fontSize: 12.5, fontWeight: '800', flex: 1 }}>Registration rejected — {schoolName}</Text>
+                    </View>
+                    {!!reg?.rejectionReason && (
+                      <Text style={{ color: '#7F1D1D', fontSize: 12, marginTop: 6, lineHeight: 17 }}>{reg.rejectionReason}</Text>
+                    )}
+                    <Text style={{ color: '#7F1D1D', fontSize: 12, marginTop: 6, lineHeight: 17 }}>
+                      Please register again — your new recording goes back to the admin for approval.
+                    </Text>
+                  </View>
+                )}
+
+                {(regStatus === 'none' || regStatus === 'rejected') && (
                   <TouchableOpacity
                     style={[styles.uploadBtn, { backgroundColor: theme.colors.primary }]}
                     onPress={() => navigation.navigate('FaceRegistration', { schoolId: selectedSchoolId, schoolName })}
                   >
                     <Ionicons name="scan-outline" size={20} color="#fff" />
-                    <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>Register Face for {schoolName}</Text>
+                    <Text style={[styles.uploadBtnText, { fontSize: 13 }]}>
+                      {regStatus === 'rejected' ? `Register Face Again for ${schoolName}` : `Register Face for ${schoolName}`}
+                    </Text>
                   </TouchableOpacity>
                 )}
 
@@ -518,11 +538,13 @@ export default function TrainerPortal({ navigation, route }) {
             );
           })()}
 
-          {/* Holiday banner — attendance disabled on approved school holidays */}
+          {/* Holiday banner — attendance disabled on approved school holidays.
+              Takes its colour from the holiday constants, so this banner and
+              the holiday cell on the calendar can never disagree. */}
           {isHolidayToday && (
-            <View style={{ backgroundColor: '#E1F5FE', borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#87CEEB' }}>
-              <Ionicons name="sunny-outline" size={16} color="#0277BD" style={{ marginRight: 8 }} />
-              <Text style={{ color: '#01579B', fontSize: 12, fontWeight: '600', flex: 1 }}>Today is a holiday. Check-in and check-out are disabled.</Text>
+            <View style={{ backgroundColor: HOLIDAY_PENDING_COLOR, borderRadius: 10, padding: 12, marginBottom: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: HOLIDAY_APPROVED_COLOR }}>
+              <Ionicons name="sunny-outline" size={16} color={HOLIDAY_APPROVED_COLOR} style={{ marginRight: 8 }} />
+              <Text style={{ color: HOLIDAY_APPROVED_COLOR, fontSize: 12, fontWeight: '600', flex: 1 }}>Today is a holiday. Check-in and check-out are disabled.</Text>
             </View>
           )}
 
@@ -621,6 +643,9 @@ export default function TrainerPortal({ navigation, route }) {
                   <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 4 }}>
                     Uploaded by: {item.uploaderId?.name || 'Unknown'}
                   </Text>
+                  {/* Admin/CEO only — a trainer never learns which leader or head
+                      decided their activity. */}
+                  <ApprovedBy record={item} compact style={{ marginTop: 6 }} />
                 </View>
               </View>
 

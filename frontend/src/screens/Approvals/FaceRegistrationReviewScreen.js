@@ -14,6 +14,7 @@ import {
 } from '../../components/RegistrationEvidence';
 import {
   approveFaceRegistration, rejectFaceRegistration, approvalError,
+  faceRegistrationKey,
 } from '../../services/approvals';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -38,7 +39,11 @@ export default function FaceRegistrationReviewScreen({ navigation, route }) {
   const [busy, setBusy] = useState(false);
   const [rejecting, setRejecting] = useState(false);
 
-  const schoolId = reg?.schoolId?._id || reg?.schoolId;
+  // A registration with no school belongs to an anonymous-location head. It
+  // anchors nothing, so the map below is a note of where they happened to
+  // record — not the thing being judged.
+  const anonymous = !(reg?.schoolId?._id || reg?.schoolId);
+  const regKey = faceRegistrationKey(reg);
   const schoolName = reg?.schoolId?.name || 'this school';
   const location = registrationLocation(reg);
   const accuracy = reg?.locationAccuracy;
@@ -46,8 +51,14 @@ export default function FaceRegistrationReviewScreen({ navigation, route }) {
   const approve = async () => {
     setBusy(true);
     try {
-      await approveFaceRegistration(user._id, schoolId);
-      showAlert('Approved', `${user.name} can now mark attendance at ${schoolName}.`, 'success');
+      await approveFaceRegistration(user._id, regKey);
+      showAlert(
+        'Approved',
+        anonymous
+          ? `${user.name} can now check in and out from any location.`
+          : `${user.name} can now mark attendance at ${schoolName}.`,
+        'success'
+      );
       navigation.goBack();
     } catch (e) {
       showAlert('Error', approvalError(e), 'error');
@@ -59,7 +70,7 @@ export default function FaceRegistrationReviewScreen({ navigation, route }) {
   const reject = async (reason) => {
     setBusy(true);
     try {
-      await rejectFaceRegistration(user._id, schoolId, reason);
+      await rejectFaceRegistration(user._id, regKey, reason);
       setRejecting(false);
       showAlert('Rejected', `${user.name} has been told why and can register again.`, 'success');
       navigation.goBack();
@@ -128,7 +139,11 @@ export default function FaceRegistrationReviewScreen({ navigation, route }) {
         <View style={{ marginHorizontal: 16, marginTop: 16, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.border, paddingHorizontal: 16, paddingVertical: 4 }}>
           <Row icon="person-outline" label="Name" value={user.name} />
           <Row icon="shield-checkmark-outline" label="Role" value={roleLabel(user.role)} />
-          <Row icon="business-outline" label="School" value={schoolName} />
+          {anonymous ? (
+            <Row icon="navigate-circle-outline" label="Works" value="Anywhere — no school assigned" />
+          ) : (
+            <Row icon="business-outline" label="School" value={schoolName} />
+          )}
           {accuracy != null && (
             <Row
               icon="locate-outline"
@@ -159,15 +174,18 @@ export default function FaceRegistrationReviewScreen({ navigation, route }) {
               </Text>
             </View>
             <Text style={{ fontSize: 11.5, marginHorizontal: 16, marginTop: 8, lineHeight: 17, color: theme.colors.textSecondary }}>
-              This spot becomes their permanent check-in anchor for {schoolName}. Approve only if it is
-              genuinely at the school.
+              {anonymous
+                ? 'Where they happened to record. This person is not tied to a school, so nothing is measured against this spot — judge the video, not the place.'
+                : `This spot becomes their permanent check-in anchor for ${schoolName}. Approve only if it is genuinely at the school.`}
             </Text>
           </>
         ) : (
           <View style={{ marginHorizontal: 16, borderRadius: 14, borderWidth: 1, padding: 24, alignItems: 'center', backgroundColor: theme.colors.surface, borderColor: theme.colors.border }}>
             <Ionicons name="location-outline" size={36} color={theme.colors.textSecondary} />
             <Text style={{ fontSize: 13, marginTop: 10, textAlign: 'center', fontStyle: 'italic', color: theme.colors.textSecondary }}>
-              No location was captured for this registration.
+              {anonymous
+                ? 'No location was captured — this person is not tied to a school, so none is needed.'
+                : 'No location was captured for this registration.'}
             </Text>
           </View>
         )}

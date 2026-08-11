@@ -59,6 +59,20 @@ export const ATTENDANCE_FIX = {
   maxWaitMs: MAX_WAIT_MS,
 };
 
+/**
+ * Anonymous-location staff (heads attached to no school). Their location is
+ * never compared to anything — it is recorded for the audit trail and nothing
+ * else — so there is no accuracy worth insisting on and no reason to make them
+ * wait for a tight lock. Whatever the phone has after a few seconds is kept,
+ * and being unable to get a fix at all must not stop them marking attendance:
+ * see FaceCapture's `locationRequired` prop, which the anonymous flow turns off.
+ */
+export const BEST_EFFORT_FIX = {
+  targetAccuracyM: 50,
+  maxAccuracyM: Number.POSITIVE_INFINITY,
+  maxWaitMs: 10000,
+};
+
 // Always let the receiver stream for at least this long. The very first
 // callback on Android is usually the last-known cached fix, which can be both
 // stale and optimistic about its own accuracy.

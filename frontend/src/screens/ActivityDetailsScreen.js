@@ -8,6 +8,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { Image } from 'react-native';
 import api from '../services/api';
 import Avatar from '../components/Avatar';
+import ApprovedBy from '../components/ApprovedBy';
 import { Skeleton, SkeletonCircle, SkeletonDetail } from '../components/Skeleton';
 import DownloadButton from '../components/DownloadButton';
 
@@ -138,6 +139,11 @@ export default function ActivityDetailsScreen({ route, navigation }) {
             <Ionicons name="business-outline" size={16} color={theme.colors.textSecondary} />
             <Text style={[styles.metaText, { color: theme.colors.textSecondary }]}>{activity.schoolId?.name}</Text>
           </View>
+
+          {/* Who let this activity through. Activities are decided by team
+              leaders, heads or either admin, so this is the only place that
+              answers it. Admin/CEO only. */}
+          <ApprovedBy record={activity} style={{ marginTop: 10 }} />
 
           <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
           

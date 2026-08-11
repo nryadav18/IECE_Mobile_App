@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useState, useEffect, useRef, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
@@ -137,8 +137,19 @@ export const AuthProvider = ({ children }) => {
     // The AppState method covers the "idle in background" requirement effectively.
   };
 
+  // Every screen in the app reads `user` from here, and the value object was
+  // rebuilt on every render — so a re-render of this provider invalidated the
+  // context for the whole tree even though the signed-in user had not changed.
+  // The three functions are stable for the provider's lifetime (they only touch
+  // refs and setState, never props or state), so the value only changes when
+  // the user or the loading flag genuinely does.
+  const value = useMemo(
+    () => ({ user, loading, login, logout, resetTimer }),
+    [user, loading]
+  );
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, resetTimer }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

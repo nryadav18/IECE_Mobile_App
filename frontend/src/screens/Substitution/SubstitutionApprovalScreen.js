@@ -12,6 +12,7 @@ import { roleLabel } from '../../utils/roles';
 import { prettyDate, toYMD, dayCountInclusive } from '../../utils/dates';
 import Avatar from '../../components/Avatar';
 import StatusBadge from '../../components/StatusBadge';
+import ApprovedBy from '../../components/ApprovedBy';
 import StaffPickerModal from '../../components/StaffPickerModal';
 import {
   getSubstitutionRequest, approveSubstitution, rejectSubstitution,
@@ -196,7 +197,10 @@ export default function SubstitutionApprovalScreen({ navigation, route }) {
             {request.status === 'approved' && (
               <Row icon="calendar-outline" label="Approved period" value={`${prettyDate(request.approvedFromDate || request.fromDate)} → ${prettyDate(request.approvedToDate || request.toDate)}`} />
             )}
-            {request.approvedBy && <Row icon="shield-checkmark-outline" label="Decided by" value={`${request.approvedBy.name} (${roleLabel(request.approvedBy.role)})`} />}
+            {/* Replaces the old "Decided by" row — approvedBy is also written on
+                a rejection here, so it could never say which of the two actually
+                happened. ApprovedBy reads the stored action instead. */}
+            <ApprovedBy record={request} style={{ marginBottom: 12 }} />
             {!!request.decisionNote && <Row icon="document-text-outline" label="Remark" value={request.decisionNote} />}
           </View>
         ) : (

@@ -12,6 +12,7 @@ import { ADMIN_ROLES, roleLabel } from '../../utils/roles';
 import { prettyDate } from '../../utils/dates';
 import Avatar from '../../components/Avatar';
 import StatusBadge from '../../components/StatusBadge';
+import ApprovedBy from '../../components/ApprovedBy';
 import StaffSearchList from '../../components/StaffSearchList';
 import NotificationBell from '../../components/NotificationBell';
 import {
@@ -150,6 +151,11 @@ export default function SubstitutionScreen({ navigation, route }) {
             </Text>
           </View>
         ) : null}
+
+        {/* Who decided it — Admin/CEO only, and only once decided. This one
+            matters especially: substitutions are the single flow the CEO can
+            decide as well as the Admin. */}
+        <ApprovedBy record={req} compact style={{ marginTop: 8 }} />
 
         {/* Actions */}
         {actionable && req.status === 'pending' && (
