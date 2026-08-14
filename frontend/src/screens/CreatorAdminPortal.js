@@ -36,6 +36,8 @@ import LazyTab from '../components/LazyTab';
 import MonthlyReportSection from '../components/MonthlyReportSection';
 import { useSectionTransition } from '../hooks/useSectionTransition';
 import { HEAD_ROLES, roleLabel } from '../utils/roles';
+import ResponsiveGrid from '../components/ResponsiveGrid';
+import useResponsiveLayout from '../hooks/useResponsiveLayout';
 
 // Head roles as dropdown options ({ _id, name }) for CustomDropdown.
 const HEAD_ROLE_OPTIONS = HEAD_ROLES.map(r => ({ _id: r, name: roleLabel(r) }));
@@ -228,6 +230,9 @@ export default function CreatorAdminPortal({ navigation, route }) {
   const { theme } = useContext(ThemeContext);
   const { unread, sections, total } = useBadges();
   const insets = useSafeAreaInsets();
+  // Phone values are the screen's existing ones (20px inset, single column), so
+  // this only changes anything once there is a wide window to lay out into.
+  const { contentInset, columns } = useResponsiveLayout();
 
   const isCEO = user?.role === 'ceo';
   const visibleTabs = isCEO ? TAB_ITEMS.filter(t => CEO_TABS.includes(t.key)) : TAB_ITEMS;
@@ -623,7 +628,10 @@ export default function CreatorAdminPortal({ navigation, route }) {
     <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
       <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
       {/* Header */}
-      <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+      {/* Same inset as the content below, so the title and the actions line up
+          with the cards instead of hugging the two edges of the monitor. The bar
+          and its bottom border still span the full width. */}
+      <View style={[styles.header, { borderBottomColor: theme.colors.border, paddingHorizontal: contentInset }]}>
         <View style={styles.headerTitleContainer}>
           <TouchableOpacity
             onPress={() => sidebarRef.current?.open()}
@@ -653,7 +661,9 @@ export default function CreatorAdminPortal({ navigation, route }) {
       ) : (
         <ScrollView
           style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
+          // One shared scroller feeds every admin tab, so setting the centred
+          // inset here centres the whole console in a single place.
+          contentContainerStyle={[styles.scrollContent, { paddingHorizontal: contentInset }]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
           refreshControl={
@@ -1633,7 +1643,8 @@ export default function CreatorAdminPortal({ navigation, route }) {
                 {banners.length === 0 ? (
                   <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>No banners found.</Text>
                 ) : (
-                  banners.slice((bannerPage - 1) * bannersPerPage, bannerPage * bannersPerPage).map((b) => (
+                  <ResponsiveGrid gap={12} minColumnWidth={380}>
+                  {banners.slice((bannerPage - 1) * bannersPerPage, bannerPage * bannersPerPage).map((b) => (
                     <View key={b._id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, overflow: 'hidden' }}>
                       <Image source={{ uri: b.imageUrl }} style={{ width: 80, height: 45, resizeMode: 'cover' }} />
                       <View style={{ flex: 1, paddingHorizontal: 12, paddingVertical: 8 }}>
@@ -1656,7 +1667,8 @@ export default function CreatorAdminPortal({ navigation, route }) {
                         <Ionicons name="trash-outline" size={20} color="#FF4444" />
                       </TouchableOpacity>
                     </View>
-                  ))
+                  ))}
+                  </ResponsiveGrid>
                 )}
 
                 {banners.length > bannersPerPage && (
@@ -1872,7 +1884,15 @@ const styles = StyleSheet.create({
   logoutBtn: { padding: 8, borderRadius: 8 },
   scroll: { flex: 1 },
   scrollContent: { padding: 20, paddingBottom: 60, flexGrow: 1 },
-  formCard: { padding: 20, borderRadius: 16, borderWidth: 1 },
+  formCard: {
+    padding: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    // Lists, dashboards and card grids use the full window width. Entry forms are
+    // the one exception: a text input does not get more usable at 1400px wide, it
+    // just makes the eye travel the whole monitor to read one label-value pair.
+    ...Platform.select({ web: { maxWidth: 900, width: '100%' }, default: {} }),
+  },
   formTitle: { fontSize: 18, fontWeight: '700', marginBottom: 20 },
   sectionHeader: { fontSize: 14, fontWeight: '600', marginBottom: 12, textTransform: 'uppercase' },
   label: { fontSize: 12, marginBottom: 8, marginTop: 12, fontWeight: '600' },

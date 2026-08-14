@@ -16,6 +16,7 @@ import StatusBadge from '../../components/StatusBadge';
 import ApprovedBy from '../../components/ApprovedBy';
 import { SkeletonCard, SkeletonRow, SkeletonText, Skeleton } from '../../components/Skeleton';
 import { getVisit, approveVisit, rejectVisit, updateVisitDates, schoolVisitError } from '../../services/schoolVisit';
+import { REVIEW_PANE } from '../../utils/platform';
 
 const sameDay = (a, b) => {
   if (!a || !b) return false;
@@ -223,7 +224,7 @@ export default function SchoolVisitApprovalScreen({ navigation, route }) {
         <StatusBadge status={request.status} />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: decided ? 40 : 120 }} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: decided ? 40 : 120, ...REVIEW_PANE }} keyboardShouldPersistTaps="handled">
         {/* Applicant + visit */}
         <View style={{ backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>

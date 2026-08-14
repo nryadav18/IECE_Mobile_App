@@ -9,6 +9,7 @@ import { ThemeContext } from '../context/ThemeContext';
 import { AuthContext } from '../context/AuthContext';
 import { useBadges } from '../context/BadgeContext';
 import { canUseLeave, canUseMeetings, canUseSchoolVisit } from '../utils/roles';
+import useResponsiveLayout from '../hooks/useResponsiveLayout';
 import {
   getNotifications, markNotificationRead, markAllNotificationsRead,
 } from '../services/inbox';
@@ -53,6 +54,7 @@ export default function NotificationsScreen({ navigation }) {
   const { user } = useContext(AuthContext);
   const { refresh: refreshBadges } = useBadges();
   const insets = useSafeAreaInsets();
+  const { contentInset, columns } = useResponsiveLayout({ baseGutter: 16 });
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -162,6 +164,8 @@ export default function NotificationsScreen({ navigation }) {
           borderRadius: 14,
           padding: 14,
           marginBottom: 10,
+          // Share the row evenly when the list is running in columns.
+          ...(columns > 1 ? { flex: 1, minWidth: 0 } : null),
         }}
       >
         <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: meta.color + '20', alignItems: 'center', justifyContent: 'center' }}>
@@ -182,7 +186,7 @@ export default function NotificationsScreen({ navigation }) {
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       {/* Header */}
-      <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: theme.colors.surface, borderBottomWidth: 1, borderBottomColor: theme.colors.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      <View style={{ paddingTop: insets.top + 8, paddingHorizontal: contentInset, paddingBottom: 12, backgroundColor: theme.colors.surface, borderBottomWidth: 1, borderBottomColor: theme.colors.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
@@ -203,7 +207,13 @@ export default function NotificationsScreen({ navigation }) {
           data={items}
           keyExtractor={(item) => String(item._id)}
           renderItem={renderItem}
-          contentContainerStyle={{ padding: 16, paddingBottom: 30, flexGrow: 1 }}
+          // Notifications are short rows, so on a wide screen reading them in a
+          // single 1400px-long line is worse than two columns. Inert on mobile,
+          // where `columns` is 1.
+          key={`notifs-${columns}`}
+          numColumns={columns}
+          columnWrapperStyle={columns > 1 ? { gap: 12 } : undefined}
+          contentContainerStyle={{ paddingHorizontal: contentInset, paddingVertical: 16, paddingBottom: 30, flexGrow: 1 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={theme.colors.primary} colors={[theme.colors.primary]} />}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', marginTop: 80 }}>

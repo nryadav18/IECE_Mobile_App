@@ -5,10 +5,17 @@ import * as Notifications from 'expo-notifications';
 import api, { setLogoutCallback } from '../services/api';
 import { registerForPushNotifications } from '../services/notifications';
 import { handleNotificationResponse } from '../services/navigation';
+import { isWeb } from '../utils/platform';
+import { canUseWeb } from '../utils/roles';
 
 export const AuthContext = createContext();
 
 const INACTIVITY_LIMIT = 15 * 60 * 1000; // 15 minutes
+
+// Shown when field staff try to sign in to the browser portal. It names who the
+// site is for and where they should go instead, rather than just refusing.
+export const WEB_ACCESS_DENIED =
+  'This portal is for Admin, CEO and School logins only. IECE staff, please sign in from the IECE mobile app.';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -33,6 +40,17 @@ export const AuthProvider = ({ children }) => {
         clearInactivityTimer();
       }
     });
+
+    // Browsers have no Expo push channel, so registering these listeners only
+    // produces "not supported on web" warnings and never fires. The trade-off is
+    // that push-driven force_logout cannot reach a browser tab; the 15-minute
+    // inactivity timeout and the /auth/me check on reload still apply there.
+    if (isWeb) {
+      return () => {
+        subscription.remove();
+        clearInactivityTimer();
+      };
+    }
 
     // Listen for incoming notifications while app is foregrounded
     notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
@@ -83,7 +101,17 @@ export const AuthProvider = ({ children }) => {
       const token = await AsyncStorage.getItem('token');
       if (token) {
         const response = await api.get('/auth/me');
-        setUser(response.data.data);
+        const me = response.data.data;
+        // Second gate, for the session that is being restored rather than
+        // created. Without it, a staff member who signed in before this rule
+        // existed — or who copied a token between devices — would be waved
+        // straight back into the portal on the next page load.
+        if (isWeb && !canUseWeb(me?.role)) {
+          await AsyncStorage.removeItem('token');
+          setUser(null);
+          return;
+        }
+        setUser(me);
         // Register push token for already-logged-in user on app launch
         await registerForPushNotifications();
       }
@@ -98,6 +126,11 @@ export const AuthProvider = ({ children }) => {
   const login = async (email, password) => {
     const response = await api.post('/auth/login', { email, password });
     if (response.data.success) {
+      // Refuse before the token is persisted, so a rejected staff sign-in
+      // leaves nothing behind for `loadUser` to pick up on the next reload.
+      if (isWeb && !canUseWeb(response.data.user?.role)) {
+        return { success: false, error: WEB_ACCESS_DENIED, webAccessDenied: true };
+      }
       await AsyncStorage.setItem('token', response.data.token);
       setUser(response.data.user);
       // Register push token immediately after login and trigger the welcome push.
@@ -114,7 +147,12 @@ export const AuthProvider = ({ children }) => {
     try {
       // Only clear the server-side push token if we still hold a token to
       // authenticate the request — otherwise it just 401s for nothing.
-      const token = await AsyncStorage.getItem('token');
+      //
+      // Never from the browser: `expoPushToken` is a single field per user, so a
+      // web sign-out would null the token their PHONE registered and silently
+      // stop that person's notifications. The web session never sets a token,
+      // so it has none to clear.
+      const token = isWeb ? null : await AsyncStorage.getItem('token');
       if (token) {
         try {
           await api.put('/auth/push-token', { expoPushToken: null });

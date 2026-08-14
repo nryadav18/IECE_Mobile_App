@@ -38,7 +38,7 @@
       ]
     },
     "web": {
-      "favicon": "./assets/IECE_Logo.png"
+      "favicon": "./assets/IECE_Logo_Web.png"
     },
     "plugins": [
       "@react-native-community/datetimepicker",

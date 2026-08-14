@@ -14,6 +14,7 @@ import Avatar from '../../components/Avatar';
 import StatusBadge from '../../components/StatusBadge';
 import ApprovedBy from '../../components/ApprovedBy';
 import { SkeletonCard, SkeletonRow, SkeletonText, Skeleton } from '../../components/Skeleton';
+import { REVIEW_PANE } from '../../utils/platform';
 import {
   getLeaveRequest, approveLeave, rejectLeave, updateLeaveDates,
   leaveError, leaveConflicts, needsConfirmation,
@@ -229,7 +230,7 @@ export default function LeaveApprovalScreen({ navigation, route }) {
         <StatusBadge status={request.status} />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: decided ? 40 : 120 }} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: decided ? 40 : 120, ...REVIEW_PANE }} keyboardShouldPersistTaps="handled">
         {/* Applicant */}
         <View style={{ backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>

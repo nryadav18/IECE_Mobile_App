@@ -12,7 +12,7 @@ if (Platform.OS === 'ios') {
   MapView = Maps.default;
   Marker = Maps.Marker;
   Circle = Maps.Circle;
-} else {
+} else if (Platform.OS === 'android') {
   WebView = require('react-native-webview').WebView;
 }
 
@@ -85,6 +85,17 @@ export function RegistrationMap({ location }) {
             strokeWidth={2}
           />
         </MapView>
+      </View>
+    );
+  }
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.mapBorderRadius}>
+        <iframe
+          style={{ width: MAP_WIDTH, height: MAP_HEIGHT, border: 'none' }}
+          srcDoc={buildLeafletHTML(lat, lng)}
+        />
       </View>
     );
   }

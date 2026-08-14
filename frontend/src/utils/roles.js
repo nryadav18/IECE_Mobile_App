@@ -32,6 +32,17 @@ export const MEETING_VIEWER_ROLES = ['trainer', ...MEETING_CREATOR_ROLES];
 export const canPostMeeting = (role) => MEETING_CREATOR_ROLES.includes(role);
 export const canUseMeetings = (role) => MEETING_VIEWER_ROLES.includes(role);
 
+// The browser portal is an oversight console: the Admin, the CEO and school
+// chairmen — the three logins whose work is reviewing and approving, which is
+// genuinely better on a big screen.
+//
+// IECE field staff (trainers, team leaders, heads) are deliberately excluded.
+// Their day is face check-in/check-out and GPS geofencing, which only the phone
+// can do honestly, so letting them reach a browser build would offer a portal
+// that cannot perform their core task. They are told to use the mobile app.
+export const WEB_ALLOWED_ROLES = ['creator_admin', 'ceo', 'chairman'];
+export const canUseWeb = (role) => WEB_ALLOWED_ROLES.includes(role);
+
 export const isHead = (role) => HEAD_ROLES.includes(role);
 export const isLeader = (role) => LEADER_ROLES.includes(role);
 

@@ -13,6 +13,7 @@ import Avatar from '../../components/Avatar';
 import NotificationBell from '../../components/NotificationBell';
 import RejectReasonModal from '../../components/RejectReasonModal';
 import { SkeletonList } from '../../components/Skeleton';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import {
   getPendingFaceApprovals, getPendingActivityApprovals,
   approveFaceRegistration, rejectFaceRegistration,
@@ -43,6 +44,7 @@ export default function ApprovalsScreen({ navigation }) {
   const { user } = useContext(AuthContext);
   const { showAlert } = useAlert();
   const insets = useSafeAreaInsets();
+  const { contentInset } = useResponsiveLayout({ baseGutter: 16 });
 
   const canReviewFaces = user?.role === 'creator_admin';
 
@@ -220,7 +222,7 @@ export default function ApprovalsScreen({ navigation }) {
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       {/* Header */}
-      <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: theme.colors.surface, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
+      <View style={{ paddingTop: insets.top + 8, paddingHorizontal: contentInset, paddingBottom: 12, backgroundColor: theme.colors.surface, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
@@ -244,7 +246,7 @@ export default function ApprovalsScreen({ navigation }) {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: insets.bottom + 30, flexGrow: 1 }}
+        contentContainerStyle={{ paddingHorizontal: contentInset, paddingTop: 8, paddingBottom: insets.bottom + 30, flexGrow: 1 }}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={theme.colors.primary} colors={[theme.colors.primary]} />}
       >

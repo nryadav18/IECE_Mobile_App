@@ -12,9 +12,11 @@ import {
   Platform,
   TouchableWithoutFeedback,
   Keyboard,
-  ScrollView
+  ScrollView,
+  useWindowDimensions
 } from 'react-native';
 import { AuthContext } from '../context/AuthContext';
+import { isWeb } from '../utils/platform';
 import { ThemeContext } from '../context/ThemeContext';
 import { useAlert } from '../context/AlertContext';
 import { MotiView } from 'moti';
@@ -22,6 +24,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 const { width } = Dimensions.get('window');
+
+/**
+ * Tap-anywhere-to-dismiss the keyboard, on the platforms that have one.
+ *
+ * A browser has no software keyboard to dismiss, and wrapping the form in a
+ * touch handler there swallows clicks on the inputs. Branching on the wrapper
+ * alone — rather than on the whole form — keeps ONE copy of the sign-in UI, so
+ * the web and mobile login screens cannot drift apart.
+ */
+const DismissKeyboard = ({ children }) =>
+  Platform.OS === 'web' ? children : (
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>{children}</TouchableWithoutFeedback>
+  );
 
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
@@ -33,6 +48,9 @@ export default function LoginScreen({ navigation }) {
   const { theme, isDarkMode, toggleTheme } = useContext(ThemeContext);
   const { showAlert } = useAlert();
   const insets = useSafeAreaInsets();
+  // The sign-in card is 460 wide and centred; line the top bar up with its edges.
+  const { width: winW } = useWindowDimensions();
+  const topBarInset = isWeb ? Math.max(20, Math.round((winW - 460) / 2)) : 20;
 
   const handleLogin = async () => {
     const trimmedEmail = email.trim();
@@ -56,7 +74,13 @@ export default function LoginScreen({ navigation }) {
 
     setLoading(true);
     try {
-      await login(trimmedEmail, trimmedPassword);
+      const result = await login(trimmedEmail, trimmedPassword);
+      // The credentials were valid but this role is not allowed in the browser
+      // portal (web is Admin/CEO/School only). Say so plainly instead of
+      // leaving the form sitting there looking broken.
+      if (result && result.success === false) {
+        showAlert('Access Denied', result.error || 'Login failed.', 'error');
+      }
     } catch (err) {
       const errMsg = err.response?.data?.error || 'Login failed. Please check your credentials.';
       showAlert('Login Failed', errMsg, 'error');
@@ -75,9 +99,12 @@ export default function LoginScreen({ navigation }) {
       <View style={styles.background} />
 
       {/* Top Bar: back to public browsing + mode toggle */}
-      <View style={[styles.topBar, { top: insets.top + 10 }]}>
+      {/* Pulled in to the same column as the sign-in card, so the back arrow and
+          the theme toggle sit with the content instead of in the far corners of a
+          wide monitor. `left`/`right` stay at 20 on a phone. */}
+      <View style={[styles.topBar, { top: insets.top + 10, left: topBarInset, right: topBarInset }]}>
         <TouchableOpacity
-          onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('PublicExplore')}
+          onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('IECE_CMS')}
           style={[styles.toggleBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
           activeOpacity={0.8}
         >
@@ -96,8 +123,9 @@ export default function LoginScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+      <DismissKeyboard>
         <ScrollView 
+          style={{ flex: 1 }}
           contentContainerStyle={[
             styles.scrollContent, 
             { 
@@ -230,7 +258,7 @@ export default function LoginScreen({ navigation }) {
           </View>
 
         </ScrollView>
-      </TouchableWithoutFeedback>
+      </DismissKeyboard>
     </KeyboardAvoidingView>
   );
 }
@@ -283,6 +311,9 @@ const styles = StyleSheet.create({
   formContainer: {
     width: '100%',
     minHeight: 380,
+    // A sign-in card spanning a whole monitor reads as a broken page rather
+     // than a form. Centre it at card width in the browser; unchanged on phones.
+    ...Platform.select({ web: { maxWidth: 460, alignSelf: 'center' }, default: {} }),
   },
   loginForm: {
     width: '100%',

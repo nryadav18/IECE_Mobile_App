@@ -10,7 +10,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   TouchableWithoutFeedback,
-  Keyboard
+  Keyboard,
+  ScrollView
 } from 'react-native';
 import { AuthContext } from '../context/AuthContext';
 import { ThemeContext } from '../context/ThemeContext';
@@ -20,6 +21,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 const { width } = Dimensions.get('window');
+
+const DismissKeyboard = ({ children }) => (
+  Platform.OS === 'web' ? children : <TouchableWithoutFeedback onPress={Keyboard.dismiss}>{children}</TouchableWithoutFeedback>
+);
 
 export default function CreatorLoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
@@ -54,7 +59,10 @@ export default function CreatorLoginScreen({ navigation }) {
 
     setLoading(true);
     try {
-      await login(trimmedEmail, trimmedPassword);
+      const result = await login(trimmedEmail, trimmedPassword);
+      if (result && result.success === false) {
+        showAlert('Access Denied', result.error || 'Login failed.', 'error');
+      }
     } catch (err) {
       const errMsg = err.response?.data?.error || 'Login failed. Please check your credentials.';
       showAlert('Login Failed', errMsg, 'error');
@@ -68,8 +76,13 @@ export default function CreatorLoginScreen({ navigation }) {
       style={[styles.container, { backgroundColor: theme.colors.background }]} 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <View style={[styles.inner, { paddingTop: insets.top, paddingBottom: insets.bottom + 40 }]}>
+      <DismissKeyboard>
+        <ScrollView 
+          style={{ flex: 1 }} 
+          contentContainerStyle={[styles.inner, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 40 }]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           
           <TouchableOpacity 
             style={[styles.backBtn, { top: insets.top + 10 }]}
@@ -156,8 +169,8 @@ export default function CreatorLoginScreen({ navigation }) {
               )}
             </TouchableOpacity>
           </MotiView>
-        </View>
-      </TouchableWithoutFeedback>
+        </ScrollView>
+      </DismissKeyboard>
     </KeyboardAvoidingView>
   );
 }
@@ -165,9 +178,11 @@ export default function CreatorLoginScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   inner: {
-    flex: 1,
+    flexGrow: 1,
     paddingHorizontal: 24,
     justifyContent: 'center',
+    // Centre the card rather than letting it span the whole monitor.
+    ...Platform.select({ web: { maxWidth: 520, alignSelf: 'center', width: '100%' }, default: {} }),
   },
   backBtn: {
     position: 'absolute',

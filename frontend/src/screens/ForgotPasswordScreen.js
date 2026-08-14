@@ -9,7 +9,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   TouchableWithoutFeedback,
-  Keyboard
+  Keyboard,
+  ScrollView
 } from 'react-native';
 import { ThemeContext } from '../context/ThemeContext';
 import { useAlert } from '../context/AlertContext';
@@ -17,6 +18,10 @@ import { MotiView, AnimatePresence } from 'moti';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../services/api';
+
+const DismissKeyboard = ({ children }) => (
+  Platform.OS === 'web' ? children : <TouchableWithoutFeedback onPress={Keyboard.dismiss}>{children}</TouchableWithoutFeedback>
+);
 
 export default function ForgotPasswordScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
@@ -112,8 +117,13 @@ export default function ForgotPasswordScreen({ navigation }) {
       style={[styles.container, { backgroundColor: theme.colors.background }]} 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <View style={[styles.inner, { paddingTop: insets.top, paddingBottom: insets.bottom + 40 }]}>
+      <DismissKeyboard>
+        <ScrollView 
+          style={{ flex: 1 }} 
+          contentContainerStyle={[styles.inner, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 40 }]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           
           <TouchableOpacity 
             style={[styles.backBtn, { top: insets.top + 10 }]}
@@ -206,8 +216,8 @@ export default function ForgotPasswordScreen({ navigation }) {
             </AnimatePresence>
 
           </View>
-        </View>
-      </TouchableWithoutFeedback>
+        </ScrollView>
+      </DismissKeyboard>
 
     </KeyboardAvoidingView>
   );
@@ -215,7 +225,13 @@ export default function ForgotPasswordScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  inner: { flex: 1, paddingHorizontal: 24, justifyContent: 'center' },
+  inner: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    justifyContent: 'center',
+    // Centre the reset card rather than letting it span the whole monitor.
+    ...Platform.select({ web: { maxWidth: 520, alignSelf: 'center', width: '100%' }, default: {} }),
+  },
   backBtn: { position: 'absolute', left: 20, flexDirection: 'row', alignItems: 'center' },
   backText: { fontSize: 14, fontWeight: '600', marginLeft: 8 },
   headerContainer: { alignItems: 'center', marginBottom: 40 },

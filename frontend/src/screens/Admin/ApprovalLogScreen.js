@@ -10,6 +10,7 @@ import { roleLabel } from '../../utils/roles';
 import { decisionVerb, decisionColor, decisionIcon, decisionMoment } from '../../utils/approvals';
 import NotificationBell from '../../components/NotificationBell';
 import { SkeletonList } from '../../components/Skeleton';
+import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import {
   getApprovalLog, getApprovers, ENTITY_TYPES, entityMeta, approvalLogError,
 } from '../../services/approvalLog';
@@ -28,6 +29,7 @@ import {
 export default function ApprovalLogScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
   const insets = useSafeAreaInsets();
+  const { contentInset, columns } = useResponsiveLayout({ baseGutter: 16 });
 
   const [rows, setRows] = useState([]);
   const [approvers, setApprovers] = useState([]);
@@ -394,9 +396,22 @@ export default function ApprovalLogScreen({ navigation }) {
         <FlatList
           data={rows}
           keyExtractor={(item) => String(item._id)}
-          renderItem={({ item }) => <Row item={item} />}
+          renderItem={({ item }) =>
+            // Only wrapped when the list is actually running in columns, so the
+            // single-column (mobile) tree is exactly the one it was before.
+            columns > 1 ? (
+              <View style={{ flex: 1, minWidth: 0 }}><Row item={item} /></View>
+            ) : (
+              <Row item={item} />
+            )
+          }
           ListHeaderComponent={Header}
-          contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24 }}
+          // `numColumns` cannot change in place, so it is part of the key.
+          // `columns` is always 1 on a phone, so this is inert on mobile.
+          key={`log-${columns}`}
+          numColumns={columns}
+          columnWrapperStyle={columns > 1 ? { gap: 12 } : undefined}
+          contentContainerStyle={{ paddingHorizontal: contentInset, paddingVertical: 16, paddingBottom: insets.bottom + 24 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={theme.colors.primary} />
           }

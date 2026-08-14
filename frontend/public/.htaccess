@@ -1,0 +1,88 @@
+# Apache config for the IECE web portal (cms.iece.org.in).
+#
+# This file lives in `frontend/public/`, and Expo copies everything in that
+# folder to the root of `dist/` on every `expo export -p web` — so it ships with
+# each build instead of having to be re-uploaded by hand.
+
+# ---------------------------------------------------------------------------
+# Force HTTPS.
+#
+# Not cosmetic: the API is https://server.iece.org.in, so a page served over
+# plain http would have every request blocked as mixed content and the portal
+# would simply fail to load any data. Hostinger terminates TLS at a proxy, so
+# X-Forwarded-Proto is the header that actually tells us what the browser used;
+# %{HTTPS} alone is unreliable there.
+# ---------------------------------------------------------------------------
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteCond %{HTTPS} !=on
+  RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+
+  # Single-page app fallback: the portal is one HTML document and React
+  # Navigation handles the screens, so anything that is not a real file on disk
+  # must still return index.html rather than a 404.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /index.html [L]
+</IfModule>
+
+# ---------------------------------------------------------------------------
+# Compression. The JS bundle is ~4.4 MB uncompressed and about a quarter of
+# that gzipped, so this is the single biggest thing affecting first load.
+# ---------------------------------------------------------------------------
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml
+  AddOutputFilterByType DEFLATE application/javascript application/x-javascript
+  AddOutputFilterByType DEFLATE application/json application/xml
+  AddOutputFilterByType DEFLATE image/svg+xml font/ttf font/otf font/woff font/woff2
+</IfModule>
+
+# ---------------------------------------------------------------------------
+# Caching.
+#
+# Expo fingerprints every asset (index-<hash>.js), so those are safe to cache
+# forever — a new build produces a new filename. index.html must NOT be cached:
+# it is the file that points at the current hash, and a stale copy would keep
+# users on the previous bundle after a deploy, which looks exactly like "the
+# update didn't work".
+# ---------------------------------------------------------------------------
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType application/javascript "access plus 1 year"
+  ExpiresByType text/css              "access plus 1 year"
+  ExpiresByType image/png             "access plus 1 year"
+  ExpiresByType image/jpeg            "access plus 1 year"
+  ExpiresByType image/svg+xml         "access plus 1 year"
+  ExpiresByType font/ttf              "access plus 1 year"
+  ExpiresByType font/woff2            "access plus 1 year"
+</IfModule>
+
+<IfModule mod_headers.c>
+  <FilesMatch "\.(js|css|png|jpg|jpeg|gif|svg|ttf|otf|woff|woff2|ico)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+
+  <FilesMatch "^(index\.html|metadata\.json)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+
+  # The portal is not meant to be embedded in anyone else's page.
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# Serve the correct types for the fonts the icon set ships.
+<IfModule mod_mime.c>
+  AddType font/ttf   .ttf
+  AddType font/woff  .woff
+  AddType font/woff2 .woff2
+  AddType application/javascript .js
+</IfModule>
+
+# index.html is the only entry point.
+DirectoryIndex index.html

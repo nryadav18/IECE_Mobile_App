@@ -3,6 +3,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { AuthContext } from '../context/AuthContext';
 import { View, ActivityIndicator } from 'react-native';
 import { flushPendingNotification } from '../services/navigation';
+import { isWeb } from '../utils/platform';
 
 // Screens
 import LoginScreen from '../screens/LoginScreen';
@@ -43,6 +44,24 @@ import { HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES, LEAVE_APPLICANT_ROLES, SCHOOL_VI
 
 const Stack = createStackNavigator();
 
+// On web, React Navigation's card deliberately grows past the viewport
+// (`minHeight: 100%`) so that `document.body` does the scrolling — that is how it
+// lets mobile browsers collapse their address bar. Expo's index.html, however,
+// ships `body { overflow: hidden }`, so the card overflowed a body that refused
+// to scroll and the bottom of every screen was simply clipped: nothing scrolled
+// anywhere. That page mode is chosen when `headerMode` is 'screen', which is the
+// default everywhere except iOS. Asking for 'float' keeps the card at
+// `flex: 1, overflow: hidden` exactly like native, so each screen's own
+// ScrollView/FlatList is the scroller again — the same model the phone uses.
+//
+// It is purely a layout switch here: with `headerShown: false` the floating
+// header container is absolutely positioned and renders nothing at all.
+const SCREEN_OPTIONS = {
+  headerShown: false,
+  freezeOnBlur: true,
+  ...(isWeb ? { headerMode: 'float' } : null),
+};
+
 const AppNavigator = () => {
   const { user, loading } = useContext(AuthContext);
 
@@ -74,7 +93,7 @@ const AppNavigator = () => {
     // react-native-screens suspends the render tree of any screen that is not
     // focused and resumes it on the way back, with its state untouched. Nothing
     // is unmounted and nothing is refetched — only the wasted work stops.
-    <Stack.Navigator screenOptions={{ headerShown: false, freezeOnBlur: true }}>
+    <Stack.Navigator screenOptions={SCREEN_OPTIONS}>
       {user ? (
         <>
           <Stack.Screen name="Home" component={DashboardScreen} />
@@ -204,7 +223,7 @@ const AppNavigator = () => {
         <>
           {/* Guests land in public, account-free content first. Member sign in
               is one tap away for IECE staff. */}
-          <Stack.Screen name="PublicExplore" component={PublicExploreScreen} />
+          <Stack.Screen name="IECE_CMS" component={PublicExploreScreen} />
           <Stack.Screen name="Login" component={LoginScreen} />
           <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
         </>

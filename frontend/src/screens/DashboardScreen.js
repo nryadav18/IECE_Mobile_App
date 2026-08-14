@@ -29,6 +29,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { HEAD_ROLES } from '../utils/roles';
+import { CONTENT_MAX_WIDTH, isWeb } from '../utils/platform';
 import { Skeleton, SkeletonCard, SkeletonList } from '../components/Skeleton';
 import BrandHero from '../components/home/BrandHero';
 import PressableScale from '../components/home/PressableScale';
@@ -112,7 +113,13 @@ export default function DashboardScreen({ navigation, route }) {
   const heroTotal = headerH + heroH;
   const carouselH = isWide ? Math.min(width * 0.36, 380) : width * 0.56;
   const cardW = clamp(width * 0.62, 220, 300);
-  const gutter = isWide ? 28 : 20;
+  // In a browser this widens into the inset that centres the content column, so
+  // the stat strip, the section headings and the header bar all line up down the
+  // middle of a monitor instead of clinging to its left edge. Native keeps the
+  // tablet/phone values it always had.
+  const gutter = isWeb
+    ? Math.max(isWide ? 28 : 20, Math.round((width - CONTENT_MAX_WIDTH) / 2))
+    : isWide ? 28 : 20;
 
   const logoSource = isDarkMode
     ? require('../../assets/IECE_Logo_White.png')

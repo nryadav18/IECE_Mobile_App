@@ -32,7 +32,7 @@ if (Platform.OS === 'ios') {
   MapView = Maps.default;
   Marker = Maps.Marker;
   Circle = Maps.Circle;
-} else {
+} else if (Platform.OS === 'android') {
   WebView = require('react-native-webview').WebView;
 }
 
@@ -94,6 +94,12 @@ const buildHTML = (lat, lng, color, label, accuracy) => `
     };
 
     window.__setPoint(${lat}, ${lng}, ${JSON.stringify(color)}, ${JSON.stringify(label)}, ${accuracy});
+
+    window.addEventListener("message", function(event) {
+      if (event.data && event.data.type === 'setPoint') {
+        window.__setPoint(event.data.lat, event.data.lng, event.data.color, event.data.label, event.data.accuracy);
+      }
+    });
   </script>
 </body>
 </html>
@@ -145,6 +151,14 @@ function LocationMapImpl({
       return;
     }
 
+    if (Platform.OS === 'web') {
+      if (!ready) return;
+      webRef.current?.contentWindow?.postMessage({
+        type: 'setPoint', lat, lng, color, label, accuracy: halo
+      }, '*');
+      return;
+    }
+
     if (!ready) return; // applied by onLoadEnd instead
     const js = `window.__setPoint && window.__setPoint(${lat}, ${lng}, ${JSON.stringify(color)}, ${JSON.stringify(label)}, ${halo}); true;`;
     webRef.current?.injectJavaScript(js);
@@ -187,6 +201,19 @@ function LocationMapImpl({
             />
           )}
         </MapView>
+      </View>
+    );
+  }
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[styles.frame, { aspectRatio }]}>
+        <iframe
+          ref={webRef}
+          style={{ width: '100%', height: '100%', border: 'none' }}
+          srcDoc={htmlFor(firstPoint.current)}
+          onLoad={() => setReady(true)}
+        />
       </View>
     );
   }

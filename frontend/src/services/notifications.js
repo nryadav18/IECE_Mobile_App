@@ -27,6 +27,13 @@ Notifications.setNotificationHandler({
  * skips gracefully when running inside Expo Go or on a simulator.
  */
 export const registerForPushNotifications = async ({ welcome = false } = {}) => {
+  // Expo push tokens do not exist in a browser. Returning early keeps the web
+  // portal free of "not supported on web" warnings and avoids sending a null
+  // token to the backend, which would clear the user's real device token.
+  if (Platform.OS === 'web') {
+    return null;
+  }
+
   // Push tokens require a physical device.
   if (!Device.isDevice) {
     console.log('Push notifications require a physical device.');

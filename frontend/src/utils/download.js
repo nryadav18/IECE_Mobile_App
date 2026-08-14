@@ -1,9 +1,16 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { File, Directory, Paths } from 'expo-file-system';
-import * as Legacy from 'expo-file-system/legacy';
-import * as MediaLibrary from 'expo-media-library';
-import * as Sharing from 'expo-sharing';
+
+let File, Directory, Paths, Legacy, MediaLibrary, Sharing;
+if (Platform.OS !== 'web') {
+  const FileSystem = require('expo-file-system');
+  File = FileSystem.File;
+  Directory = FileSystem.Directory;
+  Paths = FileSystem.Paths;
+  Legacy = require('expo-file-system/legacy');
+  MediaLibrary = require('expo-media-library');
+  Sharing = require('expo-sharing');
+}
 
 /**
  * Saving any file from the app to the phone, so it survives offline.
@@ -220,6 +227,21 @@ export async function downloadFile(url, { filename, mimeType } = {}) {
 
   const name = safeFileName(url, filename);
   const mime = mimeType || mimeOf(url);
+
+  if (Platform.OS === 'web') {
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return { ok: true, message: 'Download started.' };
+    } catch (e) {
+      return { ok: false, message: 'Could not download the file on this browser.' };
+    }
+  }
 
   let file;
   try {

@@ -13,6 +13,8 @@ import { ThemeContext } from '../context/ThemeContext';
 import { MotiView } from 'moti';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import ResponsiveGrid from '../components/ResponsiveGrid';
+import useResponsiveLayout from '../hooks/useResponsiveLayout';
 
 const { width } = Dimensions.get('window');
 
@@ -37,6 +39,8 @@ const HIGHLIGHTS = [
 export default function PublicExploreScreen({ navigation }) {
   const { theme, isDarkMode, toggleTheme } = useContext(ThemeContext);
   const insets = useSafeAreaInsets();
+  // Centres the page on a wide screen. Resolves to the original 20px on phones.
+  const { contentInset, columns } = useResponsiveLayout();
 
   const logoSource = isDarkMode
     ? require('../../assets/IECE_Logo_White.png')
@@ -47,7 +51,7 @@ export default function PublicExploreScreen({ navigation }) {
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       {/* Top bar */}
-      <View style={[styles.topBar, { paddingTop: insets.top + 10 }]}>
+      <View style={[styles.topBar, { paddingTop: insets.top + 10, paddingHorizontal: contentInset }]}>
         <TouchableOpacity
           onPress={toggleTheme}
           style={[styles.iconBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
@@ -70,7 +74,7 @@ export default function PublicExploreScreen({ navigation }) {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ paddingBottom: insets.bottom + 40, paddingHorizontal: 20 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 40, paddingHorizontal: contentInset }}
         showsVerticalScrollIndicator={false}
       >
         {/* Hero */}
@@ -107,6 +111,9 @@ export default function PublicExploreScreen({ navigation }) {
 
         {/* Programs */}
         <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>Our Training Programs</Text>
+        {/* Two/three across on a monitor, so a programme's icon and text sit in a
+            card the size of their content instead of at the left edge of a slab. */}
+        <ResponsiveGrid gap={12} minColumnWidth={360}>
         {PROGRAMS.map((p, i) => (
           <MotiView
             key={p.title}
@@ -124,6 +131,7 @@ export default function PublicExploreScreen({ navigation }) {
             </View>
           </MotiView>
         ))}
+        </ResponsiveGrid>
 
         {/* Contact */}
         <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>Get in Touch</Text>

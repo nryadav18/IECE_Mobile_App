@@ -14,6 +14,8 @@ import NotificationBell from '../components/NotificationBell';
 import VisitReportDetail from '../components/VisitReportDetail';
 import { SectionSkeleton } from '../components/Skeleton';
 import { useSectionTransition } from '../hooks/useSectionTransition';
+import ResponsiveGrid from '../components/ResponsiveGrid';
+import useResponsiveLayout from '../hooks/useResponsiveLayout';
 
 const TAB_ITEMS = [
   { key: 'Overview', label: 'Overview', icon: 'home-outline' },
@@ -36,6 +38,10 @@ export default function ChairmanPortal({ navigation, route }) {
   const { theme } = useContext(ThemeContext);
   const { user, logout } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
+  // Wide-screen metrics. On a phone `contentInset` is 20 and `columns` is 1,
+  // which is exactly the layout this screen had before, so nothing shifts on mobile.
+  const { contentInset, columns } = useResponsiveLayout();
+  const facultyPerRow = Math.min(columns * 2, 5);
   const sidebarRef = useRef(null);
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
   
@@ -251,7 +257,7 @@ export default function ChairmanPortal({ navigation, route }) {
     return (
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }}
+        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: contentInset, paddingVertical: 20, paddingBottom: insets.bottom + 20 }}
         showsVerticalScrollIndicator={false}
         refreshControl={refreshControl}
       >
@@ -347,7 +353,10 @@ export default function ChairmanPortal({ navigation, route }) {
         ) : (
           <View style={styles.facultyGrid}>
             {faculty.map((item) => (
-              <View key={item._id} style={[styles.facultyCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+              // Two-up on a phone (100/2 - 1.5 = the 48.5% it already used); on a
+              // wide screen the roster keeps the same card size and simply fits
+              // more per row, capped at 5 so a name still has room to read.
+              <View key={item._id} style={[styles.facultyCard, { width: `${100 / facultyPerRow - 1.5}%`, backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                 <Avatar name={item.name} size={34} />
                 <View style={{ flex: 1, marginLeft: 10 }}>
                   <Text style={[styles.facultyName, { color: theme.colors.textPrimary }]} numberOfLines={1}>{item.name}</Text>
@@ -367,13 +376,14 @@ export default function ChairmanPortal({ navigation, route }) {
   const renderCompleted = () => (
     <ScrollView
       style={{ flex: 1 }}
-      contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }}
+      contentContainerStyle={{ flexGrow: 1, paddingHorizontal: contentInset, paddingVertical: 20, paddingBottom: insets.bottom + 20 }}
       showsVerticalScrollIndicator={false}
       refreshControl={refreshControl}
     >
       <Text style={[styles.subtitle, { color: theme.colors.textPrimary }]}>Completed Activities</Text>
       {completedActivities.length > 0 ? (
-        completedActivities.map((act) => (
+        <ResponsiveGrid gap={16}>
+        {completedActivities.map((act) => (
           <View key={act._id} style={[styles.completedActivityCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={{ color: theme.colors.textPrimary, fontWeight: '700', fontSize: 14, flex: 1, marginRight: 8 }} numberOfLines={1}>{act.name}</Text>
@@ -383,7 +393,8 @@ export default function ChairmanPortal({ navigation, route }) {
               Trainer: <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>{act.uploaderId?.name || 'N/A'}</Text>
             </Text>
           </View>
-        ))
+        ))}
+        </ResponsiveGrid>
       ) : (
         <Text style={{ color: theme.colors.textSecondary, fontSize: 14, marginTop: 8 }}>No completed activities yet.</Text>
       )}
@@ -440,7 +451,7 @@ export default function ChairmanPortal({ navigation, route }) {
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
       {/* Fixed Header */}
-      <View style={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 12 }}>
+      <View style={{ paddingHorizontal: contentInset, paddingTop: 4, paddingBottom: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
             <TouchableOpacity
@@ -471,9 +482,16 @@ export default function ChairmanPortal({ navigation, route }) {
 
       {!tabLoading && activeTab === 'Pending' && (
       <FlatList
+        style={{ flex: 1 }}
         data={[...visitReports, ...activities]}
         keyExtractor={(item) => item._id}
-        contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }}
+        // FlatList cannot change `numColumns` in place, so the column count is
+        // baked into the key and a resize past a breakpoint remounts the list.
+        // On a phone `columns` is always 1, so this never fires there.
+        key={`pending-${columns}`}
+        numColumns={columns}
+        columnWrapperStyle={columns > 1 ? { gap: 12 } : undefined}
+        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: contentInset, paddingVertical: 20, paddingBottom: insets.bottom + 20 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -489,7 +507,9 @@ export default function ChairmanPortal({ navigation, route }) {
             from={{ opacity: 0, translateY: 15 }}
             animate={{ opacity: 1, translateY: 0 }}
             transition={{ type: 'timing', duration: 300, delay: index * 50 }}
-            style={{ marginBottom: 12 }}
+            // In multi-column mode the items have to share the row; `minWidth: 0`
+            // stops a long report title from pushing its column wider than its share.
+            style={[{ marginBottom: 12 }, columns > 1 && { flex: 1, minWidth: 0 }]}
           >
             <Swipeable
               renderRightActions={() => null}
