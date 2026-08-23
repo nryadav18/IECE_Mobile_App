@@ -1,4 +1,5 @@
 const School = require('../models/School');
+const { purgeAssets } = require('../utils/cloudinary');
 const User = require('../models/User');
 
 exports.getSchools = async (req, res) => {
@@ -57,8 +58,16 @@ exports.uploadMou = async (req, res) => {
       return res.status(404).json({ success: false, error: 'School not found' });
     }
     
+    const previousMou = school.mouPdfUrl;
     school.mouPdfUrl = req.body.mouPdfUrl || school.mouPdfUrl;
     await school.save();
+
+    // Replacing the MOU orphans the document it replaced: this field was the
+    // only thing that knew the old file's URL, and it has just been overwritten.
+    // Best-effort — a storage hiccup must not fail an upload that succeeded.
+    if (previousMou && previousMou !== school.mouPdfUrl) {
+      await purgeAssets([previousMou]);
+    }
     
     res.status(200).json({ success: true, data: school });
   } catch (error) {

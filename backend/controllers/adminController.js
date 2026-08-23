@@ -12,6 +12,7 @@ const {
   findSchoolRegistration,
 } = require('../utils/anonymousLocation');
 const { notifyUser, notifyUserById } = require('../utils/pushNotification');
+const { purgeFaceVideo, purgeFaceVideos } = require('../utils/faceVideo');
 const { sendOtp, generateOtp } = require('../utils/email');
 const { decisionOf, trail } = require('../utils/approvalTrail');
 
@@ -709,6 +710,10 @@ exports.deleteUser = async (req, res) => {
     // request and the app logs them out — this just makes it instant.)
     const deletedUserForPush = { expoPushToken: user.expoPushToken };
 
+    // Their face recordings go with them. Once the document is deleted nothing
+    // anywhere remembers these URLs, so this is the last moment it is possible.
+    await purgeFaceVideos(user);
+
     await User.findByIdAndDelete(user._id);
 
     res.status(200).json({ success: true, data: {} });
@@ -789,6 +794,12 @@ exports.approveFacialRegistration = async (req, res) => {
     reg.reviewedAt = decidedAt;
     reg.decidedBy = decisionOf(req.user, 'approved', decidedAt);
     syncLegacyFaceStatus(user);
+
+    // The embedding is stored, so the video has done its job — delete it, the
+    // same as the /api/approvals route does. This is a second door onto one
+    // decision and the two must not leave the cloud in different states.
+    const cloud = await purgeFaceVideo(user, reg);
+
     await user.save();
 
     let schoolName = 'the school';
@@ -809,6 +820,13 @@ exports.approveFacialRegistration = async (req, res) => {
       subject: user,
       actor: req.user,
       action: 'approved',
+      // Same line the /api/approvals route writes, so one decision reads the
+      // same in the log whichever screen took it.
+      note: cloud.requested === 0
+        ? ''
+        : cloud.ok
+          ? 'Registration video deleted from cloud storage'
+          : 'Registration video could NOT be deleted from cloud storage',
       school,
       at: decidedAt,
     });
@@ -842,12 +860,19 @@ exports.deleteFacialRegistration = async (req, res) => {
     // location head; anything else is a real school id.
     const anonymous = isAnonymousParam(schoolId);
     const before = (user.faceRegistrations || []).length;
-    user.faceRegistrations = (user.faceRegistrations || []).filter((fr) =>
-      anonymous ? !!fr.schoolId : !(fr.schoolId && String(fr.schoolId) === String(schoolId))
-    );
+    const isDoomed = (fr) =>
+      anonymous ? !fr.schoolId : !!(fr.schoolId && String(fr.schoolId) === String(schoolId));
+    // Captured before the filter — once these entries are dropped, the URL of
+    // the video each one uploaded is gone with them and the file could never be
+    // found again.
+    const doomed = (user.faceRegistrations || []).filter(isDoomed);
+    user.faceRegistrations = (user.faceRegistrations || []).filter((fr) => !isDoomed(fr));
     if (user.faceRegistrations.length === before) {
       return res.status(404).json({ success: false, error: 'No facial registration found for this school' });
     }
+
+    // Throwing the registration away throws its video away too.
+    const cloud = await purgeFaceVideos(user, doomed);
 
     // Clear the legacy fields only once no per-school registrations remain.
     if (user.faceRegistrations.length === 0) {
@@ -876,6 +901,27 @@ exports.deleteFacialRegistration = async (req, res) => {
         remaining: user.faceRegistrations.length,
         facialRegistrationStatus: user.facialRegistrationStatus
       }
+    });
+
+    // Wiping somebody's face registration is a deletion the Admin performs on
+    // another person's record, and until now it left no trace anywhere. It ends
+    // their ability to mark attendance until they re-register, so it belongs in
+    // the log beside the approval that first let them in.
+    trail({
+      entityType: 'face_registration',
+      entityId: user._id,
+      entityLabel: anonymous
+        ? 'Facial registration · any location'
+        : `Facial registration · ${schoolName}`,
+      subject: user,
+      actor: req.user,
+      action: 'deleted',
+      note: cloud.requested === 0
+        ? 'Registration removed. There was no video in cloud storage.'
+        : cloud.ok
+          ? `Registration removed and ${cloud.requested} registration video(s) deleted from cloud storage.`
+          : `Registration removed, but ${cloud.failed} registration video(s) could NOT be deleted from cloud storage.`,
+      school: anonymous ? null : schoolId,
     });
 
     // Let the user know they need to register their face again for this school.

@@ -574,11 +574,15 @@ export default function CreatorAdminPortal({ navigation, route }) {
       { text: 'Cancel', type: 'secondary' },
       { text: 'Delete', type: 'primary', onPress: async () => {
           try {
-            await api.delete(`/media/${id}`);
-            showAlert('Success', 'Banner deleted successfully!', 'success');
+            const res = await api.delete(`/media/${id}`);
+            // Deleting a banner now removes its image from Cloudinary too, and
+            // the server refuses to drop the row if that failed — so report
+            // what it actually says instead of a blanket success.
+            showAlert('Success', res.data?.message || 'Banner deleted successfully!', 'success');
             fetchDropdownData();
           } catch (err) {
-            showAlert('Error', 'Failed to delete banner', 'error');
+            showAlert('Error', err.response?.data?.error || 'Failed to delete banner', 'error');
+            fetchDropdownData();
           }
       }}
     ]);

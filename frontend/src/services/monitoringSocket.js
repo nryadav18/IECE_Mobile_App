@@ -2,12 +2,14 @@ import { io } from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ---------------------------------------------------------------------------
-// The one socket the app opens, used by the Admin/CEO live Monitoring screen.
+// The one socket the app opens, used by the live Monitoring screen.
 //
 // It is created lazily and torn down the moment nothing is listening, so a
 // phone that never opens Monitoring never holds a socket at all. The connection
 // carries the same JWT the REST client uses; the server verifies it with the
-// same tokenVersion rule, so a socket cannot outlive a session.
+// same tokenVersion rule, so a socket cannot outlive a session — and it is the
+// server, from that token, that decides whose day this socket is allowed to
+// stream. Nothing here asks for a scope, so nothing here can widen one.
 // ---------------------------------------------------------------------------
 
 // EXPO_PUBLIC_API_URL points at the REST base (".../api"); socket.io attaches to

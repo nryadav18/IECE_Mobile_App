@@ -5,6 +5,7 @@ const {
   createActivity,
   updateActivity,
   deleteActivity,
+  deleteActivityMedia,
   updateActivityStatus,
   toggleStarActivity
 } = require('../controllers/activityController');
@@ -29,6 +30,11 @@ router.route('/:id')
 // told when an activity at their school is approved, but no longer decides it.
 router.route('/:id/status')
   .put(protect, authorize(...LEADER_ROLES, ...HEAD_ROLES, ...ADMIN_ROLES), updateActivityStatus);
+
+// Strip an activity's photos and videos out of Cloudinary while keeping the
+// activity itself. The Admin alone: see deleteActivityMedia for why.
+router.route('/:id/media')
+  .delete(protect, authorize('creator_admin'), deleteActivityMedia);
 
 // Only heads (and admin) may star / unstar an activity.
 router.route('/:id/star')

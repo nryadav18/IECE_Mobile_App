@@ -24,6 +24,16 @@ const ADMIN_ROLES = ['creator_admin', 'ceo'];
 // Everyone allowed to author a visit report (field staff + both admins).
 const REPORT_AUTHORS = [...FIELD_STAFF, ...ADMIN_ROLES];
 
+// Who may open the live Monitoring dashboard.
+//
+// It used to be Admin + CEO alone, because the dashboard is an org-wide view of
+// where every staff member is. It is now also open to heads and (trainee) team
+// leaders — but never as the org-wide view: the server scopes every snapshot to
+// the people that viewer manages (see utils/monitoringScope.js), so a head sees
+// their teams and a leader sees their trainers, and neither ever receives a row
+// for anybody else. Trainers and the chairman manage nobody and are excluded.
+const MONITORING_VIEWERS = [...ADMIN_ROLES, ...HEAD_ROLES, ...LEADER_ROLES];
+
 // Who decides FACIAL REGISTRATIONS — the Admin, and nobody else.
 //
 // This used to follow the hierarchy (a trainer's leader, a leader's head), the
@@ -56,4 +66,4 @@ const SCHOOL_VISIT_APPROVERS = ['creator_admin'];
 const MEETING_CREATORS = [...LEADER_ROLES, ...HEAD_ROLES, ...ADMIN_ROLES];
 const MEETING_VIEWERS = [...FIELD_STAFF, ...ADMIN_ROLES];
 
-module.exports = { HEAD_ROLES, LEADER_ROLES, TEAM_MEMBER_ROLES, FIELD_STAFF, ADMIN_ROLES, REPORT_AUTHORS, FACE_APPROVERS, LEAVE_APPLICANTS, LEAVE_APPROVERS, SCHOOL_VISIT_APPLICANTS, SCHOOL_VISIT_APPROVERS, MEETING_CREATORS, MEETING_VIEWERS };
+module.exports = { HEAD_ROLES, LEADER_ROLES, TEAM_MEMBER_ROLES, FIELD_STAFF, ADMIN_ROLES, REPORT_AUTHORS, MONITORING_VIEWERS, FACE_APPROVERS, LEAVE_APPLICANTS, LEAVE_APPROVERS, SCHOOL_VISIT_APPLICANTS, SCHOOL_VISIT_APPROVERS, MEETING_CREATORS, MEETING_VIEWERS };

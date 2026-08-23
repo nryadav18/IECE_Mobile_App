@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const Media = require('../models/Media');
-const { deleteFromCloudinary } = require('../utils/cloudinary');
+const { purgeAssets, purgeSummary, purgeProblem } = require('../utils/cloudinary');
 const { decisionOf, trail } = require('../utils/approvalTrail');
 const { ADMIN_ROLES } = require('../utils/roles');
 
@@ -151,17 +151,46 @@ exports.updateMediaStatus = async (req, res) => {
 
 exports.deleteMedia = async (req, res) => {
   try {
-    const media = await Media.findById(req.params.id);
+    // Populated for the Approval Log — the row snapshots the uploader's name,
+    // and after deleteOne() there is nothing left to read it from.
+    const media = await Media.findById(req.params.id).populate('uploaderId', 'name role');
     if (!media) {
       return res.status(404).json({ success: false, error: 'Media not found' });
     }
 
-    if (media.imageUrl) {
-      await deleteFromCloudinary(media.imageUrl);
+    // The image goes FIRST, and the banner row only goes if it did. Deleting
+    // the row first would throw away the one reference to the file, leaving it
+    // in the Cloudinary account with nothing left that knows its name. The old
+    // code fired the deletion and ignored the answer, so a failure here was
+    // completely silent.
+    const purge = await purgeAssets([media.imageUrl]);
+    if (!purge.ok) {
+      return res.status(502).json({
+        success: false,
+        error: `The banner was NOT deleted. ${purgeProblem(purge)}`,
+        cloud: { deleted: purge.deleted, failed: purge.failed },
+      });
     }
 
+    const deletedAt = new Date();
     await media.deleteOne();
-    res.status(200).json({ success: true, data: {} });
+    res.status(200).json({
+      success: true,
+      data: {},
+      message: `Banner deleted. ${purgeSummary(purge)}`,
+      cloud: { deleted: purge.deleted, missing: purge.missing, failed: 0 },
+    });
+
+    trail({
+      entityType: 'media',
+      entityId: media._id,
+      entityLabel: media.description || 'Gallery item',
+      subject: media.uploaderId,
+      actor: req.user,
+      action: 'deleted',
+      note: `Banner deleted and its image removed from cloud storage. ${purgeSummary(purge)}`,
+      at: deletedAt,
+    });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }

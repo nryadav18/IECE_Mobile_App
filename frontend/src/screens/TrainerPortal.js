@@ -224,11 +224,14 @@ export default function TrainerPortal({ navigation, route }) {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
           try {
-            await api.delete(`/activities/${id}`);
-            showAlert('Success', 'Activity deleted permanently.', 'success');
+            const res = await api.delete(`/activities/${id}`);
+            // The server reports what it removed from cloud storage; pass that
+            // on rather than claiming success on its behalf.
+            showAlert('Success', res.data?.message || 'Activity deleted permanently.', 'success');
             fetchData();
           } catch (err) {
-            showAlert('Error', 'Failed to delete activity.', 'error');
+            showAlert('Error', err.response?.data?.error || 'Failed to delete activity.', 'error');
+            fetchData();
           }
       }}
     ]);

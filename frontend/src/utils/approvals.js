@@ -27,6 +27,11 @@ const ACTION_LABELS = {
   revised: 'Dates set by',
   created: 'Created by',
   deleted: 'Deleted by',
+  // The item is still there — only its photos/videos were removed from cloud
+  // storage. Deliberately a different verb from 'deleted': in an audit log,
+  // "the activity is gone" and "the activity's photos are gone" must never
+  // read the same.
+  media_deleted: 'Photos removed by',
 };
 
 const STATUS_FALLBACK = {
@@ -47,6 +52,8 @@ const ACTION_COLORS = {
   revised: '#0D9488',
   created: '#2563EB',
   deleted: '#F44336',
+  // Amber, not red: something was destroyed, but the record survived.
+  media_deleted: '#F59E0B',
 };
 
 const ACTION_ICONS = {
@@ -59,6 +66,7 @@ const ACTION_ICONS = {
   revised: 'calendar',
   created: 'person-add',
   deleted: 'trash',
+  media_deleted: 'images-outline',
 };
 
 export const decisionVerb = (action, status) =>

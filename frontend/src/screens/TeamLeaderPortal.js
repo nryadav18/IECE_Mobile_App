@@ -32,9 +32,11 @@ import CalendarLegend from '../components/CalendarLegend';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import { SectionSkeleton } from '../components/Skeleton';
 import LazyTab from '../components/LazyTab';
+import MonitoringDashboard from '../components/monitoring/MonitoringDashboard';
 import { useSectionTransition } from '../hooks/useSectionTransition';
 
 const TAB_ITEMS = [
+  { key: 'Monitoring', label: 'Monitoring', icon: 'pulse-outline' },
   { key: 'Reports', label: 'Log Visit', icon: 'document-text-outline' },
   { key: 'MyReports', label: 'My Reports', icon: 'folder-open-outline' },
   { key: 'MyTeam', label: 'My Team', icon: 'people-outline' },
@@ -46,6 +48,7 @@ const TAB_ITEMS = [
 
 // Skeleton shape per section — matches the real layout that follows.
 const SECTION_SKELETON = {
+  Monitoring: 'monitoring',
   Reports: 'form',
   MyReports: 'list',
   MyTeam: 'list',
@@ -113,6 +116,9 @@ export default function TeamLeaderPortal({ navigation, route }) {
   // Track focus states
   const [focusFields, setFocusFields] = useState({});
   const [refreshing, setRefreshing] = useState(false);
+  // Bumped by pull-to-refresh. The Monitoring feed is already live, but a pull
+  // has to do something visible or it reads as broken.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -224,6 +230,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    setRefreshTick((n) => n + 1);
     fetchData();
   }, []);
 
@@ -310,11 +317,14 @@ export default function TeamLeaderPortal({ navigation, route }) {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
           try {
-            await api.delete(`/activities/${id}`);
-            showAlert('Success', 'Activity deleted permanently.', 'success');
+            const res = await api.delete(`/activities/${id}`);
+            // The server reports what it removed from cloud storage; pass that
+            // on rather than claiming success on its behalf.
+            showAlert('Success', res.data?.message || 'Activity deleted permanently.', 'success');
             fetchData();
           } catch (err) {
-            showAlert('Error', 'Failed to delete activity.', 'error');
+            showAlert('Error', err.response?.data?.error || 'Failed to delete activity.', 'error');
+            fetchData();
           }
       }}
     ]);
@@ -368,6 +378,17 @@ export default function TeamLeaderPortal({ navigation, route }) {
         />
       }
     >
+
+      {/* ---------- MONITORING: the live dashboard, scoped by the server to the
+           trainers working under this leader. Same screen the Admin uses; the
+           payload simply contains their people and nobody else's.
+           Mounted only while the tab is open so the realtime socket is never
+           held by a screen nobody is looking at. ---------- */}
+      <View style={[{ display: activeTab === 'Monitoring' ? 'flex' : 'none' }, activeTab === 'Monitoring' && { flex: 1 }]}>
+        {activeTab === 'Monitoring' && (
+          <MonitoringDashboard navigation={navigation} refreshSignal={refreshTick} />
+        )}
+      </View>
 
       <LazyTab active={activeTab === 'Reports'}>
         {/* Log Visit — launches the full IECE EGM Visit report form */}

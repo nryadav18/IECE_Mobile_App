@@ -6,7 +6,13 @@ import { acquireSocket } from '../services/monitoringSocket';
 // ---------------------------------------------------------------------------
 // Live feed for the Monitoring dashboard.
 //
-// Three rules shape this hook:
+// The hook is scope-agnostic on purpose: it asks for "the monitoring data" and
+// the server answers with whatever this viewer is entitled to — the whole
+// organisation for the Admin and CEO, their own teams for a head, their own
+// trainers for a leader. There is no scope parameter to get wrong, and no way
+// for a client to request somebody else's people.
+//
+// Three rules shape it:
 //
 //  1. TODAY is push-driven. The server recomputes and emits at most once a
 //     second and only when something actually changed, so there is no polling

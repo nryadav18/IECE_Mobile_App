@@ -4,6 +4,7 @@ const Attendance = require('../models/Attendance');
 const axios = require('axios');
 const FormData = require('form-data');
 const cloudinary = require('cloudinary').v2;
+const { purgeFaceVideo, purgeLegacyFaceVideo } = require('../utils/faceVideo');
 const { notifyRole } = require('../utils/pushNotification');
 const { notify } = require('../utils/notify');
 const { getAdminOnlyRecipientIds } = require('../utils/hierarchy');
@@ -98,6 +99,12 @@ exports.registerFace = async (req, res) => {
     }
 
     const user = await User.findById(req.user.id);
+
+    // This capture replaces the last one, and the field below is the only thing
+    // that remembers the previous video's URL. Delete it before overwriting it,
+    // or that file stays in the account with nothing left pointing at it.
+    await purgeLegacyFaceVideo(user, result.secure_url);
+
     user.facialRegistrationStatus = 'pending';
     user.faceEmbedding = embedding;
     user.registrationLocation = { lat: coords.lat, lng: coords.lng };
@@ -364,6 +371,14 @@ exports.registerFaceV2 = async (req, res) => {
       ? findAnonymousRegistration(user)
       : findSchoolRegistration(user, schoolId);
     if (existing) {
+      // This capture replaces the previous one, so the previous VIDEO is now
+      // orphaned — the field below is about to be overwritten with the new URL
+      // and nothing would remember the old file. Delete it before we lose the
+      // only reference to it. Best-effort: a storage hiccup must not stop
+      // somebody re-registering their face.
+      if (existing.registrationPhotoUrl && existing.registrationPhotoUrl !== result.secure_url) {
+        await purgeFaceVideo(user, existing);
+      }
       existing.status = 'pending';
       existing.faceEmbedding = embedding;
       existing.registrationLocation = registrationLocation;

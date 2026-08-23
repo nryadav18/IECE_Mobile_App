@@ -19,9 +19,17 @@ import FilterSheet from './FilterSheet';
 // ---------------------------------------------------------------------------
 // THE MONITORING DASHBOARD
 //
-// One screen holding everything an Admin has to keep an eye on today: where
-// every staff member is, what is waiting on a decision, which schools are
+// One screen holding everything a supervisor has to keep an eye on today: where
+// each of their staff is, what is waiting on a decision, which schools are
 // uncovered, how the day is actually going, and what needs attention right now.
+//
+// The same screen serves three audiences, and it does not decide which: the
+// server does. The Admin and CEO receive the whole organisation, a head receives
+// the teams assigned to them, a (trainee) team leader receives the trainers
+// working under them — each as a payload that physically contains nobody else.
+// So there is no "hide this for leaders" branch anywhere below; the screen just
+// renders whatever it was given, and reads `snapshot.scope` only to LABEL that
+// honestly and to drop breakdowns of a tier this viewer has none of.
 //
 // It is push-driven (see hooks/useMonitoring) and every number on it is
 // tappable — tapping opens the exact rows behind it, with no request, because
@@ -197,6 +205,7 @@ function personMatches(p, filter) {
   if (!filter || filter.type === 'all') return true;
   if (filter.type === 'team') return p.teamId === filter.id;
   if (filter.type === 'head') return p.headIds.includes(filter.id);
+  if (filter.type === 'leader') return (p.leaderIds || []).includes(filter.id);
   if (filter.type === 'school') {
     return p.schoolIds.includes(filter.id) || p.schoolId === filter.id || p.checkOutSchoolId === filter.id;
   }
@@ -269,6 +278,9 @@ export default function MonitoringDashboard({ navigation, onOpenSchool, refreshS
   const { snapshot, loading, error, connected, updatedAt, refresh } = useMonitoring(dateKey, { enabled: isFocused });
 
   const isToday = dateKey === todayKey();
+  // Older payloads (a client left open across a deploy) predate scoping; treating
+  // an absent descriptor as org-wide keeps the Admin's screen wording unchanged.
+  const scope = snapshot?.scope || { kind: 'org', label: 'Whole organisation', orgWide: true };
 
   // The portal's pull-to-refresh bumps this counter. The feed is already live,
   // but a pull has to do something visible or it reads as broken.
@@ -304,20 +316,26 @@ export default function MonitoringDashboard({ navigation, onOpenSchool, refreshS
       .filter((t) => t.total > 0)
       .sort((a, b) => b.attendanceRate - a.attendanceRate || b.total - a.total);
 
-    const heads = snapshot.heads
-      .map((h) => {
-        const members = filtered.filter((p) => p.headIds.includes(h.id));
-        return { ...h, ...rollup(members), memberIds: members.map((p) => p.id) };
+    // Both supervisor tiers are derived the same way and either may be empty:
+    // a head's payload carries no heads, a leader's carries neither. An empty
+    // list simply drops its card rather than rendering a heading over nothing.
+    const supervisors = (rows, linkField) => (rows || [])
+      .map((s) => {
+        const members = filtered.filter((p) => (p[linkField] || []).includes(s.id));
+        return { ...s, ...rollup(members), memberIds: members.map((p) => p.id) };
       })
-      .filter((h) => h.total > 0)
+      .filter((s) => s.total > 0)
       .sort((a, b) => b.total - a.total);
+
+    const heads = supervisors(snapshot.heads, 'headIds');
+    const leaders = supervisors(snapshot.leaders, 'leaderIds');
 
     const flagCounts = {};
     Object.entries(FLAG_META).forEach(([key, meta]) => {
       flagCounts[key] = filtered.filter(meta.test).length;
     });
 
-    return { people: filtered, counts, punctuality, schools, schoolSummary, teams, heads, flagCounts };
+    return { people: filtered, counts, punctuality, schools, schoolSummary, teams, heads, leaders, flagCounts };
   }, [snapshot, filter]);
 
   // ---- drill-down openers --------------------------------------------------
@@ -431,7 +449,27 @@ export default function MonitoringDashboard({ navigation, onOpenSchool, refreshS
 
   if (!view || !snapshot) return null;
 
-  const { counts, punctuality, schoolSummary, teams, heads, flagCounts, schools } = view;
+  // A head with no teams yet, or a leader with nobody reporting to them, gets an
+  // explanation rather than a screen of zeroes that reads like a broken feed.
+  if (snapshot.people.length === 0) {
+    return (
+      <View style={{ paddingVertical: 54, alignItems: 'center', paddingHorizontal: 24 }}>
+        <Ionicons name="people-outline" size={42} color={theme.colors.border} />
+        <Text style={{ color: theme.colors.textPrimary, marginTop: 14, fontSize: 15, fontWeight: '700' }}>
+          Nobody to monitor yet
+        </Text>
+        <Text style={{ color: theme.colors.textSecondary, marginTop: 6, fontSize: 12.5, textAlign: 'center', lineHeight: 19 }}>
+          {scope.kind === 'leader'
+            ? 'This tracks the trainers working under you. As soon as trainers are assigned to you, their day appears here live.'
+            : scope.kind === 'head'
+              ? 'This tracks the teams assigned to you. As soon as the Admin assigns you a team, everyone in it appears here live.'
+              : 'No field staff have been created yet. Trainers, team leaders and heads appear here the moment they exist.'}
+        </Text>
+      </View>
+    );
+  }
+
+  const { counts, punctuality, schoolSummary, teams, heads, leaders, flagCounts, schools } = view;
   const width = Math.max(280, screenWidth - 40);
   const tileWidth = (width - 10) / 2;
 
@@ -516,7 +554,7 @@ export default function MonitoringDashboard({ navigation, onOpenSchool, refreshS
       >
         <Ionicons name="funnel-outline" size={14} color={filterActive ? theme.colors.primary : theme.colors.textSecondary} />
         <Text numberOfLines={1} style={{ flex: 1, marginLeft: 8, fontSize: 12.5, fontWeight: '700', color: filterActive ? theme.colors.primary : theme.colors.textSecondary }}>
-          {filterActive ? `${filter.type === 'role' ? 'Role' : filter.type[0].toUpperCase() + filter.type.slice(1)}: ${filter.label}` : 'Whole organisation'}
+          {filterActive ? `${filter.type === 'role' ? 'Role' : filter.type[0].toUpperCase() + filter.type.slice(1)}: ${filter.label}` : scope.label}
         </Text>
         {filterActive
           ? <TouchableOpacity onPress={() => setFilter({ type: 'all' })} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -605,10 +643,12 @@ export default function MonitoringDashboard({ navigation, onOpenSchool, refreshS
       <SectionCard
         theme={theme}
         icon="checkmark-done-outline"
-        title="Approvals Waiting"
+        title={scope.orgWide ? 'Approvals Waiting' : 'Requests From Your People'}
         subtitle={filterActive
-          ? `${snapshot.approvals.totalPending} pending across the organisation (queues are not filtered)`
-          : `${snapshot.approvals.totalPending} pending · ${snapshot.approvals.totalOverdue} over ${snapshot.thresholds.slaHours}h`}
+          ? `${snapshot.approvals.totalPending} pending in ${scope.orgWide ? 'the whole organisation' : scope.label.toLowerCase()} (queues are not filtered)`
+          : scope.orgWide
+            ? `${snapshot.approvals.totalPending} pending · ${snapshot.approvals.totalOverdue} over ${snapshot.thresholds.slaHours}h`
+            : `${snapshot.approvals.totalPending} waiting on a decision · leave, school visits and face registrations are the Admin's to make`}
       >
         {APPROVAL_META.map((m, i) => (
           <View key={m.key}>
@@ -759,8 +799,42 @@ export default function MonitoringDashboard({ navigation, onOpenSchool, refreshS
         </SectionCard>
       )}
 
+      {/* ---------------------------------------------------------- leaders */}
+      {leaders.length > 0 && (
+        <SectionCard
+          theme={theme}
+          icon="person-circle-outline"
+          title={scope.orgWide ? 'Team Leaders & Their People' : 'Team Leaders In Your Teams'}
+          subtitle="Tap a leader to see the trainers reporting to them"
+        >
+          {leaders.slice(0, 8).map((l) => (
+            <TouchableOpacity
+              key={l.id}
+              activeOpacity={0.75}
+              onPress={() => openPeople(view.people.filter((p) => (p.leaderIds || []).includes(l.id)), l.name, `${roleLabel(l.role)} · ${l.total} trainer${l.total === 1 ? '' : 's'}`)}
+            >
+              <BarRow
+                label={l.name}
+                sub={`${roleLabel(l.role)} · ${l.working}/${l.expected}`}
+                value={l.attendanceRate}
+                max={100}
+                valueLabel={`${l.attendanceRate}%`}
+                color={l.attendanceRate >= 85 ? CALENDAR_COLORS.present : l.attendanceRate >= 60 ? CALENDAR_COLORS.partial : CALENDAR_COLORS.absent}
+              />
+            </TouchableOpacity>
+          ))}
+        </SectionCard>
+      )}
+
       {/* ----------------------------------------------------------- output */}
-      <SectionCard theme={theme} icon="pulse-outline" title="Produced Today" subtitle="Everything created on this date, organisation-wide">
+      <SectionCard
+        theme={theme}
+        icon="pulse-outline"
+        title="Produced Today"
+        subtitle={scope.orgWide
+          ? 'Everything created on this date, organisation-wide'
+          : 'Everything your people created on this date'}
+      >
         <View style={{ flexDirection: 'row', marginBottom: 12 }}>
           <MiniStat value={snapshot.output.activities.total} label="Activities" color={theme.colors.primary} />
           <MiniStat value={snapshot.output.activities.approved} label="Approved" color={CALENDAR_COLORS.present} />
@@ -770,7 +844,12 @@ export default function MonitoringDashboard({ navigation, onOpenSchool, refreshS
         <View style={{ flexDirection: 'row' }}>
           <MiniStat value={snapshot.output.reports.total} label="Visit reports" color={theme.colors.primary} />
           <MiniStat value={snapshot.output.meetings} label="Meetings" color={theme.colors.primary} />
-          <MiniStat value={snapshot.output.banners} label="Banners" color={theme.colors.primary} />
+          {/* Banners are an organisation-wide announcement the Admin posts —
+              there is no such thing as one team's banners, so a scoped view
+              omits the tile instead of always showing a zero. */}
+          {snapshot.output.banners != null && (
+            <MiniStat value={snapshot.output.banners} label="Banners" color={theme.colors.primary} />
+          )}
         </View>
       </SectionCard>
 
@@ -819,6 +898,7 @@ export default function MonitoringDashboard({ navigation, onOpenSchool, refreshS
       <FilterSheet
         visible={filterOpen}
         snapshot={snapshot}
+        scope={scope}
         filter={filter}
         onApply={setFilter}
         onClose={() => setFilterOpen(false)}

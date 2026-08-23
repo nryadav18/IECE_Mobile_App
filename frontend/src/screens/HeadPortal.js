@@ -17,6 +17,7 @@ import VisitReportForm from '../components/VisitReportForm';
 import VisitReportDetail from '../components/VisitReportDetail';
 import { SectionSkeleton } from '../components/Skeleton';
 import LazyTab from '../components/LazyTab';
+import MonitoringDashboard from '../components/monitoring/MonitoringDashboard';
 import AttendanceSection from '../components/AttendanceSection';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import CreateActivityForm from '../components/CreateActivityForm';
@@ -29,6 +30,7 @@ import { roleLabel } from '../utils/roles';
 // of their oversight tabs (teams, visit reports, activity feed).
 const TAB_ITEMS = [
   { key: 'Home', label: 'Home', icon: 'home-outline' },
+  { key: 'Monitoring', label: 'Monitoring', icon: 'pulse-outline' },
   { key: 'Attendance', label: 'Attendance', icon: 'calendar-outline' },
   { key: 'SchoolHoliday', label: 'Apply School Holiday', icon: 'sunny-outline' },
   { key: 'MyTeams', label: 'My Teams', icon: 'people-outline' },
@@ -40,6 +42,7 @@ const TAB_ITEMS = [
 // Skeleton shape per section — matches the real layout that follows.
 const SECTION_SKELETON = {
   Home: 'list',
+  Monitoring: 'monitoring',
   Attendance: 'calendar',
   SchoolHoliday: 'form',
   MyTeams: 'list',
@@ -82,6 +85,9 @@ export default function HeadPortal({ navigation, route }) {
   const [reportToView, setReportToView] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Bumped by pull-to-refresh. The Monitoring feed is already live, but a pull
+  // has to do something visible or it reads as broken.
+  const [refreshTick, setRefreshTick] = useState(0);
   const [alertConfig, setAlertConfig] = useState({ visible: false, title: '', message: '', type: 'info', buttons: [] });
 
   const fetchData = async () => {
@@ -134,6 +140,7 @@ export default function HeadPortal({ navigation, route }) {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    setRefreshTick((n) => n + 1);
     fetchData();
   }, []);
 
@@ -179,11 +186,14 @@ export default function HeadPortal({ navigation, route }) {
           style: 'destructive',
           onPress: async () => {
             try {
-              await api.delete(`/activities/${id}`);
-              setAlertConfig({ visible: true, title: 'Success', message: 'Activity deleted permanently.', type: 'success', buttons: [] });
+              const res = await api.delete(`/activities/${id}`);
+              // The server reports what it removed from cloud storage; pass that
+              // on rather than claiming success on its behalf.
+              setAlertConfig({ visible: true, title: 'Success', message: res.data?.message || 'Activity deleted permanently.', type: 'success', buttons: [] });
               fetchData();
             } catch (err) {
-              setAlertConfig({ visible: true, title: 'Error', message: 'Failed to delete activity.', type: 'error', buttons: [] });
+              setAlertConfig({ visible: true, title: 'Error', message: err.response?.data?.error || 'Failed to delete activity.', type: 'error', buttons: [] });
+              fetchData();
             }
           },
         },
@@ -290,6 +300,17 @@ export default function HeadPortal({ navigation, route }) {
               ))
             )}
           </LazyTab>
+
+          {/* ---------- MONITORING: the live dashboard, scoped by the server to
+               the teams assigned to this head. Same screen the Admin uses; the
+               payload simply contains their people and nobody else's.
+               Mounted only while the tab is open so the realtime socket is
+               never held by a screen nobody is looking at. ---------- */}
+          <View style={[{ display: activeTab === 'Monitoring' ? 'flex' : 'none' }, activeTab === 'Monitoring' && { flex: 1 }]}>
+            {activeTab === 'Monitoring' && (
+              <MonitoringDashboard navigation={navigation} refreshSignal={refreshTick} />
+            )}
+          </View>
 
           {/* ---------- MY TEAMS: teams → members → profile drill-in ---------- */}
           <LazyTab active={activeTab === 'MyTeams'}>

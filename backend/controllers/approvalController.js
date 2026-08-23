@@ -5,6 +5,7 @@ const { getApprovalSubjectFilter } = require('../utils/hierarchy');
 const { ROLE_LABELS } = require('../utils/roleLabels');
 const { FACE_APPROVERS, FIELD_STAFF } = require('../utils/roles');
 const { decisionOf, trail } = require('../utils/approvalTrail');
+const { purgeFaceVideo } = require('../utils/faceVideo');
 const {
   isAnonymousParam,
   findAnonymousRegistration,
@@ -32,6 +33,21 @@ const roleLabel = (role) => ROLE_LABELS[role] || role;
  *   Rights are cumulative: a head owns whole teams, so every member of those
  *   teams shows up in their queue, not just the leaders.
  */
+
+/**
+ * How the registration video ended up, in a form the Approval Log can show.
+ *
+ * A deletion that quietly failed is the one outcome worth spelling out: it means
+ * a recording of somebody's face is still sitting in cloud storage, and the log
+ * is where that has to be visible.
+ */
+function videoNote(cloud) {
+  if (!cloud || cloud.requested === 0) return '';
+  if (!cloud.ok) return 'Registration video could NOT be deleted from cloud storage';
+  return cloud.missing && !cloud.deleted
+    ? 'Registration video was already gone from cloud storage'
+    : 'Registration video deleted from cloud storage';
+}
 
 // Belt-and-braces for the face queue: the routes already restrict it, so this
 // only ever fires if a future route forgets to.
@@ -154,6 +170,21 @@ exports.reviewFaceRegistration = async (req, res) => {
     reg.reviewedAt = decidedAt;
     reg.decidedBy = decisionOf(req.user, status, decidedAt);
     syncLegacyFaceStatus(subject);
+
+    // THE VIDEO'S JOB IS OVER — DELETE IT.
+    //
+    // A registration video exists for exactly two reasons: the ML service turns
+    // it into an embedding, and the Admin watches it once to decide. Both are
+    // finished by the time this line runs, whichever way the decision went:
+    //   approved -> the embedding is in the database and is what every check-in
+    //               is matched against; the video is never read again.
+    //   rejected -> there is nothing to keep at all; they must re-register,
+    //               which captures a fresh video anyway.
+    // Either way it is a face recording of a real person sitting in cloud
+    // storage for no reason, so it goes as part of the decision rather than
+    // being left for a cleanup that never comes.
+    const cloud = await purgeFaceVideo(subject, reg);
+
     await subject.save();
 
     let schoolName = 'the school';
@@ -164,7 +195,7 @@ exports.reviewFaceRegistration = async (req, res) => {
       if (school) schoolName = school.name;
     }
 
-    res.status(200).json({ success: true, data: { userId, schoolId, status } });
+    res.status(200).json({ success: true, data: { userId, schoolId, status }, cloud });
 
     trail({
       entityType: 'face_registration',
@@ -175,7 +206,10 @@ exports.reviewFaceRegistration = async (req, res) => {
       subject,
       actor: req.user,
       action: status,
-      note: reg.rejectionReason || '',
+      // The rejection reason (when there is one) plus what became of the
+      // registration video, so the log answers "was that recording removed?"
+      // without anyone having to go and look in the cloud account.
+      note: [reg.rejectionReason || '', videoNote(cloud)].filter(Boolean).join(' · '),
       school,
       at: decidedAt,
     });

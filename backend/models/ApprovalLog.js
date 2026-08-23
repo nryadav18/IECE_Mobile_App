@@ -25,6 +25,8 @@ const APPROVAL_ACTIONS = [
   'auto_approved',
   'created',
   'deleted',
+  // The item survives; its photos/videos were removed from cloud storage.
+  'media_deleted',
 ];
 
 /**

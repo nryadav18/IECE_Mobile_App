@@ -8,29 +8,49 @@ import { roleLabel } from '../../utils/roles';
 // The quick-filter picker. Narrowing happens entirely on the client against the
 // `people` array already in memory — picking a team re-derives every count on
 // the screen without a single request, which is why the filter feels instant.
+//
+// It narrows what the viewer was ALREADY sent, so it can never widen anything:
+// a leader's snapshot holds only their trainers, and every option offered here
+// is built from that snapshot. Ways of slicing that this viewer has none of
+// (a leader has no heads to filter by) are dropped rather than shown empty.
 
-const TYPES = [
+const ALL_TYPES = [
   { key: 'team', label: 'Team', icon: 'people-circle-outline' },
   { key: 'head', label: 'Head', icon: 'ribbon-outline' },
+  { key: 'leader', label: 'Leader', icon: 'person-circle-outline' },
   { key: 'school', label: 'School', icon: 'business-outline' },
   { key: 'role', label: 'Role', icon: 'person-outline' },
 ];
 
-export default function FilterSheet({ visible, snapshot, filter, onApply, onClose }) {
+/** The rows offered for one way of slicing, straight off the snapshot. */
+function optionsFor(snapshot, type) {
+  if (!snapshot) return [];
+  if (type === 'team') return (snapshot.teams || []).map((t) => ({ id: t.id, label: t.name, sub: `${t.headcount} staff` }));
+  if (type === 'head') return (snapshot.heads || []).map((h) => ({ id: h.id, label: h.name, sub: `${roleLabel(h.role)} · ${h.headcount} staff` }));
+  if (type === 'leader') return (snapshot.leaders || []).map((l) => ({ id: l.id, label: l.name, sub: `${roleLabel(l.role)} · ${l.headcount} trainers` }));
+  if (type === 'school') return (snapshot.schools || []).map((s) => ({ id: s.id, label: s.name, sub: `${s.state || 'State not set'} · ${s.assigned} assigned` }));
+  return Object.entries(snapshot.roleCounts || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([r, n]) => ({ id: r, label: roleLabel(r), sub: `${n} staff` }));
+}
+
+export default function FilterSheet({ visible, snapshot, scope, filter, onApply, onClose }) {
   const { theme } = useContext(ThemeContext);
   const insets = useSafeAreaInsets();
   const [type, setType] = useState(filter?.type && filter.type !== 'all' ? filter.type : 'team');
   const [query, setQuery] = useState('');
 
-  const options = useMemo(() => {
-    if (!snapshot) return [];
-    if (type === 'team') return snapshot.teams.map((t) => ({ id: t.id, label: t.name, sub: `${t.headcount} staff` }));
-    if (type === 'head') return snapshot.heads.map((h) => ({ id: h.id, label: h.name, sub: `${roleLabel(h.role)} · ${h.headcount} staff` }));
-    if (type === 'school') return snapshot.schools.map((s) => ({ id: s.id, label: s.name, sub: `${s.state || 'State not set'} · ${s.assigned} assigned` }));
-    return Object.entries(snapshot.roleCounts || {})
-      .sort((a, b) => b[1] - a[1])
-      .map(([r, n]) => ({ id: r, label: roleLabel(r), sub: `${n} staff` }));
-  }, [snapshot, type]);
+  const types = useMemo(
+    () => ALL_TYPES.filter((t) => optionsFor(snapshot, t.key).length > 0),
+    [snapshot]
+  );
+
+  // The chip that was selected can disappear when the snapshot changes shape
+  // (a head loses their last team), which would otherwise leave the sheet
+  // showing a list for a tab that is no longer there.
+  const activeType = types.some((t) => t.key === type) ? type : (types[0]?.key || 'role');
+
+  const options = useMemo(() => optionsFor(snapshot, activeType), [snapshot, activeType]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -59,16 +79,19 @@ export default function FilterSheet({ visible, snapshot, filter, onApply, onClos
             </TouchableOpacity>
           </View>
 
-          <View style={{ flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 12 }}>
-            {TYPES.map((t) => {
-              const active = t.key === type;
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 8, marginBottom: 12 }}>
+            {types.map((t) => {
+              const active = t.key === activeType;
               return (
                 <TouchableOpacity
                   key={t.key}
                   onPress={() => { setType(t.key); setQuery(''); }}
                   activeOpacity={0.8}
                   style={{
-                    flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 12,
+                    // Grow to share the row, but never below a legible width —
+                    // the Admin gets five ways to slice, a leader gets two.
+                    flexGrow: 1, flexBasis: 0, minWidth: 62,
+                    alignItems: 'center', paddingVertical: 9, borderRadius: 12,
                     backgroundColor: active ? theme.colors.primary : theme.colors.surface,
                     borderWidth: 1, borderColor: active ? theme.colors.primary : theme.colors.border,
                   }}
@@ -109,7 +132,7 @@ export default function FilterSheet({ visible, snapshot, filter, onApply, onClos
             }}
           >
             <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.textSecondary }}>
-              Show the whole organisation
+              {scope?.orgWide === false ? `Show all of ${(scope.label || 'my people').toLowerCase()}` : 'Show the whole organisation'}
             </Text>
           </TouchableOpacity>
 
@@ -120,11 +143,11 @@ export default function FilterSheet({ visible, snapshot, filter, onApply, onClos
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16 }}
             initialNumToRender={14}
             renderItem={({ item }) => {
-              const active = filter?.type === type && filter?.id === item.id;
+              const active = filter?.type === activeType && filter?.id === item.id;
               return (
                 <TouchableOpacity
                   activeOpacity={0.8}
-                  onPress={() => { onApply({ type, id: item.id, label: item.label }); onClose(); }}
+                  onPress={() => { onApply({ type: activeType, id: item.id, label: item.label }); onClose(); }}
                   style={{
                     flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14,
                     borderRadius: 12, marginBottom: 8, backgroundColor: theme.colors.surface,

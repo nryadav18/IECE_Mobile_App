@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, StyleSheet, ScrollView, Dimensions, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Dimensions, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemeContext } from '../context/ThemeContext';
+import { AuthContext } from '../context/AuthContext';
+import { useAlert } from '../context/AlertContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Carousel from 'react-native-reanimated-carousel';
 import { VideoView, useVideoPlayer } from 'expo-video';
@@ -17,10 +19,20 @@ const { width } = Dimensions.get('window');
 export default function ActivityDetailsScreen({ route, navigation }) {
   const { activityId, preview } = route.params;
   const { theme } = useContext(ThemeContext);
+  const { user } = useContext(AuthContext);
+  const { showAlert } = useAlert();
   const insets = useSafeAreaInsets();
   
   const [activity, setActivity] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [purging, setPurging] = useState(false);
+
+  // Only the Admin may strip an activity's media. Everyone else who wants their
+  // photos gone deletes the whole activity; emptying an APPROVED activity while
+  // leaving the approval standing is an archival call, not an authoring one.
+  const isAdmin = user?.role === 'creator_admin';
+  const mediaCount = activity?.mediaUrls?.length || 0;
+
 
   useEffect(() => {
     fetchActivityDetails();
@@ -35,6 +47,52 @@ export default function ActivityDetailsScreen({ route, navigation }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  /**
+   * Delete this activity's photos and videos — from Cloudinary, not just from
+   * the record. The activity itself is untouched, which is the whole point:
+   * the account stops paying to store the files while what happened, when,
+   * where and who ran it all survive.
+   */
+  const purgeMedia = () => {
+    showAlert(
+      'Delete photos and videos?',
+      `This permanently deletes ${mediaCount} file${mediaCount === 1 ? '' : 's'} from cloud storage. ` +
+      'It cannot be undone, and the files cannot be recovered.\n\n' +
+      `"${activity.name}" itself stays — its details, date, school, organisers and approval are all kept. ` +
+      'Only the media is removed.',
+      'warning',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete files',
+          style: 'destructive',
+          onPress: async () => {
+            setPurging(true);
+            try {
+              const res = await api.delete(`/activities/${activityId}/media`);
+              // The server returns the saved activity, so the carousel reflects
+              // exactly what is left rather than what we hoped was left.
+              if (res.data.data) setActivity(res.data.data);
+              showAlert('Deleted', res.data.message || 'The files were removed from cloud storage.', 'success');
+            } catch (error) {
+              const data = error.response?.data;
+              // A partial failure still returns the updated activity: whatever
+              // DID get deleted is already gone, and the rest can be retried.
+              if (data?.data) setActivity(data.data);
+              showAlert(
+                'Not fully deleted',
+                data?.error || 'Could not remove the files from cloud storage. Please try again.',
+                'error'
+              );
+            } finally {
+              setPurging(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   if (loading || !activity) {
@@ -119,6 +177,28 @@ export default function ActivityDetailsScreen({ route, navigation }) {
           </View>
         )}
 
+        {/* ---- Admin: delete the media, keep the activity ---------------- */}
+        {isAdmin && mediaCount > 0 && (
+          <TouchableOpacity
+            onPress={purgeMedia}
+            disabled={purging}
+            activeOpacity={0.8}
+            style={[styles.purgeBtn, { borderColor: '#EF444455', backgroundColor: '#EF44440F', opacity: purging ? 0.6 : 1 }]}
+          >
+            {purging
+              ? <ActivityIndicator size="small" color="#DC2626" />
+              : <Ionicons name="trash-outline" size={17} color="#DC2626" />}
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={{ color: '#DC2626', fontSize: 13.5, fontWeight: '700' }}>
+                {purging ? 'Deleting from cloud storage…' : `Delete ${mediaCount} photo${mediaCount === 1 ? '' : 's'} / video${mediaCount === 1 ? '' : 's'}`}
+              </Text>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 11, marginTop: 2 }}>
+                Frees cloud storage. The activity and its details are kept.
+              </Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
         <View style={styles.content}>
           {activity.isStarred && (
             <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: '#F5B30120', borderColor: '#F5B301', borderWidth: 1, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16, marginBottom: 10 }}>
@@ -185,6 +265,10 @@ const styles = StyleSheet.create({
   carouselContainer: { width: width, height: width * 0.75, backgroundColor: '#000' },
   mediaItem: { width: '100%', height: '100%', resizeMode: 'cover' },
   content: { padding: 20 },
+  purgeBtn: {
+    flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, marginTop: 16,
+    paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1,
+  },
   title: { fontSize: 24, fontWeight: 'bold', marginBottom: 12 },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   metaText: { fontSize: 14, marginLeft: 8 },

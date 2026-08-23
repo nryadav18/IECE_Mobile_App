@@ -11,21 +11,41 @@ const VisitReport = require('../models/VisitReport');
 const Meeting = require('../models/Meeting');
 const Media = require('../models/Media');
 const Notification = require('../models/Notification');
-const { FIELD_STAFF, HEAD_ROLES, ADMIN_ROLES } = require('../utils/roles');
+const { FIELD_STAFF, HEAD_ROLES, LEADER_ROLES, ADMIN_ROLES } = require('../utils/roles');
 const { istDateKey, isSunday, IST_OFFSET_MS } = require('../utils/holiday');
 const { registerSnapshotBuilder } = require('../utils/realtime');
+const { monitoringScopeFor, personInScope } = require('../utils/monitoringScope');
 
 // ---------------------------------------------------------------------------
-// The live Monitoring dashboard: one snapshot of the entire organisation's day.
+// The live Monitoring dashboard: one snapshot of a working day.
 //
-// Everything the Admin/CEO screen renders comes from ONE payload built here.
-// That is deliberate — the screen must be able to re-render at one-second
-// granularity without lag, so it never issues follow-up requests: the drill-down
-// lists, the filters and the per-team/per-school rollups are all derived on the
-// client from the `people` array that ships with the snapshot.
+// It is built in two halves, and the split is the whole design:
 //
-// Read `utils/realtime.js` for how often this actually runs (short answer: at
-// most once a second, and never while the screen is closed).
+//   buildBase()  runs every query ONCE and returns the raw organisation — every
+//                staff member's day, every school, every pending request.
+//   project()    turns that into the payload ONE AUDIENCE receives, filtered to
+//                the people that viewer manages and with every rollup, chart,
+//                queue and alert recomputed from the filtered set.
+//
+// That is what lets the Admin, a head and a team leader all watch the same
+// second of the same day without the database being asked three times — and,
+// more importantly, it is what guarantees a head's payload physically contains
+// nobody outside their teams. Scoping is not a client-side filter over an
+// org-wide download; the rows never leave the server.
+//
+// Because every audience runs through the SAME projection, a team's on-duty
+// rate on a leader's screen is computed by the identical arithmetic as the
+// organisation's rate on the Admin's. Nothing means something different one
+// level down.
+//
+// Everything a screen renders comes from ONE payload — the drill-down lists,
+// the filters and the per-team/per-school rollups are all derived on the client
+// from the `people` array that ships with it, so the screen can re-render at
+// one-second granularity without ever issuing a follow-up request.
+//
+// Read `utils/realtime.js` for how often this actually runs (short answer: the
+// base at most once a second, projected once per distinct audience, and never
+// while every dashboard is closed).
 // ---------------------------------------------------------------------------
 
 // A check-in later than this IST time counts as late. 09:30 matches the window
@@ -34,7 +54,7 @@ const LATE_AFTER_MIN = 9 * 60 + 30;
 
 // After this IST time the school day is over, so "hasn't marked attendance yet"
 // stops being a pending action and becomes a genuine absence. Before it, the
-// two are reported separately — see deriveStatus().
+// two are reported separately — see the status precedence below.
 const DAY_END_MIN = 18 * 60;
 
 // Someone still showing as checked-in this late almost always forgot to check
@@ -50,6 +70,11 @@ const APPROVAL_SLA_HOURS = 48;
 const LIST_CAP = 60;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+const EMPTY_TALLY = () => ({
+  present: 0, partial: 0, absent: 0, not_marked: 0,
+  leave: 0, substitution: 0, school_visit: 0, holiday: 0,
+});
 
 const idStr = (v) => (v == null ? null : String(v._id ? v._id : v));
 
@@ -68,8 +93,13 @@ function istMinutes(d) {
 /** 'HH:MM' in IST. */
 function istClock(d) {
   if (!d) return null;
-  const m = istMinutes(d);
-  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  return clockOf(istMinutes(d));
+}
+
+/** 'HH:MM' from minutes-since-midnight. */
+function clockOf(min) {
+  if (min == null) return null;
+  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 }
 
 /** Whole-day inclusive overlap between [from,to] and the IST day `dateKey`. */
@@ -89,29 +119,123 @@ function schoolIdsOf(u) {
 
 const hoursSince = (d) => (d ? (Date.now() - new Date(d).getTime()) / 3600000 : 0);
 
-/** Compact { id, name, at, ... } rows for an approval queue. */
-function queue(records, mapper) {
-  const items = records.slice(0, LIST_CAP).map(mapper);
-  const oldest = records.reduce((acc, r) => {
-    const t = new Date(r.createdAt || r.updatedAt || Date.now()).getTime();
+/**
+ * Turn already-mapped, oldest-first queue rows into the compact shape the
+ * screen renders.
+ *
+ * `subjectId` and `schoolId` are routing data used to decide whose queue a
+ * record belongs in — they are stripped here so they never reach a client.
+ */
+function queue(rows) {
+  const items = rows.slice(0, LIST_CAP).map(({ subjectId, schoolId, ...rest }) => rest);
+  const oldest = rows.reduce((acc, r) => {
+    const t = new Date(r.at || Date.now()).getTime();
     return acc == null || t < acc ? t : acc;
   }, null);
   return {
-    count: records.length,
-    overdue: records.filter((r) => hoursSince(r.createdAt) > APPROVAL_SLA_HOURS).length,
+    count: rows.length,
+    overdue: rows.filter((r) => hoursSince(r.at) > APPROVAL_SLA_HOURS).length,
     oldestAt: oldest ? new Date(oldest).toISOString() : null,
     items,
-    truncated: Math.max(0, records.length - items.length),
+    truncated: Math.max(0, rows.length - items.length),
   };
 }
 
 /**
- * Build the whole snapshot for one IST day.
+ * Where one person stands on this day, and why.
  *
- * Exported (via registerSnapshotBuilder) so the socket ticker can call it
- * without going through HTTP.
+ * PRECEDENCE, and none of it is arbitrary:
+ *   1. a real attendance row — they physically worked, whatever else was true
+ *   2. approved leave        — excused, not missing
+ *   3. approved school visit — on duty, off-site
+ *   4. being substituted     — someone else is covering their post
+ *   5. a school closure      — see the ANY-school rule in buildBase
+ *   6. the clock             — "not marked" until 18:00 IST, "absent" after it,
+ *                              so a pending morning is never called a no-show
+ *
+ * THE ONE RULE THIS FUNCTION EXISTS TO GUARANTEE: a person whose school closure
+ * was approved is NEVER reported as absent or not-marked. A closure outranks the
+ * clock (5 before 6) and is outranked only by evidence of something better — an
+ * actual check-in, or a different approved reason for being away.
+ *
+ * Pulled out of the row builder and exported so that precedence can be tested
+ * on its own. It is the single place that decides whether somebody is called
+ * ABSENT, which makes it worth being provably right rather than only
+ * observably right.
+ *
+ * @param {object|null} attendance  today's attendance row, if any
+ * @param {object|null} leave       approved leave covering today
+ * @param {object|null} visit       approved school visit covering today
+ * @param {object|null} replaced    substitution where this person is the subject
+ * @param {object|null} covering    substitution where this person is the substitute
+ * @param {object|null} closure     approved school holiday catching this person
+ * @param {number} schoolCount      how many schools they are assigned to
+ * @param {boolean} dayOver         has the school day ended
+ * @param {function} nameOf         id -> staff name, for the "covering for" line
  */
-async function buildSnapshot(dateKey = istDateKey()) {
+function deriveStatus({
+  attendance, leave, visit, replaced, covering, closure,
+  schoolCount = 0, dayOver = false, nameOf = () => null,
+}) {
+  if (attendance) {
+    // A real attendance row always wins — they physically worked.
+    const map = {
+      Present: 'present',
+      'Partially Present': 'partial',
+      Absent: 'absent',
+      Leave: 'leave',
+      'On Substitution': 'substitution',
+    };
+    return {
+      status: map[attendance.status] || 'partial',
+      detail: covering ? `Covering for ${nameOf(idStr(covering.subject)) || 'a colleague'}` : null,
+    };
+  }
+
+  if (leave) {
+    return {
+      status: 'leave',
+      detail: `${leave.isEmergency ? 'Emergency leave' : 'Leave'} — ${leave.reason || ''}`.trim(),
+    };
+  }
+
+  if (visit) {
+    return { status: 'school_visit', detail: `Inspecting ${visit.school?.name || 'a school'}` };
+  }
+
+  if (replaced) {
+    return {
+      status: 'substitution',
+      detail: replaced.substitute ? `Replaced by ${replaced.substitute.name}` : 'Substitution approved',
+    };
+  }
+
+  if (closure) {
+    const why = closure.reason || 'School holiday';
+    // Name the campus that shut when the person works at more than one,
+    // otherwise "on holiday" reads as a puzzle to whoever is monitoring them.
+    return {
+      status: 'holiday',
+      detail: schoolCount > 1 && closure.schoolName ? `${why} — ${closure.schoolName}` : why,
+    };
+  }
+
+  return { status: dayOver ? 'absent' : 'not_marked', detail: null };
+}
+
+// ===========================================================================
+// HALF ONE — the organisation, built once
+// ===========================================================================
+
+/**
+ * Every fact about one IST day, unfiltered and unaggregated.
+ *
+ * Nothing here is audience-specific, which is exactly why it can be built once
+ * and handed to every projection. Rollups, counts and alerts deliberately do
+ * NOT live here: a head's numbers are not a slice of the Admin's numbers, they
+ * are the same arithmetic run over a smaller set of people.
+ */
+async function buildBase(dateKey = istDateKey()) {
   const { start, end } = istDayRange(dateKey);
   const today = istDateKey();
   const isToday = dateKey === today;
@@ -141,7 +265,6 @@ async function buildSnapshot(dateKey = istDateKey()) {
     meetingsToday,
     mediaToday,
     notifsToday,
-    notifsReadToday,
   ] = await Promise.all([
     User.find({ role: { $in: FIELD_STAFF } })
       .select('name email role schoolId schoolIds teamId teamIds teamLeaderId anonymousLocation registrationPhotoUrl facialRegistrationStatus faceRegistrations expoPushToken')
@@ -160,7 +283,8 @@ async function buildSnapshot(dateKey = istDateKey()) {
     SubstitutionRequest.find({ status: 'approved' })
       .select('subject substitute reason fromDate toDate approvedFromDate approvedToDate')
       .populate('substitute', 'name role').lean(),
-    SchoolHoliday.find({ date: dateKey, status: 'approved' }).select('schoolId reason').lean(),
+    SchoolHoliday.find({ date: dateKey, status: 'approved' })
+      .select('schoolId reason appliedBy').populate('schoolId', 'name').lean(),
 
     LeaveRequest.find({ status: 'pending' }).select('applicant reason fromDate toDate createdAt')
       .populate('applicant', 'name role').sort({ createdAt: 1 }).lean(),
@@ -175,21 +299,36 @@ async function buildSnapshot(dateKey = istDateKey()) {
     VisitReport.find({ status: 'pending' }).select('schoolId trainerId teamLeaderId dateOfInspection createdAt')
       .populate('schoolId', 'name').populate('trainerId', 'name').sort({ createdAt: 1 }).lean(),
     User.find({ 'faceRegistrations.status': 'pending' })
-      .select('name role faceRegistrations').lean(),
+      .select('name role faceRegistrations updatedAt').lean(),
 
-    Activity.find({ createdAt: { $gte: start, $lte: end } }).select('status').lean(),
-    VisitReport.find({ createdAt: { $gte: start, $lte: end } }).select('status').lean(),
-    Meeting.countDocuments({ createdAt: { $gte: start, $lte: end } }),
+    // Owner ids travel with today's output so a scoped view can report what THIS
+    // TEAM produced rather than what the organisation produced.
+    Activity.find({ createdAt: { $gte: start, $lte: end } }).select('status uploaderId').lean(),
+    VisitReport.find({ createdAt: { $gte: start, $lte: end } }).select('status trainerId teamLeaderId').lean(),
+    Meeting.find({ createdAt: { $gte: start, $lte: end } }).select('createdBy').lean(),
     Media.countDocuments({ createdAt: { $gte: start, $lte: end } }),
-    Notification.countDocuments({ createdAt: { $gte: start, $lte: end } }),
-    Notification.countDocuments({ createdAt: { $gte: start, $lte: end }, read: true }),
+    Notification.find({ createdAt: { $gte: start, $lte: end } }).select('recipient read').lean(),
   ]);
 
   // ---- Lookup tables -------------------------------------------------------
   const schoolById = new Map(schools.map((s) => [idStr(s._id), s]));
   const teamNameById = new Map(teams.map((t) => [idStr(t._id), t.name]));
-  const holidaySchoolIds = new Set(holidaysToday.map((h) => idStr(h.schoolId)));
-  const holidayReasonBySchool = new Map(holidaysToday.map((h) => [idStr(h.schoolId), h.reason]));
+  // Today's approved closures, indexed the two ways a person can be caught by
+  // one: by a school they are assigned to, and by having raised it themselves.
+  const closures = holidaysToday.map((h) => ({
+    schoolId: idStr(h.schoolId),
+    schoolName: h.schoolId?.name || null,
+    reason: (h.reason || '').trim(),
+    appliedBy: idStr(h.appliedBy),
+  }));
+  const holidaySchoolIds = new Set(closures.map((c) => c.schoolId));
+  const closureBySchool = new Map(closures.map((c) => [c.schoolId, c]));
+  // The applicant is covered even if that school is no longer among their
+  // assignments — they asked for the day off and the Admin granted it, and a
+  // later re-assignment must not retroactively turn the day into an absence.
+  const closureByApplicant = new Map(
+    closures.filter((c) => c.appliedBy).map((c) => [c.appliedBy, c])
+  );
 
   const attByUser = new Map();
   attendance.forEach((a) => attByUser.set(idStr(a.trainerId), a));
@@ -222,15 +361,25 @@ async function buildSnapshot(dateKey = istDateKey()) {
     });
   });
 
+  // And which leaders lead which team. A trainer's teamLeaderId link is
+  // optional, so a leader owns their team's unlinked trainers too — the same
+  // rule getApprovalSubjectFilter uses, kept in step here.
+  const leadersByTeam = new Map();
+  staff.filter((u) => LEADER_ROLES.includes(u.role)).forEach((l) => {
+    const key = idStr(l.teamId);
+    if (!key) return;
+    if (!leadersByTeam.has(key)) leadersByTeam.set(key, []);
+    leadersByTeam.get(key).push(idStr(l._id));
+  });
+
   const nameById = new Map(staff.map((u) => [idStr(u._id), u.name]));
 
   // ---- Per-person status ---------------------------------------------------
   //
-  // Precedence matters and is not arbitrary. An approved absence outranks a
-  // missing attendance row (they were excused, not missing); an actual check-in
-  // outranks a school holiday (they came in anyway and that is real work); and
-  // "not marked" only becomes "absent" once the school day is over, so the
-  // Admin can tell a pending morning apart from a real no-show.
+  // The precedence itself lives in deriveStatus above; this loop only gathers
+  // what that decision needs, one person at a time.
+  const nameOf = (uid) => nameById.get(uid) || null;
+
   const people = staff.map((u) => {
     const id = idStr(u._id);
     const att = attByUser.get(id);
@@ -241,40 +390,30 @@ async function buildSnapshot(dateKey = istDateKey()) {
     const mySchools = schoolIdsOf(u);
     const teamId = idStr(u.teamId);
 
-    const allSchoolsOnHoliday =
-      mySchools.length > 0 && mySchools.every((s) => holidaySchoolIds.has(s));
+    // A day is a holiday for this person when ANY school they are assigned to is
+    // closed on it — or when they are the one who applied for the closure.
+    //
+    // This used to demand that EVERY assigned school be shut, which meant a
+    // person posted to several campuses could ask for a holiday, have the Admin
+    // approve it, and still be counted ABSENT that evening because a different
+    // campus of theirs stayed open. It also disagreed with the monthly
+    // performance report, which has always used the ANY rule
+    // (utils/monthlyReport/metrics.js) — so the dashboard and the PDF emailed to
+    // the CEO could describe the same day differently. One rule now, in both.
+    const closedSchoolId = mySchools.find((sid) => holidaySchoolIds.has(sid)) || null;
+    const closure = closedSchoolId ? closureBySchool.get(closedSchoolId) : closureByApplicant.get(id);
 
-    let status;
-    let detail = null;
-
-    if (att) {
-      // A real attendance row always wins — they physically worked.
-      if (att.status === 'Present') status = 'present';
-      else if (att.status === 'Partially Present') status = 'partial';
-      else if (att.status === 'Absent') status = 'absent';
-      else if (att.status === 'Leave') status = 'leave';
-      else if (att.status === 'On Substitution') status = 'substitution';
-      else status = 'partial';
-      if (subDeploy) detail = `Covering for ${nameById.get(idStr(subDeploy.subject)) || 'a colleague'}`;
-    } else if (leave) {
-      status = 'leave';
-      detail = `${leave.isEmergency ? 'Emergency leave' : 'Leave'} — ${leave.reason || ''}`.trim();
-    } else if (visit) {
-      status = 'school_visit';
-      detail = `Inspecting ${visit.school?.name || 'a school'}`;
-    } else if (subSubject) {
-      status = 'substitution';
-      detail = subSubject.substitute
-        ? `Replaced by ${subSubject.substitute.name}`
-        : 'Substitution approved';
-    } else if (allSchoolsOnHoliday) {
-      status = 'holiday';
-      detail = holidayReasonBySchool.get(mySchools[0]) || 'School holiday';
-    } else if (dayOver) {
-      status = 'absent';
-    } else {
-      status = 'not_marked';
-    }
+    const { status, detail } = deriveStatus({
+      attendance: att,
+      leave,
+      visit,
+      replaced: subSubject,
+      covering: subDeploy,
+      closure,
+      schoolCount: mySchools.length,
+      dayOver,
+      nameOf,
+    });
 
     const checkInMin = att?.checkInTime ? istMinutes(att.checkInTime) : null;
     const stillIn = !!(att?.checkInTime && !att.checkOutTime);
@@ -300,6 +439,16 @@ async function buildSnapshot(dateKey = istDateKey()) {
       || u.facialRegistrationStatus === 'approved';
     const facePending = (u.faceRegistrations || []).some((r) => r.status === 'pending');
 
+    // Every leader this person answers to: the explicit link plus the leaders of
+    // their team. Shaped like headIds so "tap a supervisor, see their people"
+    // works identically at both levels of the hierarchy.
+    const leaderIds = u.role === 'trainer'
+      ? [...new Set([
+        ...(u.teamLeaderId ? [idStr(u.teamLeaderId)] : []),
+        ...(teamId ? leadersByTeam.get(teamId) || [] : []),
+      ])].filter((l) => l && l !== id)
+      : [];
+
     return {
       id,
       name: u.name,
@@ -311,6 +460,7 @@ async function buildSnapshot(dateKey = istDateKey()) {
       teamName: teamId ? teamNameById.get(teamId) || null : null,
       leaderId: idStr(u.teamLeaderId),
       leaderName: u.teamLeaderId ? nameById.get(idStr(u.teamLeaderId)) || null : null,
+      leaderIds,
       headIds: teamId ? headsByTeam.get(teamId) || [] : [],
       schoolIds: mySchools,
       schoolId,
@@ -337,22 +487,133 @@ async function buildSnapshot(dateKey = istDateKey()) {
     };
   });
 
-  // ---- Headline counts -----------------------------------------------------
-  const counts = {
-    total: people.length,
-    present: 0, partial: 0, absent: 0, not_marked: 0,
-    leave: 0, substitution: 0, school_visit: 0, holiday: 0,
-  };
-  people.forEach((p) => { counts[p.status] = (counts[p.status] || 0) + 1; });
+  // ---- Pending records, mapped once and routed by subject ------------------
+  //
+  // Each row carries the id of the person (or school) it is ABOUT, so a
+  // projection can keep the records raised by its own people and drop the rest
+  // without re-querying. Oldest first, the order they should be worked in.
+  const pendingFaces = [];
+  faceCandidates.forEach((u) => {
+    (u.faceRegistrations || []).filter((r) => r.status === 'pending').forEach((r) => {
+      pendingFaces.push({
+        id: `${idStr(u._id)}:${idStr(r.schoolId) || 'anonymous'}`,
+        subjectId: idStr(u._id),
+        title: u.name,
+        role: u.role,
+        subtitle: r.schoolId ? schoolById.get(idStr(r.schoolId))?.name || 'School' : 'Anonymous location',
+        at: r.createdAt || u.updatedAt,
+      });
+    });
+  });
+  pendingFaces.sort((a, b) => new Date(a.at) - new Date(b.at));
 
+  const pending = {
+    leave: pendingLeaves.map((r) => ({
+      id: idStr(r._id), subjectId: idStr(r.applicant?._id), title: r.applicant?.name || 'Unknown',
+      role: r.applicant?.role, subtitle: r.reason, from: r.fromDate, to: r.toDate, at: r.createdAt,
+    })),
+    schoolVisit: pendingVisits.map((r) => ({
+      id: idStr(r._id), subjectId: idStr(r.applicant?._id), title: r.applicant?.name || 'Unknown',
+      role: r.applicant?.role, subtitle: `${r.school?.name || 'School'} — ${r.reason || ''}`.trim(),
+      from: r.fromDate, to: r.toDate, at: r.createdAt,
+    })),
+    substitution: pendingSubs.map((r) => ({
+      id: idStr(r._id), subjectId: idStr(r.subject?._id), title: r.subject?.name || 'Unknown',
+      role: r.subject?.role, subtitle: r.reason, from: r.fromDate, to: r.toDate, at: r.createdAt,
+    })),
+    face: pendingFaces,
+    holiday: pendingHolidays.map((r) => ({
+      id: idStr(r._id), schoolId: idStr(r.schoolId?._id), title: r.schoolId?.name || 'School',
+      subtitle: r.reason, from: r.date, at: r.createdAt,
+    })),
+    activity: pendingActivities.map((r) => ({
+      id: idStr(r._id), subjectId: idStr(r.uploaderId?._id), title: r.name,
+      subtitle: `${r.schoolId?.name || 'School'} · ${r.uploaderId?.name || 'Unknown'}`,
+      from: r.activityDate, at: r.createdAt,
+    })),
+    report: pendingReports.map((r) => ({
+      id: idStr(r._id), subjectId: idStr(r.trainerId?._id), title: r.schoolId?.name || 'School',
+      subtitle: `Visit on ${r.trainerId?.name || 'staff'}`, from: r.dateOfInspection, at: r.createdAt,
+    })),
+  };
+
+  return {
+    dateKey,
+    isToday,
+    isSunday: isSunday(dateKey),
+    dayOver,
+    nowMin,
+    generatedAt: new Date().toISOString(),
+    people,
+    schoolDocs: schools,
+    holidaySchoolIds,
+    closureBySchool,
+    teams: teams.map((t) => ({ id: idStr(t._id), name: t.name })),
+    pending,
+    output: {
+      activities: activitiesToday.map((a) => ({ status: a.status, ownerId: idStr(a.uploaderId) })),
+      reports: reportsToday.map((r) => ({ status: r.status, ownerId: idStr(r.trainerId), authorId: idStr(r.teamLeaderId) })),
+      meetings: meetingsToday.map((m) => ({ ownerId: idStr(m.createdBy) })),
+      banners: mediaToday,
+    },
+    notifications: notifsToday.map((n) => ({ recipient: idStr(n.recipient), read: !!n.read })),
+  };
+}
+
+// ===========================================================================
+// HALF TWO — one audience's view of it
+// ===========================================================================
+
+/** The shared status arithmetic. Every rollup on every screen goes through it. */
+function rollup(members) {
+  const t = EMPTY_TALLY();
+  members.forEach((p) => { t[p.status] = (t[p.status] || 0) + 1; });
   // "Working" = physically on duty today in any form. The rate is measured
   // against people who were EXPECTED in — excused and holiday staff are removed
   // from the denominator, otherwise a festival looks like mass absenteeism.
-  const working = counts.present + counts.partial + counts.substitution + counts.school_visit;
-  const expected = counts.total - counts.leave - counts.holiday;
-  counts.working = working;
-  counts.expected = expected;
-  counts.attendanceRate = expected > 0 ? Math.round((working / expected) * 100) : 0;
+  const working = t.present + t.partial + t.substitution + t.school_visit;
+  const expected = members.length - t.leave - t.holiday;
+  return {
+    ...t,
+    headcount: members.length,
+    working,
+    expected,
+    rate: expected > 0 ? Math.round((working / expected) * 100) : 0,
+  };
+}
+
+/**
+ * Project the organisation onto one audience.
+ *
+ * `scope` comes from utils/monitoringScope. Everything below is computed from
+ * `people` AFTER filtering, never sliced out of an org-wide total — which is
+ * both why the numbers are right at every level and why nothing outside the
+ * scope is present in the payload to begin with.
+ */
+function project(base, scope) {
+  const isOrg = scope.kind === 'org';
+  const people = isOrg ? base.people : base.people.filter((p) => personInScope(scope, p));
+  const inScope = new Set(people.map((p) => p.id));
+
+  // Schools this audience has any business seeing: the ones their people are
+  // assigned to, plus the ones their people's day actually touched.
+  const scopeSchools = new Set();
+  people.forEach((p) => {
+    p.schoolIds.forEach((s) => scopeSchools.add(s));
+    if (p.schoolId) scopeSchools.add(p.schoolId);
+    if (p.checkOutSchoolId) scopeSchools.add(p.checkOutSchoolId);
+  });
+
+  // ---- Headline counts -----------------------------------------------------
+  const head = rollup(people);
+  const counts = {
+    total: people.length,
+    present: head.present, partial: head.partial, absent: head.absent, not_marked: head.not_marked,
+    leave: head.leave, substitution: head.substitution, school_visit: head.school_visit, holiday: head.holiday,
+    working: head.working,
+    expected: head.expected,
+    attendanceRate: head.rate,
+  };
 
   // ---- Punctuality / workday shape ----------------------------------------
   const checkedIn = people.filter((p) => p.checkInMin != null);
@@ -377,38 +638,40 @@ async function buildSnapshot(dateKey = istDateKey()) {
     checkedIn: checkedIn.length,
     stillIn: people.filter((p) => p.stillIn).length,
     completed: closedDays.length,
-    avgCheckInClock: avgCheckInMin == null ? null
-      : `${String(Math.floor(avgCheckInMin / 60)).padStart(2, '0')}:${String(avgCheckInMin % 60).padStart(2, '0')}`,
+    avgCheckInClock: clockOf(avgCheckInMin),
     avgWorkMin,
     timeline: timeline.filter((t) => t.hour >= 5 && t.hour <= 22),
   };
 
   // ---- Per-school coverage -------------------------------------------------
-  const schoolRows = schools.map((s) => {
-    const sid = idStr(s._id);
-    // A person counts toward a school if they are assigned to it OR their day
-    // touched it (check-in or check-out) — split days belong to both schools,
-    // matching Attendance.schoolFilter.
-    const assigned = people.filter((p) => p.schoolIds.includes(sid));
-    const here = people.filter(
-      (p) => p.schoolId === sid || p.checkOutSchoolId === sid || p.schoolIds.includes(sid)
-    );
-    const tally = { present: 0, partial: 0, absent: 0, not_marked: 0, leave: 0, substitution: 0, school_visit: 0, holiday: 0 };
-    here.forEach((p) => { tally[p.status] = (tally[p.status] || 0) + 1; });
-    const onDuty = tally.present + tally.partial;
-    return {
-      id: sid,
-      name: s.name,
-      state: s.state || null,
-      onHoliday: holidaySchoolIds.has(sid),
-      holidayReason: holidayReasonBySchool.get(sid) || null,
-      assigned: assigned.length,
-      onDuty,
-      ...tally,
-      covered: onDuty > 0,
-      staffIds: here.map((p) => p.id),
-    };
-  }).sort((a, b) => a.name.localeCompare(b.name));
+  const schoolRows = base.schoolDocs
+    .filter((s) => isOrg || scopeSchools.has(idStr(s._id)))
+    .map((s) => {
+      const sid = idStr(s._id);
+      // A person counts toward a school if they are assigned to it OR their day
+      // touched it (check-in or check-out) — split days belong to both schools,
+      // matching Attendance.schoolFilter.
+      const assigned = people.filter((p) => p.schoolIds.includes(sid));
+      const here = people.filter(
+        (p) => p.schoolId === sid || p.checkOutSchoolId === sid || p.schoolIds.includes(sid)
+      );
+      const tally = EMPTY_TALLY();
+      here.forEach((p) => { tally[p.status] = (tally[p.status] || 0) + 1; });
+      const onDuty = tally.present + tally.partial;
+      return {
+        id: sid,
+        name: s.name,
+        state: s.state || null,
+        onHoliday: base.holidaySchoolIds.has(sid),
+        holidayReason: base.closureBySchool.get(sid)?.reason || null,
+        assigned: assigned.length,
+        onDuty,
+        ...tally,
+        covered: onDuty > 0,
+        staffIds: here.map((p) => p.id),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const schoolSummary = {
     total: schoolRows.length,
@@ -417,87 +680,63 @@ async function buildSnapshot(dateKey = istDateKey()) {
     // "Uncovered" excludes holidays — a closed school is not a gap.
     uncovered: schoolRows.filter((s) => !s.covered && !s.onHoliday && s.assigned > 0).length,
     unstaffed: schoolRows.filter((s) => s.assigned === 0).length,
-    states: [...new Set(schools.map((s) => s.state).filter(Boolean))].sort(),
+    states: [...new Set(schoolRows.map((s) => s.state).filter(Boolean))].sort(),
   };
 
-  // ---- Team & head rollups -------------------------------------------------
-  const rollup = (members) => {
-    const t = { present: 0, partial: 0, absent: 0, not_marked: 0, leave: 0, substitution: 0, school_visit: 0, holiday: 0 };
-    members.forEach((p) => { t[p.status] = (t[p.status] || 0) + 1; });
-    const w = t.present + t.partial + t.substitution + t.school_visit;
-    const exp = members.length - t.leave - t.holiday;
-    return { ...t, headcount: members.length, working: w, rate: exp > 0 ? Math.round((w / exp) * 100) : 0 };
-  };
+  // ---- Team / head / leader rollups ---------------------------------------
+  //
+  // Every tier the audience actually contains gets its own breakdown, and a
+  // tier they do not contain ships empty rather than as a card full of zeroes:
+  // the Admin gets heads AND leaders, a head gets the leaders inside their
+  // teams, and a leader gets neither, because everyone under them is a trainer.
+  const teamRows = base.teams
+    .map((t) => {
+      const members = people.filter((p) => p.teamId === t.id);
+      return { id: t.id, name: t.name, ...rollup(members), memberIds: members.map((p) => p.id) };
+    })
+    .filter((t) => isOrg || t.headcount > 0)
+    .sort((a, b) => b.rate - a.rate || a.name.localeCompare(b.name));
 
-  const teamRows = teams.map((t) => {
-    const tid = idStr(t._id);
-    const members = people.filter((p) => p.teamId === tid);
-    return { id: tid, name: t.name, ...rollup(members), memberIds: members.map((p) => p.id) };
-  }).sort((a, b) => b.rate - a.rate || a.name.localeCompare(b.name));
+  const supervisorRows = (roles, linkField) => base.people
+    .filter((u) => roles.includes(u.role))
+    .map((u) => {
+      const members = people.filter((p) => (p[linkField] || []).includes(u.id));
+      return {
+        id: u.id,
+        name: u.name,
+        role: u.role,
+        ...rollup(members),
+        memberIds: members.map((p) => p.id),
+      };
+    })
+    .filter((r) => r.headcount > 0)
+    .sort((a, b) => b.headcount - a.headcount);
 
-  const headRows = staff.filter((u) => HEAD_ROLES.includes(u.role)).map((h) => {
-    const hid = idStr(h._id);
-    const members = people.filter((p) => p.headIds.includes(hid));
-    return {
-      id: hid,
-      name: h.name,
-      role: h.role,
-      teamIds: (h.teamIds || []).map(idStr),
-      ...rollup(members),
-      memberIds: members.map((p) => p.id),
-    };
-  }).sort((a, b) => b.headcount - a.headcount);
+  // A head is never one of their own rows, so the head breakdown is the Admin's
+  // alone; the leader breakdown is useful to the Admin and to a head alike.
+  const headRows = isOrg ? supervisorRows(HEAD_ROLES, 'headIds') : [];
+  const leaderRows = scope.kind === 'leader' ? [] : supervisorRows(LEADER_ROLES, 'leaderIds');
 
   const roleCounts = {};
   people.forEach((p) => { roleCounts[p.role] = (roleCounts[p.role] || 0) + 1; });
 
   // ---- Approval queues -----------------------------------------------------
-  const pendingFaces = [];
-  faceCandidates.forEach((u) => {
-    (u.faceRegistrations || []).filter((r) => r.status === 'pending').forEach((r) => {
-      pendingFaces.push({
-        _id: `${idStr(u._id)}:${idStr(r.schoolId) || 'anonymous'}`,
-        createdAt: r.createdAt || u.updatedAt,
-        userId: idStr(u._id),
-        name: u.name,
-        role: u.role,
-        schoolId: idStr(r.schoolId),
-      });
-    });
-  });
-  pendingFaces.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-
+  //
+  // Scoped by WHO A RECORD IS ABOUT, not by who may decide it. A head cannot
+  // approve their trainer's leave — the Admin does — but they are the one who
+  // has to cover the gap, so a request raised by their own people belongs on
+  // their board. Requests raised by anybody else never reach them at all.
+  const mine = (rows) => (isOrg ? rows : rows.filter((r) => inScope.has(r.subjectId)));
   const approvals = {
-    leave: queue(pendingLeaves, (r) => ({
-      id: idStr(r._id), title: r.applicant?.name || 'Unknown', role: r.applicant?.role,
-      subtitle: r.reason, from: r.fromDate, to: r.toDate, at: r.createdAt,
-    })),
-    schoolVisit: queue(pendingVisits, (r) => ({
-      id: idStr(r._id), title: r.applicant?.name || 'Unknown', role: r.applicant?.role,
-      subtitle: `${r.school?.name || 'School'} — ${r.reason || ''}`.trim(), from: r.fromDate, to: r.toDate, at: r.createdAt,
-    })),
-    substitution: queue(pendingSubs, (r) => ({
-      id: idStr(r._id), title: r.subject?.name || 'Unknown', role: r.subject?.role,
-      subtitle: r.reason, from: r.fromDate, to: r.toDate, at: r.createdAt,
-    })),
-    face: queue(pendingFaces, (r) => ({
-      id: r._id, title: r.name, role: r.role,
-      subtitle: r.schoolId ? schoolById.get(r.schoolId)?.name || 'School' : 'Anonymous location',
-      at: r.createdAt,
-    })),
-    holiday: queue(pendingHolidays, (r) => ({
-      id: idStr(r._id), title: r.schoolId?.name || 'School',
-      subtitle: r.reason, from: r.date, at: r.createdAt,
-    })),
-    activity: queue(pendingActivities, (r) => ({
-      id: idStr(r._id), title: r.name,
-      subtitle: `${r.schoolId?.name || 'School'} · ${r.uploaderId?.name || 'Unknown'}`,
-      from: r.activityDate, at: r.createdAt,
-    })),
-    report: queue(pendingReports, (r) => ({
-      id: idStr(r._id), title: r.schoolId?.name || 'School',
-      subtitle: `Visit on ${r.trainerId?.name || 'staff'}`, from: r.dateOfInspection, at: r.createdAt,
-    })),
+    leave: queue(mine(base.pending.leave)),
+    schoolVisit: queue(mine(base.pending.schoolVisit)),
+    substitution: queue(mine(base.pending.substitution)),
+    face: queue(mine(base.pending.face)),
+    // A holiday is raised for a SCHOOL, not a person: it belongs to whoever has
+    // staff standing in that school.
+    holiday: queue(isOrg ? base.pending.holiday : base.pending.holiday.filter((r) => scopeSchools.has(r.schoolId))),
+    activity: queue(mine(base.pending.activity)),
+    report: queue(mine(base.pending.report)),
   };
   // Summed before the totals are attached, so the totals can never fold
   // themselves back into the sum.
@@ -506,27 +745,37 @@ async function buildSnapshot(dateKey = istDateKey()) {
   approvals.totalOverdue = queues.reduce((a, q) => a + q.overdue, 0);
 
   // ---- Output produced today ----------------------------------------------
+  const owned = (rows) => (isOrg ? rows : rows.filter((r) => inScope.has(r.ownerId)));
+  const tallyStatus = (rows) => ({
+    total: rows.length,
+    approved: rows.filter((r) => r.status === 'approved').length,
+    pending: rows.filter((r) => r.status === 'pending').length,
+    rejected: rows.filter((r) => r.status === 'rejected').length,
+  });
+
   const output = {
-    activities: {
-      total: activitiesToday.length,
-      approved: activitiesToday.filter((a) => a.status === 'approved').length,
-      pending: activitiesToday.filter((a) => a.status === 'pending').length,
-      rejected: activitiesToday.filter((a) => a.status === 'rejected').length,
-    },
-    reports: {
-      total: reportsToday.length,
-      approved: reportsToday.filter((r) => r.status === 'approved').length,
-      pending: reportsToday.filter((r) => r.status === 'pending').length,
-      rejected: reportsToday.filter((r) => r.status === 'rejected').length,
-    },
-    meetings: meetingsToday,
-    banners: mediaToday,
+    activities: tallyStatus(owned(base.output.activities)),
+    // A visit report belongs to both ends of it: the person inspected and the
+    // supervisor who filed it.
+    reports: tallyStatus(isOrg
+      ? base.output.reports
+      : base.output.reports.filter((r) => inScope.has(r.ownerId) || inScope.has(r.authorId))),
+    meetings: owned(base.output.meetings).length,
+    // Banners are organisation-wide announcements posted by the Admin; there is
+    // no such thing as "this team's banners", so a scoped view says nothing
+    // rather than always saying zero. The client hides a null tile.
+    banners: isOrg ? base.output.banners : null,
   };
 
+  const notifs = isOrg
+    ? base.notifications
+    : base.notifications.filter((n) => inScope.has(n.recipient));
+  const notifsRead = notifs.filter((n) => n.read).length;
+
   const engagement = {
-    notificationsSent: notifsToday,
-    notificationsRead: notifsReadToday,
-    readRate: notifsToday > 0 ? Math.round((notifsReadToday / notifsToday) * 100) : 0,
+    notificationsSent: notifs.length,
+    notificationsRead: notifsRead,
+    readRate: notifs.length > 0 ? Math.round((notifsRead / notifs.length) * 100) : 0,
     pushReady: people.filter((p) => p.pushReady).length,
     faceReady: people.filter((p) => p.faceApproved).length,
     faceMissing: people.filter((p) => !p.faceApproved && !p.facePending).length,
@@ -551,20 +800,20 @@ async function buildSnapshot(dateKey = istDateKey()) {
   });
   push({
     key: 'absent', severity: 'high', icon: 'close-circle-outline',
-    title: dayOver ? 'Absent today' : 'Attendance not marked yet',
-    subtitle: dayOver ? 'No attendance and no approved absence' : `Day still running (cut-off ${DAY_END_MIN / 60}:00)`,
-    count: dayOver ? counts.absent : counts.not_marked,
-    drill: { type: 'people', status: dayOver ? 'absent' : 'not_marked' },
+    title: base.dayOver ? 'Absent today' : 'Attendance not marked yet',
+    subtitle: base.dayOver ? 'No attendance and no approved absence' : `Day still running (cut-off ${DAY_END_MIN / 60}:00)`,
+    count: base.dayOver ? counts.absent : counts.not_marked,
+    drill: { type: 'people', status: base.dayOver ? 'absent' : 'not_marked' },
   });
   push({
     key: 'forgot_checkout', severity: 'medium', icon: 'moon-outline',
     title: 'Still checked in late', subtitle: `No check-out after ${FORGOT_CHECKOUT_MIN / 60}:00`,
-    count: isToday && nowMin >= FORGOT_CHECKOUT_MIN ? people.filter((p) => p.stillIn).length : 0,
+    count: base.isToday && base.nowMin >= FORGOT_CHECKOUT_MIN ? punctuality.stillIn : 0,
     drill: { type: 'people', flag: 'stillIn' },
   });
   push({
     key: 'late', severity: 'medium', icon: 'time-outline',
-    title: 'Late check-ins', subtitle: `After ${Math.floor(LATE_AFTER_MIN / 60)}:${String(LATE_AFTER_MIN % 60).padStart(2, '0')}`,
+    title: 'Late check-ins', subtitle: `After ${clockOf(LATE_AFTER_MIN)}`,
     count: punctuality.late, drill: { type: 'people', flag: 'late' },
   });
   push({
@@ -586,11 +835,22 @@ async function buildSnapshot(dateKey = istDateKey()) {
   alerts.sort((a, b) => severityRank[a.severity] - severityRank[b.severity] || b.count - a.count);
 
   return {
-    dateKey,
-    isToday,
-    isSunday: isSunday(dateKey),
-    dayOver,
-    generatedAt: new Date().toISOString(),
+    dateKey: base.dateKey,
+    isToday: base.isToday,
+    isSunday: base.isSunday,
+    dayOver: base.dayOver,
+    generatedAt: base.generatedAt,
+    // What this viewer is looking at. The screen reads it to title itself
+    // honestly — "Whole organisation" is a claim only the Admin's payload makes.
+    scope: {
+      kind: scope.kind,
+      label: scope.label,
+      orgWide: isOrg,
+      // Whether this audience contains the tier below them at all, so the
+      // screen can drop a section instead of rendering an empty card.
+      hasHeads: headRows.length > 0,
+      hasLeaders: leaderRows.length > 0,
+    },
     thresholds: { lateAfterMin: LATE_AFTER_MIN, dayEndMin: DAY_END_MIN, slaHours: APPROVAL_SLA_HOURS },
     counts,
     people,
@@ -599,6 +859,7 @@ async function buildSnapshot(dateKey = istDateKey()) {
     schoolSummary,
     teams: teamRows,
     heads: headRows,
+    leaders: leaderRows,
     roleCounts,
     approvals,
     output,
@@ -607,9 +868,15 @@ async function buildSnapshot(dateKey = istDateKey()) {
   };
 }
 
-// The socket ticker pushes today's snapshot; a historical day is a frozen
-// snapshot and is only ever fetched over HTTP.
-registerSnapshotBuilder(() => buildSnapshot());
+/** Build and project in one go — the HTTP path and any one-off caller. */
+async function buildSnapshot(dateKey, scope) {
+  return project(await buildBase(dateKey), scope);
+}
+
+// The socket ticker builds the organisation once per tick and projects it for
+// each distinct audience watching; a historical day is a frozen snapshot and is
+// only ever fetched over HTTP.
+registerSnapshotBuilder(buildBase, project);
 
 /**
  * GET /api/monitoring/live?date=YYYY-MM-DD
@@ -619,13 +886,17 @@ registerSnapshotBuilder(() => buildSnapshot());
  */
 exports.getLive = async (req, res) => {
   try {
+    const scope = monitoringScopeFor(req.user);
+    if (!scope) {
+      return res.status(403).json({ success: false, error: 'You do not oversee anyone to monitor' });
+    }
     const raw = (req.query.date || '').trim();
     const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : istDateKey();
     // No future days — there is nothing to report on a day that has not begun.
     if (dateKey > istDateKey()) {
       return res.status(400).json({ success: false, error: 'Cannot monitor a future date' });
     }
-    const data = await buildSnapshot(dateKey);
+    const data = await buildSnapshot(dateKey, scope);
     res.status(200).json({ success: true, data });
   } catch (error) {
     console.error('monitoring getLive error:', error);
@@ -633,5 +904,8 @@ exports.getLive = async (req, res) => {
   }
 };
 
+exports.deriveStatus = deriveStatus;
+exports.buildBase = buildBase;
+exports.project = project;
 exports.buildSnapshot = buildSnapshot;
 exports.ADMIN_ROLES = ADMIN_ROLES;

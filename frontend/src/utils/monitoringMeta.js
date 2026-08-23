@@ -49,7 +49,7 @@ export const STATUS_META = {
   holiday: {
     key: 'holiday', label: 'School Holiday', short: 'Holiday',
     color: CALENDAR_COLORS.holiday, icon: 'sunny',
-    hint: 'Every school this person is assigned to is closed today.',
+    hint: 'A school this person is assigned to is closed today, or they applied for this closure.',
   },
 };
 
