@@ -32,6 +32,9 @@ import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import { SectionSkeleton } from '../components/Skeleton';
 import LazyTab from '../components/LazyTab';
 import ActivityCover from '../components/ActivityCover';
+import Paginator from '../components/Paginator';
+import ResponsiveGrid from '../components/ResponsiveGrid';
+import useActivityPage from '../hooks/useActivityPage';
 import MonitoringDashboard from '../components/monitoring/MonitoringDashboard';
 import { useSectionTransition } from '../hooks/useSectionTransition';
 
@@ -75,7 +78,13 @@ export default function TeamLeaderPortal({ navigation, route }) {
 
   const [reports, setReports] = useState([]);
   const [trainers, setTrainers] = useState([]);
-  const [myActivities, setMyActivities] = useState([]);
+  // A page at a time: each card carries a cover image, so fetching the whole
+  // back catalogue to show the newest few was pure wasted bandwidth.
+  const mine = useActivityPage({
+    filters: { uploaderId: user?._id || user?.id },
+    enabled: !!(user?._id || user?.id),
+  });
+  const myActivities = mine.items;
   const [attendanceRecords, setAttendanceRecords] = useState([]);
   // Windows where THIS user was replaced by someone else -> painted On Leave.
   const [substitutionLeaves, setSubstitutionLeaves] = useState([]);
@@ -190,15 +199,14 @@ export default function TeamLeaderPortal({ navigation, route }) {
       // Use allSettled so one failing endpoint (e.g. a 404 on /auth/me) can't
       // blank out unrelated data like the team-members list. Each result is
       // applied independently.
-      const [reportsRes, trainersRes, activitiesRes, attendanceRes] = await Promise.allSettled([
+      // Activities are no longer fetched here — the paged hook owns them.
+      const [reportsRes, trainersRes, attendanceRes] = await Promise.allSettled([
         api.get('/reports'),
         api.get(`/admin/users?role=trainer&teamLeaderId=${user._id || user.id}&limit=100`),
-        api.get(`/activities?uploaderId=${user._id || user.id}`),
         api.get('/attendance/my-attendance'),
       ]);
       if (reportsRes.status === 'fulfilled') setReports(reportsRes.value.data.data);
       if (trainersRes.status === 'fulfilled') setTrainers(trainersRes.value.data.data);
-      if (activitiesRes.status === 'fulfilled') setMyActivities(activitiesRes.value.data.data);
       if (attendanceRes.status === 'fulfilled') {
         setAttendanceRecords(attendanceRes.value.data.data || []);
         setSubstitutionLeaves(attendanceRes.value.data.substitutionLeaves || []);
@@ -207,7 +215,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
         setVisitDays(attendanceRes.value.data.visitDays || []);
       }
       // Log any individual failures without discarding the successful results.
-      [reportsRes, trainersRes, activitiesRes, attendanceRes].forEach((r, i) => {
+      [reportsRes, trainersRes, attendanceRes].forEach((r, i) => {
         if (r.status === 'rejected') console.log('TeamLeader fetchData call failed', i, r.reason?.message);
       });
       await loadFaceStatus();
@@ -232,7 +240,9 @@ export default function TeamLeaderPortal({ navigation, route }) {
     setRefreshing(true);
     setRefreshTick((n) => n + 1);
     fetchData();
-  }, []);
+    // Its own request now, so a pull has to ask for it explicitly.
+    mine.refresh();
+  }, [mine.refresh]);
 
   const handleFocus = (field) => {
     setFocusFields((prev) => ({ ...prev, [field]: true }));
@@ -321,10 +331,13 @@ export default function TeamLeaderPortal({ navigation, route }) {
             // The server reports what it removed from cloud storage; pass that
             // on rather than claiming success on its behalf.
             showAlert('Success', res.data?.message || 'Activity deleted permanently.', 'success');
-            fetchData();
+            // Drop the card at once, then re-page: everything after it has
+            // shifted up, so this page is one row short of what belongs on it.
+            mine.removeItem(id);
+            mine.refresh();
           } catch (err) {
             showAlert('Error', err.response?.data?.error || 'Failed to delete activity.', 'error');
-            fetchData();
+            mine.refresh();
           }
       }}
     ]);
@@ -725,17 +738,21 @@ export default function TeamLeaderPortal({ navigation, route }) {
       </LazyTab>
 
       <LazyTab active={activeTab === 'Events'}>
-        <CreateActivityForm onActivityCreated={fetchData} />
+        <CreateActivityForm onActivityCreated={mine.refresh} />
       </LazyTab>
 
       <LazyTab active={activeTab === 'ManageEvents'} style={{ marginTop: 16 }}>
         {myActivities.length === 0 ? (
            <View style={{ alignItems: 'center', marginTop: 40 }}>
              <Ionicons name="calendar-outline" size={48} color={theme.colors.border} />
-             <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>No activities published yet.</Text>
+             <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>
+               {mine.loading ? 'Loading your activities…' : 'No activities published yet.'}
+             </Text>
            </View>
         ) : (
-           myActivities.map(evt => (
+           <>
+           <ResponsiveGrid gap={14}>
+           {myActivities.map(evt => (
              <View key={evt._id} style={[styles.eventCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                <View style={{ flexDirection: 'row', marginBottom: 16 }}>
                  <ActivityCover activity={evt} size={80} style={{ marginRight: 16 }} />
@@ -757,7 +774,17 @@ export default function TeamLeaderPortal({ navigation, route }) {
                  </TouchableOpacity>
                </View>
              </View>
-           ))
+           ))}
+           </ResponsiveGrid>
+           <Paginator
+             page={mine.page}
+             pages={mine.pages}
+             total={mine.total}
+             loading={mine.paging}
+             label="activities"
+             onChange={mine.setPage}
+           />
+           </>
         )}
       </LazyTab>
 
@@ -798,7 +825,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
         visible={!!activityToEdit}
         activity={activityToEdit}
         onClose={() => setActivityToEdit(null)}
-        onSuccess={fetchData}
+        onSuccess={mine.refresh}
         onError={(msg) => showAlert('Error', msg, 'error')}
       />
     )}

@@ -83,6 +83,7 @@ const approvalLogRoutes = require('./routes/approvalLogRoutes');
 const statsRoutes = require('./routes/statsRoutes');
 const occasionRoutes = require('./routes/occasionRoutes');
 const appVersionRoutes = require('./routes/appVersionRoutes');
+const maintenanceRoutes = require('./routes/maintenanceRoutes');
 const monitoringRoutes = require('./routes/monitoringRoutes');
 
 // Mount routers
@@ -109,6 +110,8 @@ app.use('/api/approval-log', approvalLogRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/occasions', occasionRoutes);
 app.use('/api/app-version', appVersionRoutes);
+// Public and read-only — the maintenance screen has to reach the login screen.
+app.use('/api/maintenance', maintenanceRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 
 const PORT = process.env.PORT || 3000;

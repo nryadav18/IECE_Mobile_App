@@ -16,6 +16,8 @@ import { SectionSkeleton } from '../components/Skeleton';
 import { useSectionTransition } from '../hooks/useSectionTransition';
 import ResponsiveGrid from '../components/ResponsiveGrid';
 import ActivityCover from '../components/ActivityCover';
+import Paginator from '../components/Paginator';
+import useActivityPage from '../hooks/useActivityPage';
 import useResponsiveLayout from '../hooks/useResponsiveLayout';
 
 const TAB_ITEMS = [
@@ -33,7 +35,6 @@ export default function ChairmanPortal({ navigation, route }) {
   const [school, setSchool] = useState(null);
   const [faculty, setFaculty] = useState([]);
   const [activities, setActivities] = useState([]);
-  const [approvedCount, setApprovedCount] = useState(0);
   const [visitReports, setVisitReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const { theme } = useContext(ThemeContext);
@@ -53,7 +54,12 @@ export default function ChairmanPortal({ navigation, route }) {
   const [reportToView, setReportToView] = useState(null); // full read-only report
   const [editPersonMet, setEditPersonMet] = useState('');
   const [editDiscussionContext, setEditDiscussionContext] = useState('');
-  const [completedActivities, setCompletedActivities] = useState([]);
+  // Completed activities, a page at a time. The old code pulled EVERY activity
+  // at this school and filtered to the approved ones in JavaScript — so the
+  // whole history came down the wire (photo URLs included) to render a list of
+  // names and a count. The server can answer both questions directly.
+  const completed = useActivityPage({ filters: { status: 'approved' } });
+  const completedActivities = completed.items;
   const [schools, setSchools] = useState([]);
   const [mediaModalConfig, setMediaModalConfig] = useState({ visible: false, mediaUrls: [] });
   const mediaScrollRef = useRef(null);
@@ -79,8 +85,9 @@ export default function ChairmanPortal({ navigation, route }) {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchData().finally(() => setRefreshing(false));
-  }, []);
+    // The completed-activities page is its own request now.
+    Promise.all([fetchData(), completed.refresh()]).finally(() => setRefreshing(false));
+  }, [completed.refresh]);
 
   const fetchData = async () => {
     try {
@@ -104,12 +111,10 @@ export default function ChairmanPortal({ navigation, route }) {
         setFaculty(uniqueFaculty);
       }
 
-      const activitiesRes = await api.get(`/activities`);
-      const allActs = activitiesRes.data.data || [];
-      // Chairman no longer approves activities, only sees approved ones in the summary
-      setActivities([]); 
-      setCompletedActivities(allActs.filter(a => a.status === 'approved'));
-      setApprovedCount(allActs.filter(a => a.status === 'approved').length);
+      // The chairman no longer approves activities — they only see the approved
+      // ones — so the pending feed carries visit reports alone. The approved
+      // list and its count both come from the paged hook.
+      setActivities([]);
 
       const reportsRes = await api.get('/reports');
       setVisitReports(reportsRes.data.data.filter(r => r.status === 'pending'));
@@ -321,7 +326,7 @@ export default function ChairmanPortal({ navigation, route }) {
               <View style={{ marginLeft: 12, flex: 1 }}>
                 <Text style={{ color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600' }}>Activities Completed</Text>
                 <Text style={{ color: theme.colors.textPrimary, fontSize: 24, fontWeight: '800', marginTop: 2 }}>
-                  {approvedCount}
+                  {completed.total}
                   <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.textSecondary }}>  approved</Text>
                 </Text>
               </View>
@@ -383,6 +388,7 @@ export default function ChairmanPortal({ navigation, route }) {
     >
       <Text style={[styles.subtitle, { color: theme.colors.textPrimary }]}>Completed Activities</Text>
       {completedActivities.length > 0 ? (
+        <>
         <ResponsiveGrid gap={16}>
         {completedActivities.map((act) => (
           <View key={act._id} style={[styles.completedActivityCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
@@ -396,8 +402,19 @@ export default function ChairmanPortal({ navigation, route }) {
           </View>
         ))}
         </ResponsiveGrid>
+        <Paginator
+          page={completed.page}
+          pages={completed.pages}
+          total={completed.total}
+          loading={completed.paging}
+          label="activities"
+          onChange={completed.setPage}
+        />
+        </>
       ) : (
-        <Text style={{ color: theme.colors.textSecondary, fontSize: 14, marginTop: 8 }}>No completed activities yet.</Text>
+        <Text style={{ color: theme.colors.textSecondary, fontSize: 14, marginTop: 8 }}>
+          {completed.loading ? 'Loading activities…' : 'No completed activities yet.'}
+        </Text>
       )}
     </ScrollView>
   );

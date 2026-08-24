@@ -23,6 +23,9 @@ import { buildCalendarMarks } from '../utils/calendarColors';
 import { deriveAttendanceActions, findTodayAttendance } from '../utils/attendanceActions';
 import CalendarLegend from '../components/CalendarLegend';
 import ActivityCover from '../components/ActivityCover';
+import Paginator from '../components/Paginator';
+import useActivityPage from '../hooks/useActivityPage';
+import { getActivitiesPage } from '../services/activities';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import { SectionSkeleton } from '../components/Skeleton';
 import { useSectionTransition } from '../hooks/useSectionTransition';
@@ -46,7 +49,16 @@ const SECTION_SKELETON = {
 
 export default function TrainerPortal({ navigation, route }) {
   const [school, setSchool] = useState(null);
-  const [myActivities, setMyActivities] = useState([]);
+  // A page at a time. A trainer at a busy school shares the whole school's
+  // activity list, which is the longest of any portal — and every card pulls a
+  // cover image, so this is where loading everything hurt most.
+  const mine = useActivityPage({
+    filters: user?.schoolId
+      ? { schoolId: user.schoolId }
+      : { uploaderId: user?._id || user?.id },
+    enabled: !!(user?.schoolId || user?._id || user?.id),
+  });
+  const myActivities = mine.items;
   const [uploadedCount, setUploadedCount] = useState(0);
   const [myApprovedCount, setMyApprovedCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -100,8 +112,9 @@ export default function TrainerPortal({ navigation, route }) {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchData().finally(() => setRefreshing(false));
-  }, []);
+    // The activity page is its own request now, so a pull refreshes both.
+    Promise.all([fetchData(), mine.refresh()]).finally(() => setRefreshing(false));
+  }, [mine.refresh]);
 
   // Re-fetch attendance & face status whenever screen is focused (e.g. after marking attendance)
   useFocusEffect(
@@ -178,20 +191,20 @@ export default function TrainerPortal({ navigation, route }) {
         setSchool(schoolRes.data.data);
       }
 
-      // Fetch all activities for the school to share among trainers
-      if (user.schoolId) {
-        const myActRes = await api.get(`/activities?schoolId=${user.schoolId}`);
-        setMyActivities(myActRes.data.data);
-      } else {
-        const myActRes = await api.get(`/activities?uploaderId=${user._id || user.id}`);
-        setMyActivities(myActRes.data.data);
-      }
-
-      // Count of activities THIS trainer has uploaded (no target — just the count).
-      const mineRes = await api.get(`/activities?uploaderId=${user._id || user.id}`);
-      const mine = mineRes.data.data || [];
-      setUploadedCount(mineRes.data.count ?? mine.length);
-      setMyApprovedCount(mine.filter(a => a.status === 'approved').length);
+      // The activity LIST comes from the paged hook — not from here.
+      //
+      // These two are counts and nothing else. They used to be derived by
+      // downloading every activity this trainer had ever uploaded and calling
+      // `.length` on it, which meant pulling the full history (photo URLs and
+      // all) to render two numbers. Asking for a single row and reading the
+      // server's `total` gets the same answer for a fraction of the bytes.
+      const uploaderId = user._id || user.id;
+      const [allMine, approvedMine] = await Promise.all([
+        getActivitiesPage({ uploaderId, page: 1, limit: 1 }),
+        getActivitiesPage({ uploaderId, status: 'approved', page: 1, limit: 1 }),
+      ]);
+      setUploadedCount(allMine.total);
+      setMyApprovedCount(approvedMine.total);
 
       const attendanceRes = await api.get('/attendance/my-attendance');
       setAttendanceRecords(attendanceRes.data.data || []);
@@ -229,10 +242,14 @@ export default function TrainerPortal({ navigation, route }) {
             // The server reports what it removed from cloud storage; pass that
             // on rather than claiming success on its behalf.
             showAlert('Success', res.data?.message || 'Activity deleted permanently.', 'success');
+            // Drop the card at once, then re-page (later pages shift up by one)
+            // and re-count.
+            mine.removeItem(id);
+            mine.refresh();
             fetchData();
           } catch (err) {
             showAlert('Error', err.response?.data?.error || 'Failed to delete activity.', 'error');
-            fetchData();
+            mine.refresh();
           }
       }}
     ]);
@@ -600,6 +617,7 @@ export default function TrainerPortal({ navigation, route }) {
         <ScrollView style={styles.flex1} contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: insets.bottom + 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
           <CreateActivityForm onActivityCreated={() => {
             fetchData();
+            mine.refresh();
             setActiveTab('Progress');
           }} />
         </ScrollView>
@@ -680,8 +698,25 @@ export default function TrainerPortal({ navigation, route }) {
           ListEmptyComponent={
             <View style={{ alignItems: 'center', marginTop: 40 }}>
               <Ionicons name="calendar-outline" size={48} color={theme.colors.border} />
-              <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>No activities published yet.</Text>
+              <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>
+                {mine.loading ? 'Loading activities…' : 'No activities published yet.'}
+              </Text>
             </View>
+          }
+          // A footer rather than a sibling below the list: it has to scroll with
+          // the cards, and it must sit inside the FlatList's own scroll view or
+          // the two would fight over the gesture.
+          ListFooterComponent={
+            myActivities.length > 0 ? (
+              <Paginator
+                page={mine.page}
+                pages={mine.pages}
+                total={mine.total}
+                loading={mine.paging}
+                label="activities"
+                onChange={mine.setPage}
+              />
+            ) : null
           }
         />
       )}

@@ -17,6 +17,8 @@ import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../components/Avatar';
 import ApprovedBy from '../components/ApprovedBy';
 import ActivityCover from '../components/ActivityCover';
+import Paginator from '../components/Paginator';
+import { getActivitiesPage } from '../services/activities';
 import CustomAlert from '../components/CustomAlert';
 import CustomDropdown from '../components/CustomDropdown';
 import EditReportModal from '../components/EditReportModal';
@@ -295,7 +297,13 @@ export default function CreatorAdminPortal({ navigation, route }) {
   // Monitoring state — the school drill-in opened from the live dashboard.
   const [selectedSchool, setSelectedSchool] = useState(null);
   const [schoolActivities, setSchoolActivities] = useState([]);
+  const [schoolActivityPage, setSchoolActivityPage] = useState(1);
+  const [schoolActivityPages, setSchoolActivityPages] = useState(1);
+  const [schoolActivityTotal, setSchoolActivityTotal] = useState(0);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
+  // The drill-in panel is a compact list, so it holds more per page than a
+  // card grid without becoming a wall.
+  const ADMIN_ACTIVITY_PAGE = 10;
   
   const [banners, setBanners] = useState([]);
   const [bannerPage, setBannerPage] = useState(1);
@@ -356,11 +364,15 @@ export default function CreatorAdminPortal({ navigation, route }) {
     try {
       // Use allSettled so a single failing endpoint can't blank unrelated data
       // (e.g. the Visit Reports list staying empty just because /media failed).
-      const [schoolsRes, tlsRes, trainersRes, activitiesRes, bannerRes, reportsRes, teamsRes, headsRes] = await Promise.allSettled([
+      // `/activities` used to be fetched here and its result was never read —
+      // not stored, not counted, not rendered. It pulled EVERY activity in the
+      // organisation, photo URLs and all, on every load of this screen, and
+      // threw the lot away. Removed rather than paginated: the cheapest request
+      // is the one that is not made.
+      const [schoolsRes, tlsRes, trainersRes, bannerRes, reportsRes, teamsRes, headsRes] = await Promise.allSettled([
         api.get('/admin/schools'),
         api.get('/admin/team-leaders'),
         api.get('/admin/users?role=trainer&limit=100'),
-        api.get('/activities'),
         // scope=manage: the admin manages every banner, including any they were
         // themselves made invisible to — the filtered list is for Home only.
         api.get('/media?scope=manage'),
@@ -375,7 +387,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
       if (reportsRes.status === 'fulfilled') setReports(reportsRes.value.data.data);
       if (teamsRes.status === 'fulfilled') setTeams(teamsRes.value.data.data);
       if (headsRes.status === 'fulfilled') setHeads(headsRes.value.data.data);
-      [schoolsRes, tlsRes, trainersRes, activitiesRes, bannerRes, reportsRes, teamsRes, headsRes].forEach((r, i) => {
+      [schoolsRes, tlsRes, trainersRes, bannerRes, reportsRes, teamsRes, headsRes].forEach((r, i) => {
         if (r.status === 'rejected') console.log('Admin fetchDropdownData call failed', i, r.reason?.message);
       });
     } catch (err) {
@@ -609,13 +621,29 @@ export default function CreatorAdminPortal({ navigation, route }) {
   // a dashboard row (which carries `id`) or a full school document (`_id`), so
   // both shapes are accepted and the real record is looked up for the detail.
   const viewSchoolDetails = async (school) => {
-    const schoolId = school._id || school.id;
-    const full = schools.find(s => String(s._id) === String(schoolId)) || school;
+    const full = schools.find(s => String(s._id) === String(school._id || school.id)) || school;
     setSelectedSchool(full);
+    loadSchoolActivities(full, 1);
+  };
+
+  /**
+   * One page of a school's activities.
+   *
+   * Paged for the same reason as everywhere else: each row draws a cover image,
+   * so a school with a long history used to pull a photo for every activity it
+   * had ever run just to fill the panel.
+   */
+  const loadSchoolActivities = async (school, page) => {
+    const schoolId = school?._id || school?.id;
+    if (!schoolId) return;
     setActivitiesLoading(true);
     try {
-      const res = await api.get(`/activities?schoolId=${schoolId}`);
-      setSchoolActivities(res.data.data);
+      const res = await getActivitiesPage({ schoolId, page, limit: ADMIN_ACTIVITY_PAGE });
+      setSchoolActivities(res.items);
+      // The server clamps the page against the real total, so take its answer.
+      setSchoolActivityPage(res.page);
+      setSchoolActivityPages(res.pages);
+      setSchoolActivityTotal(res.total);
     } catch (error) {
       console.log('Error fetching activities');
     } finally {
@@ -736,7 +764,8 @@ export default function CreatorAdminPortal({ navigation, route }) {
 
                   <Text style={[styles.sectionHeader, { color: theme.colors.primary }]}>Activities</Text>
                   {activitiesLoading ? <ActivityIndicator color={theme.colors.primary} /> : (
-                    schoolActivities.length > 0 ? schoolActivities.map(act => (
+                    schoolActivities.length > 0 ? (<>
+                    {schoolActivities.map(act => (
                       <View key={act._id} style={styles.activityItem}>
                         <View style={{ flexDirection: 'row', marginBottom: 6 }}>
                           <ActivityCover activity={act} size={48} radius={10} style={{ marginRight: 10 }} />
@@ -757,7 +786,15 @@ export default function CreatorAdminPortal({ navigation, route }) {
                             admin — this line is the only way to tell which. */}
                         <ApprovedBy record={act} compact style={{ marginTop: 8 }} />
                       </View>
-                    )) : <Text style={{ color: theme.colors.textSecondary }}>No activities assigned yet.</Text>
+                    ))}
+                    <Paginator
+                      page={schoolActivityPage}
+                      pages={schoolActivityPages}
+                      total={schoolActivityTotal}
+                      label="activities"
+                      onChange={(p) => loadSchoolActivities(selectedSchool, p)}
+                    />
+                    </>) : <Text style={{ color: theme.colors.textSecondary }}>No activities assigned yet.</Text>
                   )}
                 </View>
               </View>

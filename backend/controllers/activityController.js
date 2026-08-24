@@ -11,6 +11,10 @@ const { trackChanges } = require('../utils/changeSummary');
 
 const roleLabel = (role) => ROLE_LABELS[role] || role;
 
+// Used when a client asks for a page without saying how big. Matches the phone
+// layout's page size so a missing `limit` still behaves sensibly.
+const DEFAULT_PAGE_SIZE = 6;
+
 /**
  * Ask whoever sits directly above the uploader to review a new activity — a
  * trainer's goes to their team leader, a leader's to their head, a head's to
@@ -73,13 +77,71 @@ exports.getActivities = async (req, res) => {
       query.status = req.query.status;
     }
 
-    const activities = await Activity.find(query)
-      .populate('schoolId', 'name chairmanId')
-      .populate('uploaderId', 'name email role')
-      .populate('organizers', 'name email role')
-      .sort('-activityDate -createdAt');
-      
-    res.status(200).json({ success: true, count: activities.length, data: activities });
+    // ---- Pagination ------------------------------------------------------
+    //
+    // OPT-IN, and that is the whole design. Half a dozen screens still read the
+    // full list (the admin portal's per-school drill-in, the chairman's merged
+    // feed, dashboards that only want a count), and quietly truncating them to
+    // the first page would be a silent data-loss bug that looks like nothing at
+    // all. So a request with no `page` and no `limit` gets exactly what it
+    // always got.
+    //
+    // Why it matters at all: an activity carries photo URLs, and a phone
+    // downloads a cover for every card it renders. Returning 200 activities
+    // meant 200 images being pulled to draw the handful actually on screen.
+    // Paging on the SERVER means the device never even learns the URLs of the
+    // activities it is not showing — which is the only version of this that
+    // actually saves bandwidth rather than moving the cost around.
+    const wantsPage = req.query.page !== undefined || req.query.limit !== undefined;
+
+    const projection = {
+      path: [
+        ['schoolId', 'name chairmanId'],
+        ['uploaderId', 'name email role'],
+        ['organizers', 'name email role'],
+      ],
+    };
+    const withPopulates = (q) =>
+      projection.path.reduce((acc, [p, fields]) => acc.populate(p, fields), q);
+
+    const SORT = '-activityDate -createdAt';
+
+    if (!wantsPage) {
+      const activities = await withPopulates(Activity.find(query)).sort(SORT);
+      return res.status(200).json({ success: true, count: activities.length, data: activities });
+    }
+
+    const MAX_LIMIT = 50;
+    const limit = Math.min(
+      MAX_LIMIT,
+      Math.max(1, parseInt(req.query.limit, 10) || DEFAULT_PAGE_SIZE)
+    );
+    // The page is clamped against the real total below rather than trusted:
+    // a client whose page number is stale (someone deleted three activities
+    // while they were reading page 4) would otherwise be shown an empty list
+    // with no way to tell that from "there are none".
+    const requested = Math.max(1, parseInt(req.query.page, 10) || 1);
+
+    const total = await Activity.countDocuments(query);
+    const pages = Math.max(1, Math.ceil(total / limit));
+    const page = Math.min(requested, pages);
+
+    const activities = await withPopulates(
+      Activity.find(query).sort(SORT).skip((page - 1) * limit).limit(limit)
+    );
+
+    res.status(200).json({
+      success: true,
+      count: activities.length,
+      data: activities,
+      // `page` is what was actually served, which can differ from what was
+      // asked for. The client re-syncs to it instead of arguing.
+      page,
+      limit,
+      total,
+      pages,
+      hasMore: page < pages,
+    });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }

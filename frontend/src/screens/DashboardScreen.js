@@ -39,6 +39,9 @@ import { clamp, greetingFor, withAlpha } from '../components/home/motion';
 import { yearsSinceFounding } from '../utils/org';
 import { optimizedImageUrl, prefetchImages, readCachedBanners, writeCachedBanners } from '../utils/media';
 import ActivityCover from '../components/ActivityCover';
+import Paginator from '../components/Paginator';
+import ResponsiveGrid from '../components/ResponsiveGrid';
+import useActivityPage from '../hooks/useActivityPage';
 import useOccasions from '../celebrations/useOccasions';
 import CelebrationHero from '../celebrations/CelebrationHero';
 import CelebrationBarTitle from '../celebrations/CelebrationHeaderBar';
@@ -81,7 +84,19 @@ export default function DashboardScreen({ navigation, route }) {
       }
     : null;
   const [media, setMedia] = useState([]);
-  const [activities, setActivities] = useState([]);
+  // Activities are fetched a PAGE at a time rather than all at once. Every card
+  // pulls a cover image, so the old "load them all" call was downloading a photo
+  // for every activity in the organisation to draw the two or three on screen.
+  const {
+    items: activities,
+    page: actPage,
+    setPage: setActPage,
+    pages: actPages,
+    total: actTotal,
+    loading: actLoading,
+    paging: actPaging,
+    refresh: refreshActivities,
+  } = useActivityPage({ filters: { status: 'approved' } });
   // Organisation-wide headline figures. Counted server-side (see
   // `GET /api/stats/overview`) rather than derived from the activity feed —
   // the feed only contains schools that happen to have an approved activity,
@@ -113,7 +128,6 @@ export default function DashboardScreen({ navigation, route }) {
   const heroH = clamp(Math.min(width * 0.92, height * 0.46), 268, 400);
   const heroTotal = headerH + heroH;
   const carouselH = isWide ? Math.min(width * 0.36, 380) : width * 0.56;
-  const cardW = clamp(width * 0.62, 220, 300);
   // In a browser this widens into the inset that centres the content column, so
   // the stat strip, the section headings and the header bar all line up down the
   // middle of a monitor instead of clinging to its left edge. Native keeps the
@@ -121,6 +135,13 @@ export default function DashboardScreen({ navigation, route }) {
   const gutter = isWeb
     ? Math.max(isWide ? 28 : 20, Math.round((width - CONTENT_MAX_WIDTH) / 2))
     : isWide ? 28 : 20;
+  // The width a card actually occupies now that they stack full-width instead
+  // of sitting in a 62%-wide sideways strip. Used only as the Cloudinary size
+  // hint, and the buckets round up, so being a little out costs nothing. On a
+  // multi-column browser this over-estimates — deliberately: the saving that
+  // matters is the phone's, and a desktop asking for a slightly larger image is
+  // not the problem this change exists to solve.
+  const cardW = Math.round(width - gutter * 2);
 
   const logoSource = isDarkMode
     ? require('../../assets/IECE_Logo_White.png')
@@ -160,8 +181,10 @@ export default function DashboardScreen({ navigation, route }) {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchMedia().finally(() => setRefreshing(false));
-  }, []);
+    // Both, in parallel: pulling down has to refresh what is on screen, and the
+    // activities are now their own request.
+    Promise.all([fetchMedia(), refreshActivities()]).finally(() => setRefreshing(false));
+  }, [refreshActivities]);
 
   const fetchMedia = async () => {
     // Recomputed on every focus/refresh so an app left open across 21 June
@@ -171,9 +194,8 @@ export default function DashboardScreen({ navigation, route }) {
       // Use allSettled so one failing endpoint can't block the others from
       // updating — otherwise a single hiccup makes pull-to-refresh appear to do
       // nothing (neither media nor activities would update).
-      const [mediaRes, activitiesRes, statsRes] = await Promise.allSettled([
+      const [mediaRes, statsRes] = await Promise.allSettled([
         api.get('/media'),
-        api.get('/activities?status=approved'),
         api.get('/stats/overview'),
       ]);
       if (mediaRes.status === 'fulfilled') {
@@ -185,16 +207,17 @@ export default function DashboardScreen({ navigation, route }) {
         writeCachedBanners(list, user?._id || user?.id);
         prefetchImages(list.map((m) => optimizedImageUrl(m.imageUrl, width)));
       }
-      if (activitiesRes.status === 'fulfilled') setActivities(activitiesRes.value.data.data || []);
       if (statsRes.status === 'fulfilled') {
         const d = statsRes.value.data?.data || {};
         setOrg({ staff: d.staff || 0, schools: d.schools || 0 });
       }
 
-      // Only surface an error if nothing could be refreshed.
-      if (mediaRes.status === 'rejected' && activitiesRes.status === 'rejected') {
-        console.log('Error fetching dashboard data:', mediaRes.reason?.message, activitiesRes.reason?.message);
-        showAlert('Error', 'Failed to retrieve latest activities and media details. Please refresh to try again.', 'error');
+      // Only surface an error if the banners themselves could not be refreshed.
+      // Activities report their own failure inline, under their own heading,
+      // where it is obvious which list is stale.
+      if (mediaRes.status === 'rejected') {
+        console.log('Error fetching dashboard data:', mediaRes.reason?.message);
+        showAlert('Error', 'Failed to retrieve the latest media details. Please refresh to try again.', 'error');
       }
     } catch (error) {
       console.log('Error fetching dashboard data:', error);
@@ -568,33 +591,37 @@ export default function DashboardScreen({ navigation, route }) {
             <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>
               Recent Activities
             </Text>
-            {activities.length > 0 && (
+            {actTotal > 0 && (
               <View
                 style={[
                   styles.countPill,
                   { backgroundColor: withAlpha(theme.colors.primary, isDarkMode ? 0.2 : 0.1) },
                 ]}
               >
+                {/* The whole count, not the page's — the pill answers "how much
+                    is there", which is the question pagination raises. */}
                 <Text style={[styles.countPillText, { color: theme.colors.primary }]}>
-                  {activities.length}
+                  {actTotal}
                 </Text>
               </View>
             )}
           </View>
 
-          {loading ? (
+          {actLoading ? (
             <View style={{ paddingHorizontal: gutter }}>
               <SkeletonList count={2} avatar={false} lines={2} />
             </View>
           ) : activities.length > 0 ? (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              decelerationRate="fast"
-              snapToInterval={cardW + 14}
-              snapToAlignment="start"
-              contentContainerStyle={{ paddingHorizontal: gutter, paddingBottom: 6 }}
-            >
+            /* A VERTICAL, PAGED grid — not the sideways strip this used to be.
+               The strip rendered every activity at once, so the phone pulled a
+               cover image for each one to draw the two that fitted on screen,
+               and reaching the rest meant swiping blind with no idea how many
+               there were. One page of cards downloads one page of covers, and
+               the control underneath says exactly where you are.
+               ResponsiveGrid reflows the same cards into 2–3 columns on a wide
+               browser and is inert on native. */
+            <View style={{ paddingHorizontal: gutter }}>
+              <ResponsiveGrid gap={14}>
               {activities.map((activity, index) => {
                 // Tagged as an organiser on someone else's upload. The server
                 // now returns these alongside a person's own activities (see
@@ -616,7 +643,12 @@ export default function DashboardScreen({ navigation, route }) {
                       type: 'spring',
                       damping: 16,
                       stiffness: 150,
-                      delay: 220 + Math.min(index, 6) * 80,
+                      // The staggered entrance belongs to the first sight of the
+                      // screen. Cards remount on a page change (new keys), so
+                      // without this the flourish replayed on every Next tap —
+                      // a 700ms wait for content that was already there a
+                      // moment ago, which reads as slowness rather than polish.
+                      delay: actPage > 1 ? 0 : 220 + Math.min(index, 6) * 80,
                     }}
                     // The shadow lives on the wrapper, not the card: the card
                     // needs `overflow: hidden` to round its image, and a view
@@ -637,7 +669,6 @@ export default function DashboardScreen({ navigation, route }) {
                       style={[
                         styles.card,
                         {
-                          width: cardW,
                           backgroundColor: theme.colors.surface,
                           borderColor: theme.colors.border,
                         },
@@ -645,11 +676,14 @@ export default function DashboardScreen({ navigation, route }) {
                     >
                       {/* Video posters, Cloudinary sizing and the IECE
                           placeholder all live in ActivityCover, so the card
-                          shows the same thing every other screen shows. */}
+                          shows the same thing every other screen shows.
+                          `fill` rather than a pixel width: inside a responsive
+                          column a fixed width would fight the column maths. */}
                       <ActivityCover
                         activity={activity}
-                        width={cardW}
-                        height={cardW * 0.56}
+                        fill
+                        aspectRatio={16 / 9}
+                        sizeHint={cardW}
                         radius={0}
                         style={styles.cardImage}
                       />
@@ -693,7 +727,17 @@ export default function DashboardScreen({ navigation, route }) {
                   </MotiView>
                 );
               })}
-            </ScrollView>
+              </ResponsiveGrid>
+
+              <Paginator
+                page={actPage}
+                pages={actPages}
+                total={actTotal}
+                loading={actPaging}
+                label="activities"
+                onChange={setActPage}
+              />
+            </View>
           ) : (
             <View
               style={[
@@ -978,7 +1022,10 @@ const styles = StyleSheet.create({
 
   /* activity cards */
   cardShadow: {
-    marginRight: 14,
+    // Cards stack now instead of running off to the right. ResponsiveGrid
+    // supplies the gap between columns on web; this is the gap between rows.
+    marginBottom: 14,
+    width: '100%',
     borderRadius: 20,
     ...Platform.select({
       ios: { shadowOpacity: 0.1, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } },

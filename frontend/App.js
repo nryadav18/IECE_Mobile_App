@@ -11,6 +11,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AlertProvider } from './src/context/AlertContext';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import UpdateGate from './src/components/UpdateGate';
+import MaintenanceGate from './src/components/MaintenanceGate';
 import { navigationRef, handleNotificationResponse } from './src/services/navigation';
 import WebLayout from './src/components/WebLayout';
 
@@ -44,6 +45,14 @@ export default function App() {
                       login screen too — a build too old to sign in is exactly
                       the one that needs updating. */}
                   <UpdateGate />
+                  {/* LAST, so it renders on top of the update gate. If the
+                      backend is mid-deployment, "the app is being updated" is
+                      the true and useful message; "please install a new
+                      version" would send people to a store listing that is
+                      probably being replaced at that very moment. Store builds
+                      only — never the web portal, which is where the switch
+                      gets turned off again. */}
+                  <MaintenanceGate />
                 </BadgeProvider>
               </AuthProvider>
             </AlertProvider>

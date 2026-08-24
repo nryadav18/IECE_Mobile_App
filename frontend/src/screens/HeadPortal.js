@@ -23,6 +23,9 @@ import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import CreateActivityForm from '../components/CreateActivityForm';
 import EditActivityModal from '../components/EditActivityModal';
 import ActivityCover from '../components/ActivityCover';
+import Paginator from '../components/Paginator';
+import ResponsiveGrid from '../components/ResponsiveGrid';
+import useActivityPage from '../hooks/useActivityPage';
 import { useSectionTransition } from '../hooks/useSectionTransition';
 import { roleLabel } from '../utils/roles';
 
@@ -70,7 +73,18 @@ export default function HeadPortal({ navigation, route }) {
 
   const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Home');
   const { tabLoading, selectTab } = useSectionTransition(activeTab, setActiveTab);
-  const [activities, setActivities] = useState([]);
+  // Both activity lists are fetched a page at a time. Each card can carry a
+  // cover image, so loading every activity across every team just to draw the
+  // first few was the single biggest download on this screen.
+  const feed = useActivityPage();
+  const mine = useActivityPage({
+    filters: { uploaderId: user?._id || user?.id },
+    // Without an id there is no such thing as "my activities" — parking the
+    // hook stops it firing an unfiltered request that would return everyone's.
+    enabled: !!(user?._id || user?.id),
+  });
+  const activities = feed.items;
+  const myActivities = mine.items;
   const [teams, setTeams] = useState([]);
   const [selectedTeam, setSelectedTeam] = useState(null);
   const [members, setMembers] = useState([]);
@@ -80,7 +94,6 @@ export default function HeadPortal({ navigation, route }) {
   // Activities THIS head published — the ones they may edit or delete. Scoped
   // by uploaderId rather than filtered client-side, so the Manage tab can never
   // offer an action the API would reject.
-  const [myActivities, setMyActivities] = useState([]);
   const [activityToEdit, setActivityToEdit] = useState(null);
   const [reportFormVisible, setReportFormVisible] = useState(false);
   const [reportToView, setReportToView] = useState(null);
@@ -93,15 +106,14 @@ export default function HeadPortal({ navigation, route }) {
 
   const fetchData = async () => {
     try {
-      const [activitiesRes, teamsRes, reportsRes, myActivitiesRes] = await Promise.allSettled([
-        api.get('/activities'),
+      // Activities are NOT fetched here any more — the two paged hooks own
+      // them, so this call no longer pulls every activity in the head's teams
+      // on every refresh.
+      const [teamsRes, reportsRes] = await Promise.allSettled([
         api.get('/admin/teams'),
         api.get('/reports'),
-        api.get(`/activities?uploaderId=${user?._id || user?.id}`),
       ]);
-      if (activitiesRes.status === 'fulfilled') setActivities(activitiesRes.value.data.data || []);
       if (reportsRes.status === 'fulfilled') setReports(reportsRes.value.data.data || []);
-      if (myActivitiesRes.status === 'fulfilled') setMyActivities(myActivitiesRes.value.data.data || []);
 
       let teamList = [];
       if (teamsRes.status === 'fulfilled') {
@@ -143,7 +155,11 @@ export default function HeadPortal({ navigation, route }) {
     setRefreshing(true);
     setRefreshTick((n) => n + 1);
     fetchData();
-  }, []);
+    // The activity pages are their own requests now, so a pull has to refresh
+    // them explicitly or the feed would look frozen.
+    feed.refresh();
+    mine.refresh();
+  }, [feed.refresh, mine.refresh]);
 
   const toggleStar = (activity) => {
     const willStar = !activity.isStarred;
@@ -159,13 +175,14 @@ export default function HeadPortal({ navigation, route }) {
         {
           text: willStar ? 'Star' : 'Remove',
           onPress: async () => {
-            // Optimistic update.
-            setActivities(prev => prev.map(a => a._id === activity._id ? { ...a, isStarred: willStar } : a));
+            // Optimistic, and deliberately not a re-fetch: reloading the page
+            // to flip a star would re-download every cover on it.
+            feed.patchItem(activity._id, { isStarred: willStar });
             try {
               await api.put(`/activities/${activity._id}/star`, { starred: willStar });
             } catch (err) {
               // Revert on failure.
-              setActivities(prev => prev.map(a => a._id === activity._id ? { ...a, isStarred: !willStar } : a));
+              feed.patchItem(activity._id, { isStarred: !willStar });
               setAlertConfig({ visible: true, title: 'Error', message: 'Could not update the star. Try again.', type: 'error', buttons: [] });
             }
           },
@@ -191,10 +208,16 @@ export default function HeadPortal({ navigation, route }) {
               // The server reports what it removed from cloud storage; pass that
               // on rather than claiming success on its behalf.
               setAlertConfig({ visible: true, title: 'Success', message: res.data?.message || 'Activity deleted permanently.', type: 'success', buttons: [] });
-              fetchData();
+              // Remove it at once so the card goes, then re-page: everything
+              // after it has shifted up, so the page on screen is now one row
+              // short of what belongs on it.
+              mine.removeItem(id);
+              feed.removeItem(id);
+              mine.refresh();
+              feed.refresh();
             } catch (err) {
               setAlertConfig({ visible: true, title: 'Error', message: err.response?.data?.error || 'Failed to delete activity.', type: 'error', buttons: [] });
-              fetchData();
+              mine.refresh();
             }
           },
         },
@@ -264,10 +287,14 @@ export default function HeadPortal({ navigation, route }) {
             {activities.length === 0 ? (
               <View style={{ alignItems: 'center', marginTop: 40 }}>
                 <Ionicons name="calendar-outline" size={48} color={theme.colors.border} />
-                <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>No activities yet.</Text>
+                <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>
+                  {feed.loading ? 'Loading activities…' : 'No activities yet.'}
+                </Text>
               </View>
             ) : (
-              activities.map(act => (
+              <>
+              <ResponsiveGrid gap={14}>
+              {activities.map(act => (
                 <TouchableOpacity
                   key={act._id}
                   style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: act.isStarred ? '#F5B301' : theme.colors.border }]}
@@ -298,7 +325,17 @@ export default function HeadPortal({ navigation, route }) {
                       decisions. */}
                   <ApprovedBy record={act} compact style={{ marginTop: 8 }} />
                 </TouchableOpacity>
-              ))
+              ))}
+              </ResponsiveGrid>
+              <Paginator
+                page={feed.page}
+                pages={feed.pages}
+                total={feed.total}
+                loading={feed.paging}
+                label="activities"
+                onChange={feed.setPage}
+              />
+              </>
             )}
           </LazyTab>
 
@@ -456,7 +493,7 @@ export default function HeadPortal({ navigation, route }) {
 
           {/* ---------- PUBLISH ACTIVITY ---------- */}
           <LazyTab active={activeTab === 'PublishActivity'}>
-            <CreateActivityForm onActivityCreated={fetchData} />
+            <CreateActivityForm onActivityCreated={() => { mine.refresh(); feed.refresh(); }} />
           </LazyTab>
 
           {/* ---------- MANAGE ACTIVITIES: only the ones this head published,
@@ -465,10 +502,14 @@ export default function HeadPortal({ navigation, route }) {
             {myActivities.length === 0 ? (
               <View style={{ alignItems: 'center', marginTop: 40 }}>
                 <Ionicons name="calendar-outline" size={48} color={theme.colors.border} />
-                <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>No activities published yet.</Text>
+                <Text style={{ color: theme.colors.textSecondary, marginTop: 12 }}>
+                  {mine.loading ? 'Loading your activities…' : 'No activities published yet.'}
+                </Text>
               </View>
             ) : (
-              myActivities.map((evt) => (
+              <>
+              <ResponsiveGrid gap={14}>
+              {myActivities.map((evt) => (
                 <View key={evt._id} style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                   <View style={{ flexDirection: 'row', marginBottom: 16 }}>
                     <ActivityCover activity={evt} size={80} style={{ marginRight: 16 }} />
@@ -500,7 +541,17 @@ export default function HeadPortal({ navigation, route }) {
                     </TouchableOpacity>
                   </View>
                 </View>
-              ))
+              ))}
+              </ResponsiveGrid>
+              <Paginator
+                page={mine.page}
+                pages={mine.pages}
+                total={mine.total}
+                loading={mine.paging}
+                label="activities"
+                onChange={mine.setPage}
+              />
+              </>
             )}
           </LazyTab>
         </ScrollView>
@@ -526,7 +577,7 @@ export default function HeadPortal({ navigation, route }) {
           visible={!!activityToEdit}
           activity={activityToEdit}
           onClose={() => setActivityToEdit(null)}
-          onSuccess={fetchData}
+          onSuccess={() => { mine.refresh(); feed.refresh(); }}
           onError={(msg) => setAlertConfig({ visible: true, title: 'Error', message: msg, type: 'error', buttons: [] })}
         />
       )}

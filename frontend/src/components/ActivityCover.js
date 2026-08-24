@@ -64,6 +64,12 @@ export const hasMedia = (activity) => (activity?.mediaUrls?.length || 0) > 0;
  * @param {number}  size      shorthand for a square cover
  * @param {number}  width     explicit width  (overrides `size`)
  * @param {number}  height    explicit height (overrides `size`)
+ * @param {boolean} fill      take the parent's full width at `aspectRatio` instead
+ *                            of a fixed size — for a card in a responsive column,
+ *                            where a pixel width would break the column maths
+ * @param {number}  aspectRatio  used with `fill`, default 16:9
+ * @param {number}  sizeHint  logical width to request from Cloudinary in `fill`
+ *                            mode (the real width is not known until layout)
  * @param {number}  radius    corner radius, default 12
  * @param {boolean} optimize  ask Cloudinary for a screen-sized image, default true
  */
@@ -72,6 +78,9 @@ export default function ActivityCover({
   size = 80,
   width,
   height,
+  fill = false,
+  aspectRatio = 16 / 9,
+  sizeHint,
   radius = 12,
   optimize = true,
   style,
@@ -79,14 +88,21 @@ export default function ActivityCover({
 }) {
   const w = width ?? size;
   const h = height ?? size;
-  const box = { width: w, height: h, borderRadius: radius };
+  const box = fill
+    ? { width: '100%', aspectRatio, borderRadius: radius }
+    : { width: w, height: h, borderRadius: radius };
+
+  // Cloudinary is asked for a bucket size, not an exact width, so an estimate is
+  // all `fill` needs — and the buckets round up, so a slightly low guess still
+  // delivers enough pixels.
+  const requestWidth = fill ? (sizeHint || 720) : w;
 
   const thumb = activityThumbnail(activity);
 
   if (thumb) {
     return (
       <Image
-        source={{ uri: optimize ? optimizedImageUrl(thumb, w) : thumb }}
+        source={{ uri: optimize ? optimizedImageUrl(thumb, requestWidth) : thumb }}
         style={[box, styles.cover, style]}
         fadeDuration={0}
         {...imageProps}
@@ -97,8 +113,11 @@ export default function ActivityCover({
   // Padding scales with the tile so the mark is proportionate whether it is a
   // 72pt list thumbnail or a full-width carousel panel. Clamped so a very small
   // tile does not squeeze the logo to nothing and a very large one does not
-  // leave it floating in white.
-  const pad = Math.max(6, Math.min(Math.min(w, h) * 0.16, 48));
+  // leave it floating in white. In `fill` mode the width is unknown until
+  // layout, so it is expressed as a share of it instead.
+  const pad = fill
+    ? '7%'
+    : Math.max(6, Math.min(Math.min(w, h) * 0.16, 48));
 
   return (
     <View
