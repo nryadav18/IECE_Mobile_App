@@ -5,7 +5,9 @@ const { getApprovalSubjectFilter } = require('../utils/hierarchy');
 const { ROLE_LABELS } = require('../utils/roleLabels');
 const { FACE_APPROVERS, FIELD_STAFF } = require('../utils/roles');
 const { decisionOf, trail } = require('../utils/approvalTrail');
-const { purgeFaceVideo } = require('../utils/faceVideo');
+// `faceVideoNote` is shared with the legacy admin route so ONE decision does
+// not read two different ways depending on which screen took it.
+const { purgeFaceVideo, faceVideoNote: videoNote } = require('../utils/faceVideo');
 const {
   isAnonymousParam,
   findAnonymousRegistration,
@@ -33,21 +35,6 @@ const roleLabel = (role) => ROLE_LABELS[role] || role;
  *   Rights are cumulative: a head owns whole teams, so every member of those
  *   teams shows up in their queue, not just the leaders.
  */
-
-/**
- * How the registration video ended up, in a form the Approval Log can show.
- *
- * A deletion that quietly failed is the one outcome worth spelling out: it means
- * a recording of somebody's face is still sitting in cloud storage, and the log
- * is where that has to be visible.
- */
-function videoNote(cloud) {
-  if (!cloud || cloud.requested === 0) return '';
-  if (!cloud.ok) return 'Registration video could NOT be deleted from cloud storage';
-  return cloud.missing && !cloud.deleted
-    ? 'Registration video was already gone from cloud storage'
-    : 'Registration video deleted from cloud storage';
-}
 
 // Belt-and-braces for the face queue: the routes already restrict it, so this
 // only ever fires if a future route forgets to.

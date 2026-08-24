@@ -12,9 +12,13 @@ const {
   findSchoolRegistration,
 } = require('../utils/anonymousLocation');
 const { notifyUser, notifyUserById } = require('../utils/pushNotification');
-const { purgeFaceVideo, purgeFaceVideos } = require('../utils/faceVideo');
+const { purgeFaceVideo, purgeFaceVideos, faceVideoNote } = require('../utils/faceVideo');
 const { sendOtp, generateOtp } = require('../utils/email');
 const { decisionOf, trail } = require('../utils/approvalTrail');
+const { trackChanges } = require('../utils/changeSummary');
+const { ROLE_LABELS } = require('../utils/roleLabels');
+
+const roleLabel = (r) => ROLE_LABELS[r] || r;
 
 const EMAIL_RE = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -76,6 +80,14 @@ exports.createTeam = async (req, res) => {
 
     const team = await Team.create({ name, createdBy: req.user.id });
     res.status(201).json({ success: true, data: team });
+
+    trail({
+      entityType: 'team',
+      entityId: team._id,
+      entityLabel: `Team · ${team.name}`,
+      actor: req.user,
+      action: 'created',
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -183,11 +195,27 @@ exports.deleteTeam = async (req, res) => {
     }
 
     // Detach members and remove the team from any head's oversight list.
+    // Counted first: a deleted team leaves no way to ask afterwards how many
+    // people it had, and "how many staff did that detach?" is the whole reason
+    // anyone looks this row up.
+    const [memberCount, headCount] = await Promise.all([
+      User.countDocuments({ teamId: team._id }),
+      User.countDocuments({ teamIds: team._id }),
+    ]);
     await User.updateMany({ teamId: team._id }, { $set: { teamId: null } });
     await User.updateMany({ teamIds: team._id }, { $pull: { teamIds: team._id } });
     await Team.findByIdAndDelete(team._id);
 
     res.status(200).json({ success: true, data: {} });
+
+    trail({
+      entityType: 'team',
+      entityId: team._id,
+      entityLabel: `Team · ${team.name}`,
+      actor: req.user,
+      action: 'deleted',
+      note: `Team deleted. ${memberCount} member(s) detached; removed from ${headCount} head(s) oversight.`,
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -234,6 +262,19 @@ exports.createHead = async (req, res) => {
     });
 
     res.status(201).json({ success: true, data: user });
+
+    trail({
+      entityType: 'user',
+      entityId: user._id,
+      entityLabel: `${user.name} · ${roleLabel(user.role)}`,
+      subject: user,
+      actor: req.user,
+      action: 'created',
+      note: anonymousLocation
+        ? 'Head created on Anonymous Location (no school anchor).'
+        : `Head created with ${schoolIds.length} school(s) and ${(user.teamIds || []).length} team(s).`,
+      school: schoolIds[0] || null,
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -305,6 +346,18 @@ exports.restoreSchool = async (req, res) => {
       data: school,
       needsChairman: !chairmanExists,
     });
+
+    trail({
+      entityType: 'school',
+      entityId: school._id,
+      entityLabel: `School · ${school.name}`,
+      actor: req.user,
+      action: 'restored',
+      note: chairmanExists
+        ? 'School restored from the archive.'
+        : 'School restored from the archive. It still needs a chairman login, and staff must be re-assigned.',
+      school,
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -337,6 +390,17 @@ exports.createTeamLeader = async (req, res) => {
     });
 
     res.status(201).json({ success: true, data: user });
+
+    trail({
+      entityType: 'user',
+      entityId: user._id,
+      entityLabel: `${user.name} · ${roleLabel(user.role)}`,
+      subject: user,
+      actor: req.user,
+      action: 'created',
+      note: `Created with ${schoolIds.length} school(s).`,
+      school: schoolIds[0] || null,
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -381,6 +445,29 @@ exports.createChairmanAndSchool = async (req, res) => {
     await chairman.save();
 
     res.status(201).json({ success: true, data: { chairman, school } });
+
+    // TWO rows, because two records were created and either can be looked up
+    // on its own later. A single combined row would be findable only from
+    // whichever of the two the reader happened to search for.
+    trail({
+      entityType: 'school',
+      entityId: school._id,
+      entityLabel: `School · ${school.name}`,
+      actor: req.user,
+      action: 'created',
+      note: `School onboarded with chairman ${chairman.name}.`,
+      school,
+    });
+    trail({
+      entityType: 'user',
+      entityId: chairman._id,
+      entityLabel: `${chairman.name} · ${roleLabel('chairman')}`,
+      subject: chairman,
+      actor: req.user,
+      action: 'created',
+      note: `Chairman login created for ${school.name}.`,
+      school,
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -412,6 +499,17 @@ exports.createTrainer = async (req, res) => {
     });
 
     res.status(201).json({ success: true, data: user });
+
+    trail({
+      entityType: 'user',
+      entityId: user._id,
+      entityLabel: `${user.name} · ${roleLabel('trainer')}`,
+      subject: user,
+      actor: req.user,
+      action: 'created',
+      note: `Created with ${schoolIds.length} school(s).`,
+      school: schoolIds[0] || null,
+    });
 
     // Notify the assigned team leader that a new trainer joined their team.
     if (teamLeaderId) {
@@ -526,6 +624,21 @@ exports.updateUser = async (req, res) => {
       schoolName, associationYear, classCoverage
     } = req.body;
 
+    // Snapshot BEFORE anything is touched. Mongoose mutates the document in
+    // place, so once the assignments below run there is no "before" left to
+    // compare against and the log could only say "edited".
+    const before = {
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      anonymousLocation: !!user.anonymousLocation,
+      schoolIds: (user.schoolIds || []).map(String),
+      teamIds: (user.teamIds || []).map(String),
+      teamId: user.teamId ? String(user.teamId) : null,
+      teamLeaderId: user.teamLeaderId ? String(user.teamLeaderId) : null,
+      faceRegistrations: (user.faceRegistrations || []).length,
+    };
+
     user.name = name || user.name;
     user.email = email || user.email;
     if (password) {
@@ -543,6 +656,15 @@ exports.updateUser = async (req, res) => {
     // check-in access to a school that was taken away.
     const schoolsProvided =
       req.body.schoolIds !== undefined || req.body.schoolId !== undefined;
+
+    // Registrations discarded by this edit. Every branch below that throws a
+    // registration away puts it here instead of just dropping it, because the
+    // entry is the ONLY thing that knows the URL of the video it uploaded —
+    // once it is gone from the array, that recording is unreachable and sits in
+    // the Cloudinary account for good. Purged in one sweep before the save.
+    const discardedRegs = [];
+    const discard = (regs) => { discardedRegs.push(...regs); };
+
     const applySchools = () => {
       if (!schoolsProvided) return;
       const newIds = normalizeSchoolIds(req.body);
@@ -553,9 +675,9 @@ exports.updateUser = async (req, res) => {
         // A school-less (anonymous) registration is kept regardless: it is not
         // tied to any school, so no school assignment can invalidate it. It is
         // dropped explicitly below when anonymous mode itself is switched off.
-        user.faceRegistrations = user.faceRegistrations.filter(
-          (fr) => !fr.schoolId || allowed.has(String(fr.schoolId))
-        );
+        const keeps = (fr) => !fr.schoolId || allowed.has(String(fr.schoolId));
+        discard(user.faceRegistrations.filter((fr) => !keeps(fr)));
+        user.faceRegistrations = user.faceRegistrations.filter(keeps);
       }
     };
 
@@ -610,6 +732,7 @@ exports.updateUser = async (req, res) => {
         }
 
         // Whatever is still tied to a school belongs to schools they no longer hold.
+        discard(regs.filter((fr) => fr.schoolId));
         user.faceRegistrations = regs.filter((fr) => !fr.schoolId);
       } else {
         const newIds = schoolsProvided ? normalizeSchoolIds(req.body) : (user.schoolIds || []).map(String);
@@ -622,6 +745,7 @@ exports.updateUser = async (req, res) => {
         user.anonymousLocation = false;
         applySchools();
         // The school-less registration means nothing once they are anchored again.
+        discard((user.faceRegistrations || []).filter((fr) => !fr.schoolId));
         user.faceRegistrations = (user.faceRegistrations || []).filter((fr) => fr.schoolId);
       }
 
@@ -636,20 +760,95 @@ exports.updateUser = async (req, res) => {
     // "approved" badge for a registration that no longer exists.
     syncLegacyFaceStatus(user);
 
+    // The videos behind every registration this edit threw away. Run AFTER the
+    // filtering (so the "is this legacy URL still referenced?" check sees the
+    // survivors) and BEFORE the save, so the cleared URLs are persisted with
+    // everything else. Best-effort: a storage hiccup must not fail an edit that
+    // otherwise succeeded — it is reported in the log instead.
+    let discardedCloud = null;
+    if (discardedRegs.length) {
+      try {
+        discardedCloud = await purgeFaceVideos(user, discardedRegs);
+      } catch (e) {
+        console.error('Face video purge on user edit failed:', e.message);
+      }
+    }
+
     await user.save();
 
     // If Chairman, update School details
+    let schoolChanges = null;
+    let editedSchool = null;
     if (user.role === 'chairman' && user.schoolId) {
       const school = await School.findById(user.schoolId);
       if (school) {
+        schoolChanges = trackChanges()
+          .field('name', school.name, schoolName || school.name)
+          .field('association year', school.associationYear, associationYear || school.associationYear)
+          .field('class coverage', school.classCoverage, classCoverage || school.classCoverage);
         school.name = schoolName || school.name;
         school.associationYear = associationYear || school.associationYear;
         school.classCoverage = classCoverage || school.classCoverage;
         await school.save();
+        editedSchool = school;
       }
     }
 
     res.status(200).json({ success: true, data: user });
+
+    // What actually moved, in words. A row that only said "Admin edited Ravi
+    // Kumar" left the interesting half — a role change? a school swap? a
+    // password reset? — to memory, which is where it was being lost.
+    const changes = trackChanges()
+      .field('name', before.name, user.name)
+      .field('email', before.email, user.email)
+      .field('role', before.role, user.role, roleLabel)
+      .field('anonymous location', before.anonymousLocation, !!user.anonymousLocation)
+      .count('schools', before.schoolIds, (user.schoolIds || []).map(String))
+      .count('teams overseen', before.teamIds, (user.teamIds || []).map(String))
+      .field('team', before.teamId, user.teamId ? String(user.teamId) : null, (v) => (v ? 'assigned' : 'none'))
+      .field('team leader', before.teamLeaderId, user.teamLeaderId ? String(user.teamLeaderId) : null, (v) => (v ? 'assigned' : 'none'));
+
+    // The value is never written down — only the fact that it moved.
+    if (password) changes.secret('password');
+
+    const regsAfter = (user.faceRegistrations || []).length;
+    if (regsAfter !== before.faceRegistrations) {
+      changes.note(
+        `face registrations: ${before.faceRegistrations} → ${regsAfter}`
+        + (regsAfter < before.faceRegistrations ? ' (dropped with the schools they left)' : '')
+      );
+    }
+    if (discardedCloud && discardedCloud.requested) {
+      changes.note(faceVideoNote(discardedCloud).toLowerCase());
+    }
+
+    // A save that changed nothing is not worth a row — it would bury the edits
+    // that did change something.
+    if (changes.changed) {
+      trail({
+        entityType: 'user',
+        entityId: user._id,
+        entityLabel: `${user.name} · ${roleLabel(user.role)}`,
+        subject: user,
+        actor: req.user,
+        action: 'updated',
+        note: changes.summary(),
+        school: user.schoolId || null,
+      });
+    }
+
+    if (editedSchool && schoolChanges && schoolChanges.changed) {
+      trail({
+        entityType: 'school',
+        entityId: editedSchool._id,
+        entityLabel: `School · ${editedSchool.name}`,
+        actor: req.user,
+        action: 'updated',
+        note: schoolChanges.summary(),
+        school: editedSchool,
+      });
+    }
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -665,8 +864,15 @@ exports.deleteUser = async (req, res) => {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
+    // Everything the log will need is read here, while the document still
+    // exists. A deletion is the one change whose subject cannot be inspected
+    // afterwards, so anything not captured now is unanswerable forever.
+    const archivedSchools = [];
+    let detachedTrainers = 0;
+
     if (LEADER_ROLES.includes(user.role)) {
       // Unlink trainers assigned to this (Trainee) Team Leader instead of blocking
+      detachedTrainers = await User.countDocuments({ teamLeaderId: user._id });
       await User.updateMany({ teamLeaderId: user._id }, { $set: { teamLeaderId: null } });
     }
 
@@ -684,9 +890,23 @@ exports.deleteUser = async (req, res) => {
             (id) => String(id) !== String(school._id)
           );
           member.schoolId = member.schoolIds[0] || null;
+          // These belong to somebody ELSE, and archiving the school throws
+          // them away. Their videos go with them for the same reason as
+          // everywhere else: the entry is the only record of the URL, so this
+          // is the last moment the file can be found at all.
+          const losing = (member.faceRegistrations || []).filter(
+            (fr) => String(fr.schoolId) === String(school._id)
+          );
           member.faceRegistrations = (member.faceRegistrations || []).filter(
             (fr) => String(fr.schoolId) !== String(school._id)
           );
+          if (losing.length) {
+            try {
+              await purgeFaceVideos(member, losing);
+            } catch (e) {
+              console.error('Face video purge on school archive failed:', e.message);
+            }
+          }
           member.$locals.schoolRemovalReason = 'school_deleted';
           await member.save();
         }
@@ -702,6 +922,7 @@ exports.deleteUser = async (req, res) => {
         school.deletedBy = req.user._id || req.user.id;
         school.archivedChairman = { name: user.name, email: user.email };
         await school.save();
+        archivedSchools.push({ school, detached: affected.length });
       }
     }
 
@@ -712,11 +933,69 @@ exports.deleteUser = async (req, res) => {
 
     // Their face recordings go with them. Once the document is deleted nothing
     // anywhere remembers these URLs, so this is the last moment it is possible.
-    await purgeFaceVideos(user);
+    const cloud = await purgeFaceVideos(user);
+
+    // Snapshot for the log — after findByIdAndDelete there is no document left
+    // to read a name or a role off.
+    const deleted = {
+      _id: user._id,
+      name: user.name,
+      role: user.role,
+      email: user.email,
+      schoolId: user.schoolId || null,
+    };
+    const deletedAt = new Date();
 
     await User.findByIdAndDelete(user._id);
 
-    res.status(200).json({ success: true, data: {} });
+    res.status(200).json({
+      success: true,
+      data: {},
+      cloud: { requested: cloud.requested, deleted: cloud.deleted, failed: cloud.failed },
+    });
+
+    const consequences = [];
+    if (detachedTrainers) consequences.push(`${detachedTrainers} trainer(s) detached`);
+    if (archivedSchools.length) {
+      consequences.push(`${archivedSchools.length} school(s) archived`);
+    }
+    if (cloud.requested) {
+      consequences.push(
+        cloud.ok
+          ? `${cloud.requested} face registration video(s) deleted from cloud storage`
+          : `${cloud.failed} of ${cloud.requested} face registration video(s) could NOT be deleted from cloud storage`
+      );
+    }
+
+    trail({
+      entityType: 'user',
+      entityId: deleted._id,
+      entityLabel: `${deleted.name} · ${roleLabel(deleted.role)}`,
+      subject: deleted,
+      actor: req.user,
+      action: 'deleted',
+      note: `Account deleted (${deleted.email}).`
+        + (consequences.length ? ` ${consequences.join('; ')}.` : ''),
+      school: deleted.schoolId,
+      at: deletedAt,
+    });
+
+    // A school archived as a side effect of removing its chairman is a change to
+    // the SCHOOL, and someone looking the school up later has no reason to
+    // think of searching for a person's deletion to find out what happened.
+    archivedSchools.forEach(({ school, detached }) => {
+      trail({
+        entityType: 'school',
+        entityId: school._id,
+        entityLabel: `School · ${school.name}`,
+        actor: req.user,
+        action: 'archived',
+        note: `Archived when the chairman login (${deleted.name}) was deleted. `
+          + `${detached} staff assignment(s) detached. Activities, visit reports and attendance were kept.`,
+        school,
+        at: deletedAt,
+      });
+    });
 
     // Instantly sign out the deleted user's device if it's foregrounded.
     notifyUser(
@@ -820,13 +1099,10 @@ exports.approveFacialRegistration = async (req, res) => {
       subject: user,
       actor: req.user,
       action: 'approved',
-      // Same line the /api/approvals route writes, so one decision reads the
-      // same in the log whichever screen took it.
-      note: cloud.requested === 0
-        ? ''
-        : cloud.ok
-          ? 'Registration video deleted from cloud storage'
-          : 'Registration video could NOT be deleted from cloud storage',
+      // Literally the same sentence the /api/approvals route writes — it comes
+      // from the same function — so one decision reads the same in the log
+      // whichever screen took it.
+      note: faceVideoNote(cloud),
       school,
       at: decidedAt,
     });
@@ -918,9 +1194,7 @@ exports.deleteFacialRegistration = async (req, res) => {
       action: 'deleted',
       note: cloud.requested === 0
         ? 'Registration removed. There was no video in cloud storage.'
-        : cloud.ok
-          ? `Registration removed and ${cloud.requested} registration video(s) deleted from cloud storage.`
-          : `Registration removed, but ${cloud.failed} registration video(s) could NOT be deleted from cloud storage.`,
+        : `Registration removed. ${faceVideoNote(cloud)}.`,
       school: anonymous ? null : schoolId,
     });
 

@@ -22,8 +22,13 @@ export const getApprovalSummary = () =>
 export const getEntityTrail = (entityType, entityId) =>
   api.get(`/approval-log/${entityType}/${entityId}`).then((r) => r.data);
 
-// The nine things that can be decided, with the labels and icons the log uses.
-// Kept in the same order the backend enum declares them.
+// Everything the log can be filtered by, with the labels and icons it uses.
+// Kept in the same order the backend enum declares them: the request-shaped
+// things first (somebody asks, somebody decides), then the records the Admin
+// maintains directly (created, edited or removed outright, with no decision in
+// between). Both are here because the log answers one question — who changed
+// this and when — and a quietly edited record is as hard to reconstruct
+// afterwards as a quietly approved request.
 export const ENTITY_TYPES = [
   { key: 'leave', label: 'Leave', icon: 'calendar-outline' },
   { key: 'substitution', label: 'Substitution', icon: 'swap-horizontal-outline' },
@@ -34,6 +39,11 @@ export const ENTITY_TYPES = [
   { key: 'visit_report', label: 'Visit Report', icon: 'document-text-outline' },
   { key: 'media', label: 'Gallery', icon: 'image-outline' },
   { key: 'admin_account', label: 'Admin Login', icon: 'person-add-outline' },
+  { key: 'user', label: 'Staff', icon: 'people-outline' },
+  { key: 'school', label: 'School', icon: 'business-outline' },
+  { key: 'team', label: 'Team', icon: 'grid-outline' },
+  { key: 'meeting', label: 'Meeting', icon: 'videocam-outline' },
+  { key: 'occasion', label: 'Celebration', icon: 'sparkles-outline' },
 ];
 
 export const entityMeta = (key) =>

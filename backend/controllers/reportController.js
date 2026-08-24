@@ -3,6 +3,7 @@ const User = require('../models/User');
 const { HEAD_ROLES, LEADER_ROLES } = require('../utils/roles');
 const { sendPushNotification } = require('../utils/pushNotification');
 const { decisionOf, trail } = require('../utils/approvalTrail');
+const { trackChanges } = require('../utils/changeSummary');
 
 const REPORT_FIELDS = [
   'trainerId',
@@ -194,6 +195,13 @@ exports.updateReport = async (req, res) => {
     }
 
     const previousStatus = report.status;
+    // Snapshot before the field loop mutates the document in place.
+    const before = {
+      dateOfInspection: report.dateOfInspection,
+      personMet: report.personMet,
+      discussionContext: report.discussionContext,
+      formTouched: false,
+    };
     REPORT_FIELDS.forEach((field) => {
       if (req.body[field] !== undefined) {
         report[field] = req.body[field];
@@ -230,6 +238,30 @@ exports.updateReport = async (req, res) => {
     }
 
     await report.save();
+
+    // The content edit is a separate fact from the decision, and only one of
+    // the two was being recorded. A report re-written after it was approved is
+    // exactly the case someone would come looking for.
+    const changes = trackChanges()
+      .field('inspection date', before.dateOfInspection, report.dateOfInspection)
+      .field('person met', before.personMet, report.personMet)
+      .field('discussion', before.discussionContext, report.discussionContext);
+    if (req.body.form !== undefined) changes.note('the report form was re-submitted');
+    if (changes.changed) {
+      trail({
+        entityType: 'visit_report',
+        entityId: report._id,
+        entityLabel: `Visit report · ${report.personMet || ''}`.trim(),
+        subject: { _id: report.teamLeaderId },
+        actor: req.user,
+        action: 'updated',
+        note: changes.summary()
+          + (previousStatus !== 'pending' && req.body.status === undefined
+            ? ` (the report was already ${previousStatus})`
+            : ''),
+        school: report.schoolId,
+      });
+    }
 
     if (req.body.status && req.body.status !== previousStatus && req.body.status !== 'pending') {
       trail({
@@ -298,9 +330,29 @@ exports.deleteReport = async (req, res) => {
       return res.status(403).json({ success: false, error: 'Not authorized to delete this report' });
     }
 
+    // Snapshot while it still exists — the label is unrecoverable afterwards.
+    const snapshot = {
+      _id: report._id,
+      personMet: report.personMet,
+      status: report.status,
+      teamLeaderId: report.teamLeaderId,
+      schoolId: report.schoolId,
+    };
+
     await report.deleteOne();
 
     res.status(200).json({ success: true, data: {} });
+
+    trail({
+      entityType: 'visit_report',
+      entityId: snapshot._id,
+      entityLabel: `Visit report · ${snapshot.personMet || ''}`.trim(),
+      subject: { _id: snapshot.teamLeaderId },
+      actor: req.user,
+      action: 'deleted',
+      note: `Visit report deleted (was ${snapshot.status}).`,
+      school: snapshot.schoolId,
+    });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }

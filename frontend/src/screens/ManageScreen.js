@@ -194,13 +194,29 @@ export default function ManageScreen({ navigation }) {
       return { id: String(id), name, status: reg.status, decidedBy: reg.decidedBy };
     });
 
+  /**
+   * Has this person's face actually been TRACED — i.e. is there an approved
+   * registration the attendance system is matching against?
+   *
+   * The distinction matters because it is what the scan symbol means. A pending
+   * registration is a request nobody has looked at yet; a rejected one was
+   * looked at and turned down, and the person has to capture a fresh video
+   * before anything exists at all. Neither leaves a face on file, so offering
+   * to "delete the face registration" for either was offering to delete
+   * something that was never there.
+   */
+  const hasApprovedFace = (user) =>
+    (user?.faceRegistrations || []).some((reg) => reg.status === 'approved');
+
   const handleDeleteFaceRegistration = (user) => {
-    const registrations = getFaceRegistrations(user);
+    // Only approved registrations are on offer here, for the same reason the
+    // button only appears for them: those are the ones that hold a face.
+    const registrations = getFaceRegistrations(user).filter((r) => r.status === 'approved');
 
     if (registrations.length === 0) {
       showAlert(
         'Nothing to Delete',
-        `${user.name} has no facial registration on record.`,
+        `${user.name} has no approved facial registration on record.`,
         'info'
       );
       return;
@@ -845,9 +861,11 @@ export default function ManageScreen({ navigation }) {
                         >
                           <Ionicons name="pencil" size={14} color={theme.colors.primary} />
                         </TouchableOpacity>
-                        {/* Delete-face button for field staff who actually have a
-                            registration on record (any school). */}
-                        {activeTab !== 'Schools' && (item.faceRegistrations?.length > 0) && (
+                        {/* Only for a face that is actually on file. A pending
+                            registration has not been traced yet and a rejected
+                            one never will be — showing the scan symbol for
+                            either claimed a registration that does not exist. */}
+                        {activeTab !== 'Schools' && hasApprovedFace(item) && (
                           <TouchableOpacity
                             style={[styles.miniActionBtn, { backgroundColor: '#F59E0B15', borderColor: '#F59E0B' }]}
                             onPress={() => handleDeleteFaceRegistration(item)}

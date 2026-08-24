@@ -15,6 +15,7 @@ import VisitReportDetail from '../components/VisitReportDetail';
 import { SectionSkeleton } from '../components/Skeleton';
 import { useSectionTransition } from '../hooks/useSectionTransition';
 import ResponsiveGrid from '../components/ResponsiveGrid';
+import ActivityCover from '../components/ActivityCover';
 import useResponsiveLayout from '../hooks/useResponsiveLayout';
 
 const TAB_ITEMS = [
@@ -517,9 +518,17 @@ export default function ChairmanPortal({ navigation, route }) {
             >
               <View style={[styles.reportItem, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                 <View style={styles.reportHeader}>
-                  <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: item.personMet ? theme.colors.primary + '20' : theme.colors.secondary + '20', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-                    <Ionicons name={item.personMet ? "document-text-outline" : "calendar-outline"} size={20} color={item.personMet ? theme.colors.primary : theme.colors.secondary} />
-                  </View>
+                  {/* This feed carries both visit reports and activities. A
+                      report has no cover to show, so it keeps its glyph; an
+                      activity shows its first photo — or the IECE mark when it
+                      has none, the same stand-in every other screen uses. */}
+                  {item.personMet ? (
+                    <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.primary + '20', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                      <Ionicons name="document-text-outline" size={20} color={theme.colors.primary} />
+                    </View>
+                  ) : (
+                    <ActivityCover activity={item} size={40} radius={10} style={{ marginRight: 12 }} />
+                  )}
                   <View style={styles.reportMeta}>
                     <Text style={[styles.metText, { color: theme.colors.textPrimary }]}>
                       {item.personMet ? 'Visit Report' : 'Activity'}: {item.personMet ? item.personMet : item.name}

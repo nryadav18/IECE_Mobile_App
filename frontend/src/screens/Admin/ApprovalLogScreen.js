@@ -205,8 +205,11 @@ export default function ApprovalLogScreen({ navigation }) {
         )}
         {!!item.note && (
           <View style={{ marginTop: 8, backgroundColor: theme.colors.background, borderRadius: 8, padding: 9 }}>
+            {/* An edit's note is a list of what moved, not a remark somebody
+                wrote. Labelling both "REMARK" invited the diff to be read as a
+                comment the actor had typed. */}
             <Text style={{ color: theme.colors.textSecondary, fontSize: 10.5, fontWeight: '800', marginBottom: 2 }}>
-              REMARK
+              {item.action === 'updated' ? 'WHAT CHANGED' : 'REMARK'}
             </Text>
             <Text style={{ color: theme.colors.textPrimary, fontSize: 12.5 }}>{item.note}</Text>
           </View>

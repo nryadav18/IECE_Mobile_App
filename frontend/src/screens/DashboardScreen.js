@@ -38,6 +38,7 @@ import PortalButton from '../components/home/PortalButton';
 import { clamp, greetingFor, withAlpha } from '../components/home/motion';
 import { yearsSinceFounding } from '../utils/org';
 import { optimizedImageUrl, prefetchImages, readCachedBanners, writeCachedBanners } from '../utils/media';
+import ActivityCover from '../components/ActivityCover';
 import useOccasions from '../celebrations/useOccasions';
 import CelebrationHero from '../celebrations/CelebrationHero';
 import CelebrationBarTitle from '../celebrations/CelebrationHeaderBar';
@@ -606,12 +607,6 @@ export default function DashboardScreen({ navigation, route }) {
                   String(activity.uploaderId?._id || activity.uploaderId) !== myId &&
                   (activity.organizers || []).some((o) => String(o?._id || o) === myId);
 
-                const thumbnail =
-                  activity.mediaUrls && activity.mediaUrls.length > 0 ? activity.mediaUrls[0] : null;
-                // Handle auto-generated video thumbnails by replacing .mp4 with .jpg (Cloudinary feature)
-                const thumbUrl =
-                  thumbnail && thumbnail.endsWith('.mp4') ? thumbnail.replace('.mp4', '.jpg') : thumbnail;
-
                 return (
                   <MotiView
                     key={activity._id}
@@ -648,27 +643,16 @@ export default function DashboardScreen({ navigation, route }) {
                         },
                       ]}
                     >
-                      {thumbUrl ? (
-                        <Image
-                          source={{ uri: optimizedImageUrl(thumbUrl, cardW) }}
-                          style={[styles.cardImage, { height: cardW * 0.56 }]}
-                          fadeDuration={0}
-                        />
-                      ) : (
-                        <View
-                          style={[
-                            styles.cardImage,
-                            {
-                              height: cardW * 0.56,
-                              backgroundColor: theme.colors.background,
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            },
-                          ]}
-                        >
-                          <Ionicons name="image-outline" size={30} color={theme.colors.textSecondary} />
-                        </View>
-                      )}
+                      {/* Video posters, Cloudinary sizing and the IECE
+                          placeholder all live in ActivityCover, so the card
+                          shows the same thing every other screen shows. */}
+                      <ActivityCover
+                        activity={activity}
+                        width={cardW}
+                        height={cardW * 0.56}
+                        radius={0}
+                        style={styles.cardImage}
+                      />
 
                       {activity.isStarred && (
                         <View style={styles.starBadge}>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useContext, useCallback, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, RefreshControl, ScrollView, Image, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, RefreshControl, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { ThemeContext } from '../context/ThemeContext';
 import { AuthContext } from '../context/AuthContext';
@@ -22,6 +22,7 @@ import { isOffToday, HOLIDAY_APPROVED_COLOR, HOLIDAY_PENDING_COLOR } from '../ut
 import { buildCalendarMarks } from '../utils/calendarColors';
 import { deriveAttendanceActions, findTodayAttendance } from '../utils/attendanceActions';
 import CalendarLegend from '../components/CalendarLegend';
+import ActivityCover from '../components/ActivityCover';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import { SectionSkeleton } from '../components/Skeleton';
 import { useSectionTransition } from '../hooks/useSectionTransition';
@@ -618,13 +619,7 @@ export default function TrainerPortal({ navigation, route }) {
           renderItem={({ item }) => (
             <View style={[styles.activityCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
               <View style={{ flexDirection: 'row', marginBottom: 16 }}>
-                {item.mediaUrls && item.mediaUrls.length > 0 ? (
-                  <Image source={{ uri: item.mediaUrls[0] }} style={{ width: 80, height: 80, borderRadius: 12, marginRight: 16 }} />
-                ) : (
-                  <View style={{ width: 80, height: 80, borderRadius: 12, backgroundColor: theme.colors.background, marginRight: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border }}>
-                    <Ionicons name="image-outline" size={32} color={theme.colors.textSecondary} />
-                  </View>
-                )}
+                <ActivityCover activity={item} size={80} style={{ marginRight: 16 }} />
                 <View style={{ flex: 1, justifyContent: 'center' }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
                     <Text style={[styles.activityTitle, { color: theme.colors.textPrimary, flex: 1, marginRight: 8 }]} numberOfLines={2}>{item.name}</Text>

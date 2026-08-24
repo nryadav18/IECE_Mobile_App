@@ -29,6 +29,56 @@ const { purgeAssets } = require('./cloudinary');
 // destroy. An image destroy against a video is a no-op that reports success.
 // ---------------------------------------------------------------------------
 
+/** The shape every function here returns. */
+const NOTHING_TO_DO = {
+  requested: 0, deleted: 0, missing: 0, failed: 0,
+  verified: 0, unverified: 0, stillPresent: 0, ok: true,
+};
+
+/**
+ * Narrow a full purge report to what the face flows care about.
+ *
+ * `verified` / `unverified` are carried through deliberately: a face recording
+ * is the most sensitive thing this app puts in the cloud, so "we asked
+ * Cloudinary again and it is really gone" is worth telling apart from
+ * "Cloudinary said ok and we could not check".
+ */
+const summarize = (purge) => ({
+  requested: purge.requested,
+  deleted: purge.deleted,
+  missing: purge.missing,
+  failed: purge.failed,
+  verified: purge.verified || 0,
+  unverified: purge.unverified || 0,
+  stillPresent: purge.stillPresent || 0,
+  ok: purge.ok,
+});
+
+/**
+ * One sentence about what became of a registration video, for the Approval Log.
+ *
+ * Lives here rather than in a controller because THREE different routes decide
+ * a registration (the approvals hub, the legacy admin screen, the admin reset)
+ * and one decision must not read three different ways in the log.
+ *
+ * A deletion that quietly failed is the outcome worth spelling out: it means a
+ * recording of somebody's face is still sitting in cloud storage, and the log is
+ * where that has to be visible.
+ */
+function faceVideoNote(cloud) {
+  if (!cloud || cloud.requested === 0) return '';
+  if (cloud.stillPresent) {
+    return 'Registration video is STILL in cloud storage — Cloudinary accepted the deletion but the file survived';
+  }
+  if (!cloud.ok) return 'Registration video could NOT be deleted from cloud storage';
+  if (cloud.unverified) {
+    return 'Registration video deleted from cloud storage (deletion could not be re-verified)';
+  }
+  return cloud.missing && !cloud.deleted
+    ? 'Registration video was already gone from cloud storage'
+    : 'Registration video deleted from cloud storage (verified gone)';
+}
+
 /**
  * Drop a URL from the legacy top-level pointer if that is what it was aiming at.
  *
@@ -57,7 +107,7 @@ function clearLegacyPointer(user, url) {
  */
 async function purgeFaceVideo(user, reg) {
   const url = reg?.registrationPhotoUrl;
-  if (!url) return { requested: 0, deleted: 0, missing: 0, failed: 0, ok: true };
+  if (!url) return { ...NOTHING_TO_DO };
 
   const purge = await purgeAssets([url]);
 
@@ -66,13 +116,7 @@ async function purgeFaceVideo(user, reg) {
     clearLegacyPointer(user, url);
   }
 
-  return {
-    requested: purge.requested,
-    deleted: purge.deleted,
-    missing: purge.missing,
-    failed: purge.failed,
-    ok: purge.ok,
-  };
+  return summarize(purge);
 }
 
 /**
@@ -104,7 +148,7 @@ async function purgeFaceVideos(user, regs = null) {
     if (!stillReferenced) urls.push(legacy);
   }
 
-  if (urls.length === 0) return { requested: 0, deleted: 0, missing: 0, failed: 0, ok: true };
+  if (urls.length === 0) return { ...NOTHING_TO_DO };
 
   const purge = await purgeAssets(urls);
   const gone = new Set(purge.gone);
@@ -118,13 +162,7 @@ async function purgeFaceVideos(user, regs = null) {
     user.registrationPhotoUrl = null;
   }
 
-  return {
-    requested: purge.requested,
-    deleted: purge.deleted,
-    missing: purge.missing,
-    failed: purge.failed,
-    ok: purge.ok,
-  };
+  return summarize(purge);
 }
 
 /**
@@ -144,19 +182,13 @@ async function purgeFaceVideos(user, regs = null) {
  */
 async function purgeLegacyFaceVideo(user, replacementUrl = null) {
   const url = user?.registrationPhotoUrl;
-  const nothingToDo = { requested: 0, deleted: 0, missing: 0, failed: 0, ok: true };
+  const nothingToDo = { ...NOTHING_TO_DO };
   if (!url || url === replacementUrl) return nothingToDo;
   if ((user.faceRegistrations || []).some((r) => r?.registrationPhotoUrl === url)) return nothingToDo;
 
   const purge = await purgeAssets([url]);
   if (purge.gone.includes(url)) user.registrationPhotoUrl = null;
-  return {
-    requested: purge.requested,
-    deleted: purge.deleted,
-    missing: purge.missing,
-    failed: purge.failed,
-    ok: purge.ok,
-  };
+  return summarize(purge);
 }
 
-module.exports = { purgeFaceVideo, purgeFaceVideos, purgeLegacyFaceVideo };
+module.exports = { purgeFaceVideo, purgeFaceVideos, purgeLegacyFaceVideo, faceVideoNote };

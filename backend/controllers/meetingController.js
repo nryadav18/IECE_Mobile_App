@@ -7,6 +7,8 @@ const {
   FIELD_STAFF, ADMIN_ROLES, LEADER_ROLES, HEAD_ROLES,
 } = require('../utils/roles');
 const { ROLE_LABELS } = require('../utils/roleLabels');
+const { trail } = require('../utils/approvalTrail');
+const { trackChanges } = require('../utils/changeSummary');
 
 const roleLabel = (role) => ROLE_LABELS[role] || role;
 const isAdminRole = (role) => ADMIN_ROLES.includes(role);
@@ -225,6 +227,16 @@ exports.createMeeting = async (req, res) => {
     const populated = await populateMeeting(Meeting.findById(meeting._id));
     res.status(201).json({ success: true, data: populated });
 
+    trail({
+      entityType: 'meeting',
+      entityId: meeting._id,
+      entityLabel: `${PLATFORM_LABEL[v.platform]} · ${v.agenda}`,
+      subject: req.user,
+      actor: req.user,
+      action: 'created',
+      note: `Shared with ${v.recipientIds.length} recipient(s).`,
+    });
+
     // ---- Notify selected recipients + ALWAYS Admin + CEO (in-app + push) ----
     const notifyIds = await meetingAudience(v.recipientIds, req.user._id);
 
@@ -271,6 +283,15 @@ exports.updateMeeting = async (req, res) => {
     });
     if (!v.ok) return res.status(400).json({ success: false, message: v.message });
 
+    // Snapshot before the assignments below overwrite it.
+    const before = {
+      link: meeting.link,
+      platform: meeting.platform,
+      agenda: meeting.agenda,
+      recipients: (meeting.recipients || []).map(String),
+      createdBy: meeting.createdBy,
+    };
+
     meeting.link = v.link;
     meeting.platform = v.platform;
     meeting.agenda = v.agenda;
@@ -280,6 +301,28 @@ exports.updateMeeting = async (req, res) => {
 
     const populated = await populateMeeting(Meeting.findById(meeting._id));
     res.status(200).json({ success: true, data: populated });
+
+    // The link itself is never written into the log: a meeting URL is a
+    // join credential, and an audit row is read by more people than the
+    // meeting was ever shared with. That it changed is the auditable fact.
+    const changes = trackChanges()
+      .field('agenda', before.agenda, meeting.agenda)
+      .field('platform', before.platform, meeting.platform,
+        (p) => PLATFORM_LABEL[p] || p)
+      .count('recipients', before.recipients, (meeting.recipients || []).map(String));
+    if (before.link !== meeting.link) changes.secret('link', 'replaced');
+
+    if (changes.changed) {
+      trail({
+        entityType: 'meeting',
+        entityId: meeting._id,
+        entityLabel: `${PLATFORM_LABEL[meeting.platform]} · ${meeting.agenda}`,
+        subject: before.createdBy,
+        actor: req.user,
+        action: 'updated',
+        note: changes.summary(),
+      });
+    }
 
     // ---- Re-notify the (possibly changed) audience + ALWAYS Admin + CEO ----
     const notifyIds = await meetingAudience(v.recipientIds, req.user._id);
@@ -359,8 +402,27 @@ exports.deleteMeeting = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not authorized to remove this meeting' });
     }
 
+    // Read before deleteOne() — a moment later there is no agenda to name.
+    const snapshot = {
+      _id: meeting._id,
+      agenda: meeting.agenda,
+      platform: meeting.platform,
+      createdBy: meeting.createdBy,
+      recipients: (meeting.recipients || []).length,
+    };
+
     await meeting.deleteOne();
     res.status(200).json({ success: true, data: { _id: meeting._id } });
+
+    trail({
+      entityType: 'meeting',
+      entityId: snapshot._id,
+      entityLabel: `${PLATFORM_LABEL[snapshot.platform]} · ${snapshot.agenda}`,
+      subject: snapshot.createdBy,
+      actor: req.user,
+      action: 'deleted',
+      note: `Meeting removed from the corner. It was shared with ${snapshot.recipients} recipient(s).`,
+    });
   } catch (error) {
     console.error('deleteMeeting error:', error);
     res.status(500).json({ success: false, message: 'Server error' });

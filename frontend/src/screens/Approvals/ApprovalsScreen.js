@@ -1,6 +1,6 @@
 import React, { useCallback, useContext, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, ScrollView, RefreshControl, Image,
+  View, Text, TouchableOpacity, ScrollView, RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,6 +12,7 @@ import { roleLabel } from '../../utils/roles';
 import Avatar from '../../components/Avatar';
 import NotificationBell from '../../components/NotificationBell';
 import RejectReasonModal from '../../components/RejectReasonModal';
+import ActivityCover from '../../components/ActivityCover';
 import { SkeletonList } from '../../components/Skeleton';
 import useResponsiveLayout from '../../hooks/useResponsiveLayout';
 import {
@@ -314,13 +315,7 @@ export default function ApprovalsScreen({ navigation }) {
               return (
                 <Card key={act._id}>
                   <View style={{ flexDirection: 'row' }}>
-                    {act.mediaUrls?.length ? (
-                      <Image source={{ uri: act.mediaUrls[0] }} style={{ width: 72, height: 72, borderRadius: 12, marginRight: 12 }} />
-                    ) : (
-                      <View style={{ width: 72, height: 72, borderRadius: 12, marginRight: 12, backgroundColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }}>
-                        <Ionicons name="image-outline" size={28} color={theme.colors.textSecondary} />
-                      </View>
-                    )}
+                    <ActivityCover activity={act} size={72} style={{ marginRight: 12 }} />
                     <View style={{ flex: 1, justifyContent: 'center' }}>
                       <Text style={{ color: theme.colors.textPrimary, fontSize: 15, fontWeight: '700' }} numberOfLines={2}>{act.name}</Text>
                       <Text style={{ color: theme.colors.textSecondary, fontSize: 12.5, marginTop: 3 }} numberOfLines={1}>

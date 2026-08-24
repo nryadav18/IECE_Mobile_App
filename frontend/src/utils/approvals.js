@@ -32,6 +32,14 @@ const ACTION_LABELS = {
   // "the activity is gone" and "the activity's photos are gone" must never
   // read the same.
   media_deleted: 'Photos removed by',
+  // Not a decision — a change. The log now records edits as well as approvals,
+  // and an edit made AFTER an approval is the thing most likely to be disputed
+  // later, so it needs a verb of its own rather than borrowing "Approved by".
+  updated: 'Edited by',
+  // A school is archived rather than destroyed. "Deleted by" would claim its
+  // activities, visit reports and attendance went with it, and they did not.
+  archived: 'Archived by',
+  restored: 'Restored by',
 };
 
 const STATUS_FALLBACK = {
@@ -54,6 +62,12 @@ const ACTION_COLORS = {
   deleted: '#F44336',
   // Amber, not red: something was destroyed, but the record survived.
   media_deleted: '#F59E0B',
+  // Violet keeps edits distinct from both the green approvals and the red
+  // deletions — an edit is neither, and a log where everything is green or red
+  // hides exactly the rows worth noticing.
+  updated: '#7C3AED',
+  archived: '#F59E0B',
+  restored: '#0D9488',
 };
 
 const ACTION_ICONS = {
@@ -67,6 +81,9 @@ const ACTION_ICONS = {
   created: 'person-add',
   deleted: 'trash',
   media_deleted: 'images-outline',
+  updated: 'create-outline',
+  archived: 'archive-outline',
+  restored: 'refresh-circle-outline',
 };
 
 export const decisionVerb = (action, status) =>

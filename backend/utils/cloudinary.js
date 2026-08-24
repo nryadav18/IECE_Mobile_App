@@ -89,7 +89,7 @@ function isTransformSegment(segment) {
  *   .../video/upload/v123/facial_registrations_v2/abc.mp4
  *   .../raw/upload/v123/iece_mous/1712-mou.pdf
  *
- * @returns {{publicId: string, resourceType: string, extension: string|null}|null}
+ * @returns {{publicId: string, resourceType: string, deliveryType: string, extension: string|null}|null}
  */
 function parseCloudinaryUrl(fileUrl) {
   if (!fileUrl || typeof fileUrl !== 'string') return null;
@@ -115,6 +115,13 @@ function parseCloudinaryUrl(fileUrl) {
   // deleted as an image is a no-op that reports success.
   const resourceType = before.split('/').filter(Boolean).pop() || 'image';
 
+  // 'upload' | 'private' | 'authenticated'. The Admin API needs it to look the
+  // asset up again during verification — asking for an `authenticated` asset as
+  // an `upload` one answers 404, which would read as "successfully deleted" for
+  // a file that is still there. That is precisely the lie verification exists
+  // to catch, so it must not be the thing verification tells.
+  const deliveryType = marker.replace(/\//g, '');
+
   const segments = after.split('/').filter(Boolean);
 
   // Drop leading transformation segments, then the version stamp.
@@ -135,7 +142,7 @@ function parseCloudinaryUrl(fileUrl) {
     publicId = publicId.substring(0, lastDot);
   }
 
-  return { publicId: decodeURIComponent(publicId), resourceType, extension };
+  return { publicId: decodeURIComponent(publicId), resourceType, deliveryType, extension };
 }
 
 // Failures that are about the ACCOUNT rather than about one file. When
@@ -161,20 +168,78 @@ function isAccountBlocked(error) {
   return ACCOUNT_BLOCKED.test(message);
 }
 
+// ---------------------------------------------------------------------------
+// VERIFYING THE DELETION
+//
+// `destroy()` answering `{result: 'ok'}` is Cloudinary's report of what it did,
+// not proof of the end state — and the two have come apart before. A destroy
+// aimed at the wrong resource_type, at a derived asset instead of the original,
+// or at an id that lost a folder segment in parsing, can all answer 'ok' or
+// 'not found' while the real file sits untouched in the account.
+//
+// So after every destroy the asset is LOOKED UP again through the Admin API. A
+// 404 is the only answer that proves it is gone. Anything that comes back with
+// a body means the file survived, and that is reported as a failure however
+// cheerfully destroy() reported success.
+//
+// One deliberate exception: if the lookup itself cannot be performed — the
+// Admin API is rate-limited (it is capped far lower than the upload API), the
+// network blipped, the account is suspended — the destroy result stands and the
+// outcome is marked UNVERIFIED rather than failed. Refusing to believe a
+// successful deletion because the audit call was throttled would strand files
+// in the database that are genuinely gone from the cloud, which is the opposite
+// of what this is for.
+// ---------------------------------------------------------------------------
+
 /**
- * Destroy one asset and say honestly what happened.
+ * Look an asset up again and report whether the cloud still holds it.
  *
- * @returns {{url: string, ok: boolean, status: 'deleted'|'missing'|'unparseable'|'failed', publicId: string|null, error: string|null, blocked?: boolean}}
+ * @returns {Promise<{verified: boolean, gone: boolean|null, error: string|null, blocked: boolean}>}
+ */
+async function confirmGone(publicId, resourceType, deliveryType = 'upload') {
+  try {
+    await cloudinary.api.resource(publicId, {
+      resource_type: resourceType,
+      type: deliveryType,
+    });
+    // It answered with an asset. The file is still there.
+    return { verified: true, gone: false, error: null, blocked: false };
+  } catch (error) {
+    const code = Number(error?.http_code || error?.error?.http_code || error?.response?.status);
+    if (code === 404) {
+      // The one answer that proves the end state.
+      return { verified: true, gone: true, error: null, blocked: false };
+    }
+    // Could not check. Not evidence either way — say so rather than guess.
+    return {
+      verified: false,
+      gone: null,
+      error: error?.message || error?.error?.message || String(error),
+      blocked: isAccountBlocked(error),
+    };
+  }
+}
+
+/**
+ * Destroy one asset, CONFIRM it is gone, and say honestly what happened.
+ *
+ * `verified` is true only when the Admin API was asked afterwards and answered
+ * 404. `status: 'failed'` with `stillPresent` means the destroy claimed success
+ * and the file is demonstrably still in the account — the exact silent failure
+ * this whole path exists to surface.
+ *
+ * @returns {{url: string, ok: boolean, status: 'deleted'|'missing'|'unparseable'|'failed', publicId: string|null, error: string|null, verified: boolean, stillPresent?: boolean, blocked?: boolean}}
  */
 async function destroyAsset(fileUrl) {
   const parsed = parseCloudinaryUrl(fileUrl);
   if (!parsed) {
     // Not a Cloudinary URL at all (a seeded placeholder, a local asset). There
     // is nothing in the cloud to remove, so the end state is already correct.
-    return { url: fileUrl, ok: true, status: 'unparseable', publicId: null, error: null };
+    // Nothing to verify either — there is no asset to look up.
+    return { url: fileUrl, ok: true, status: 'unparseable', publicId: null, error: null, verified: true };
   }
 
-  const { publicId, resourceType, extension } = parsed;
+  const { publicId, resourceType, deliveryType, extension } = parsed;
 
   // `invalidate` also purges the CDN copy. Without it the file is gone from
   // storage but edge caches keep serving it for hours, which does not look
@@ -185,31 +250,60 @@ async function destroyAsset(fileUrl) {
   });
 
   try {
-    let result = await attempt(publicId);
+    let effectiveId = publicId;
+    let result = await attempt(effectiveId);
 
     // Raw assets (PDFs, Word documents) usually keep their extension IN the
     // public_id, unlike images and videos. If the bare id was not found, the
     // extension is the difference — try once more before believing it is gone.
     if (result?.result === 'not found' && resourceType === 'raw' && extension) {
-      result = await attempt(`${publicId}.${extension}`);
+      effectiveId = `${publicId}.${extension}`;
+      result = await attempt(effectiveId);
     }
 
-    if (result?.result === 'ok') {
-      return { url: fileUrl, ok: true, status: 'deleted', publicId, error: null };
+    if (result?.result !== 'ok' && result?.result !== 'not found') {
+      return {
+        url: fileUrl, ok: false, status: 'failed', publicId,
+        error: result?.result || 'unexpected response from Cloudinary',
+        verified: false,
+        blocked: false,
+      };
     }
-    if (result?.result === 'not found') {
-      // Already absent. The caller wanted it gone; it is gone.
-      return { url: fileUrl, ok: true, status: 'missing', publicId, error: null };
+
+    // Cloudinary says the end state is "not there". Check that it actually is.
+    const check = await confirmGone(effectiveId, resourceType, deliveryType);
+
+    if (check.verified && !check.gone) {
+      // The destroy reported success and the file is still in the account. This
+      // is the failure mode that used to be invisible, and it is now the loudest
+      // one: the URL is kept so the record still points at a file that exists,
+      // and the caller is told the deletion did not happen.
+      return {
+        url: fileUrl, ok: false, status: 'failed', publicId,
+        error: `Cloudinary reported "${result.result}" but the file is still in the account`,
+        verified: true,
+        stillPresent: true,
+        blocked: false,
+      };
     }
+
     return {
-      url: fileUrl, ok: false, status: 'failed', publicId,
-      error: result?.result || 'unexpected response from Cloudinary',
-      blocked: false,
+      url: fileUrl,
+      ok: true,
+      status: result.result === 'ok' ? 'deleted' : 'missing',
+      publicId,
+      error: null,
+      // false when the confirmation call could not be made at all. The deletion
+      // still counts — see the note above confirmGone — but the report says it
+      // was taken on trust rather than proven.
+      verified: check.verified,
+      verifyError: check.verified ? null : check.error,
     };
   } catch (error) {
     return {
       url: fileUrl, ok: false, status: 'failed', publicId,
       error: error?.message || String(error),
+      verified: false,
       blocked: isAccountBlocked(error),
     };
   }
@@ -232,12 +326,22 @@ async function purgeAssets(urls = []) {
     .map((r) => ({ url: r.url, error: r.error }));
 
   const blocked = results.find((r) => r.blocked);
+  // Files the cloud confirmed gone when asked a second time, and files whose
+  // confirmation call could not be made. The second number is the honest
+  // caveat on "deleted" — it is what stops the log claiming proof it does not
+  // have.
+  const unverified = results.filter((r) => r.ok && r.verified === false);
+  const stillPresent = results.filter((r) => r.stillPresent);
   const report = {
     ok: failures.length === 0,
     requested: list.length,
     deleted: results.filter((r) => r.status === 'deleted').length,
     missing: results.filter((r) => r.status === 'missing').length,
     failed: failures.length,
+    verified: results.filter((r) => r.ok && r.verified !== false).length,
+    unverified: unverified.length,
+    // Destroy said success, the account still holds the file.
+    stillPresent: stillPresent.length,
     gone,
     failures,
     // The whole account is refusing service, not just this file. Retrying is
@@ -254,17 +358,46 @@ async function purgeAssets(urls = []) {
       failures.map((f) => `${f.url} (${f.error})`).join('; ')
     );
   }
+  if (stillPresent.length) {
+    // Worth its own line. An ordinary failure is Cloudinary refusing the
+    // request; THIS is Cloudinary accepting it and the file surviving anyway,
+    // which points at the destroy arguments (resource type, delivery type, a
+    // mis-parsed public_id) rather than at the network.
+    console.error(
+      `Cloudinary reported success for ${stillPresent.length} file(s) that are STILL in the account:`,
+      stillPresent.map((r) => `${r.publicId}`).join('; ')
+    );
+  }
+  if (unverified.length) {
+    console.warn(
+      `Cloudinary deletion could not be verified for ${unverified.length}/${list.length} file(s) `
+      + '(the Admin API lookup failed — the destroy result was taken on trust):',
+      unverified.map((r) => `${r.publicId} (${r.verifyError})`).join('; ')
+    );
+  }
   return report;
 }
 
-/** A one-line summary for an API response or a log. */
-function purgeSummary(report) {
+/**
+ * A one-line summary for an API response or a log.
+ *
+ * Says "verified" only where the asset was looked up again and answered 404, so
+ * a reader can tell proof from a report. `{ short: true }` drops the caveat for
+ * places that only have room for the headline.
+ */
+function purgeSummary(report, { short = false } = {}) {
   if (!report || report.requested === 0) return 'Nothing to remove from the cloud.';
   const bits = [];
   if (report.deleted) bits.push(`${report.deleted} deleted`);
   if (report.missing) bits.push(`${report.missing} already gone`);
   if (report.failed) bits.push(`${report.failed} could not be removed`);
-  return `Cloud storage: ${bits.join(', ')}.`;
+  let line = `Cloud storage: ${bits.join(', ')}.`;
+  if (!short && report.unverified) {
+    line += ` ${report.unverified} not verified (Cloudinary could not be re-checked).`;
+  } else if (!short && report.verified && !report.failed) {
+    line += ' Verified gone from the cloud.';
+  }
+  return line;
 }
 
 /**
@@ -280,6 +413,11 @@ function purgeProblem(report) {
       + '. This usually means the free plan has run out of credits or the account '
       + 'has been suspended — it is also why images and videos are not loading. '
       + 'Nothing can be deleted until the account is restored.';
+  }
+  if (report.stillPresent) {
+    return `${report.stillPresent} file(s) are still in cloud storage even though Cloudinary `
+      + 'accepted the deletion. They have been kept on the record so they can be removed later — '
+      + 'please report this, it means the deletion is not doing what it says.';
   }
   return `${report.failed} file(s) could not be removed from cloud storage. Please try again.`;
 }
@@ -298,6 +436,7 @@ module.exports = {
   upload,
   deleteFromCloudinary,
   parseCloudinaryUrl,
+  confirmGone,
   destroyAsset,
   purgeAssets,
   purgeSummary,

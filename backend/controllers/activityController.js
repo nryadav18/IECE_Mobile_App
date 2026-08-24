@@ -7,6 +7,7 @@ const { getApproverIdsFor, canApproveFor } = require('../utils/hierarchy');
 const { ROLE_LABELS } = require('../utils/roleLabels');
 const { decisionOf, trail } = require('../utils/approvalTrail');
 const { purgeAssets, purgeSummary, purgeProblem } = require('../utils/cloudinary');
+const { trackChanges } = require('../utils/changeSummary');
 
 const roleLabel = (role) => ROLE_LABELS[role] || role;
 
@@ -108,6 +109,17 @@ exports.createActivity = async (req, res) => {
 
     res.status(201).json({ success: true, data: activity });
 
+    trail({
+      entityType: 'activity',
+      entityId: activity._id,
+      entityLabel: activity.name,
+      subject: req.user,
+      actor: req.user,
+      action: 'created',
+      note: `Uploaded with ${(activity.mediaUrls || []).length} photo/video file(s); awaiting approval.`,
+      school: activity.schoolId,
+    });
+
     // Ask the uploader's own approver to review it. Runs after the response and
     // must never throw — see the unhandledRejection note in server.js.
     try {
@@ -134,6 +146,15 @@ exports.updateActivity = async (req, res) => {
 
     const previousStatus = activity.status;
     const previousMedia = [...(activity.mediaUrls || [])];
+    // Snapshot before the field loop below mutates the document in place —
+    // afterwards there is no "before" left to diff against.
+    const before = {
+      name: activity.name,
+      description: activity.description,
+      schoolId: activity.schoolId ? String(activity.schoolId) : null,
+      activityDate: activity.activityDate,
+      organizers: (activity.organizers || []).map(String),
+    };
 
     // Update fields
     const allowedFields = ['name', 'description', 'schoolId', 'organizers', 'mediaUrls', 'activityDate'];
@@ -143,13 +164,58 @@ exports.updateActivity = async (req, res) => {
       }
     });
 
+    // One row per edit, whoever made it. An edit by the uploader is as much a
+    // change to the record as an approval is, and it is the change most likely
+    // to be disputed later ("that is not what I approved").
+    const logEdit = () => {
+      if (!changes.changed) return;
+      trail({
+        entityType: 'activity',
+        entityId: activity._id,
+        entityLabel: activity.name,
+        subject: { _id: activity.uploaderId },
+        actor: req.user,
+        action: 'updated',
+        note: changes.summary(),
+        school: activity.schoolId,
+      });
+    };
+
     // Removing a photo in the edit screen has to remove it from the cloud too.
     // Until now the URL was simply dropped from the document and the file stayed
     // in the Cloudinary account forever, unreferenced and unreachable — there was
     // no longer anything anywhere that knew it existed.
     const keptMedia = new Set(activity.mediaUrls || []);
     const droppedMedia = previousMedia.filter((url) => !keptMedia.has(url));
-    if (droppedMedia.length) await purgeAssets(droppedMedia);
+    let mediaPurge = null;
+    if (droppedMedia.length) {
+      mediaPurge = await purgeAssets(droppedMedia);
+      // A photo the cloud would not release keeps its URL on the activity. Its
+      // URL is the only handle left on that file, so dropping it from the
+      // document would strand the file in the account permanently — and the
+      // edit screen would report a deletion that did not happen.
+      const stranded = droppedMedia.filter((url) => !mediaPurge.gone.includes(url));
+      if (stranded.length) activity.mediaUrls = [...(activity.mediaUrls || []), ...stranded];
+    }
+
+    // What moved, for the log. Photos are counted rather than listed: a row
+    // saying "photos/videos: 5 → 3" is readable, five Cloudinary URLs are not.
+    const changes = trackChanges()
+      .field('name', before.name, activity.name)
+      .field('description', before.description, activity.description)
+      .field('school', before.schoolId, activity.schoolId ? String(activity.schoolId) : null,
+        (v) => (v ? 'changed' : '(none)'))
+      .field('date', before.activityDate, activity.activityDate)
+      .count('organisers', before.organizers, (activity.organizers || []).map(String))
+      .count('photos/videos', previousMedia, activity.mediaUrls || []);
+
+    if (mediaPurge) {
+      changes.note(
+        mediaPurge.ok
+          ? `${mediaPurge.deleted + mediaPurge.missing} removed file(s) deleted from cloud storage`
+          : `${mediaPurge.failed} removed file(s) could NOT be deleted from cloud storage and were kept on the activity`
+      );
+    }
 
     if (req.user.role === 'creator_admin') {
       // Admin edits are trusted: auto-approve and don't send it back into the
@@ -166,7 +232,7 @@ exports.updateActivity = async (req, res) => {
         subject: { _id: activity.uploaderId },
         actor: req.user,
         action: 'auto_approved',
-        note: 'Approved automatically as part of an Admin edit.',
+        note: `Approved automatically as part of an Admin edit. ${changes.summary('No fields changed.')}`,
         school: activity.schoolId,
         at: decidedAt,
       });
@@ -184,8 +250,11 @@ exports.updateActivity = async (req, res) => {
       } catch (e) {
         console.error('Activity re-approval notification error:', e.message);
       }
+      changes.note(`sent back for approval (was ${previousStatus})`);
+      logEdit();
     } else {
       await activity.save();
+      logEdit();
     }
 
     res.status(200).json({ success: true, data: activity });
@@ -322,12 +391,29 @@ exports.toggleStarActivity = async (req, res) => {
     // Default to starring; allow explicit unstar via { starred: false }.
     const starred = req.body.starred === undefined ? true : !!req.body.starred;
 
+    const wasStarred = !!activity.isStarred;
     activity.isStarred = starred;
     activity.starredBy = starred ? req.user._id : null;
     activity.starredAt = starred ? new Date() : null;
     await activity.save();
 
     res.status(200).json({ success: true, data: activity });
+
+    // Starring is a judgement a head makes about someone else's work and it is
+    // shown to the whole team, so it belongs beside the approvals rather than
+    // only in the notification that announces it.
+    if (wasStarred !== starred) {
+      trail({
+        entityType: 'activity',
+        entityId: activity._id,
+        entityLabel: activity.name,
+        subject: { _id: activity.uploaderId },
+        actor: req.user,
+        action: 'updated',
+        note: starred ? 'Marked as a Star Activity.' : 'Star Activity mark removed.',
+        school: activity.schoolId,
+      });
+    }
 
     // Notify the uploader when their activity is starred.
     if (starred) {
@@ -465,9 +551,12 @@ exports.deleteActivityMedia = async (req, res) => {
       subject: activity.uploaderId,
       actor: req.user,
       action: 'media_deleted',
+      // purgeSummary carries the verification caveat — whether the files were
+      // re-checked in the cloud or the check itself could not be made — so the
+      // log never claims proof it does not have.
       note: purge.ok
-        ? `${removed} photo/video file(s) permanently deleted from cloud storage. The activity itself was kept.`
-        : `${removed} of ${purge.requested} photo/video file(s) deleted from cloud storage; ${purge.failed} could not be removed. The activity itself was kept.`,
+        ? `${removed} photo/video file(s) permanently removed. ${purgeSummary(purge)} The activity itself was kept.`
+        : `${removed} of ${purge.requested} photo/video file(s) removed; ${purge.failed} could NOT be deleted from cloud storage. The activity itself was kept.`,
       school: activity.schoolId,
     });
 

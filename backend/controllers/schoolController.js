@@ -1,5 +1,6 @@
 const School = require('../models/School');
-const { purgeAssets } = require('../utils/cloudinary');
+const { purgeAssets, purgeSummary } = require('../utils/cloudinary');
+const { trail } = require('../utils/approvalTrail');
 const User = require('../models/User');
 
 exports.getSchools = async (req, res) => {
@@ -33,6 +34,15 @@ exports.createSchool = async (req, res) => {
   try {
     const school = await School.create(req.body);
     res.status(201).json({ success: true, data: school });
+
+    trail({
+      entityType: 'school',
+      entityId: school._id,
+      entityLabel: `School · ${school.name}`,
+      actor: req.user,
+      action: 'created',
+      school,
+    });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
@@ -65,11 +75,30 @@ exports.uploadMou = async (req, res) => {
     // Replacing the MOU orphans the document it replaced: this field was the
     // only thing that knew the old file's URL, and it has just been overwritten.
     // Best-effort — a storage hiccup must not fail an upload that succeeded.
+    let purge = null;
     if (previousMou && previousMou !== school.mouPdfUrl) {
-      await purgeAssets([previousMou]);
+      purge = await purgeAssets([previousMou]);
     }
-    
-    res.status(200).json({ success: true, data: school });
+
+    res.status(200).json({
+      success: true,
+      data: school,
+      ...(purge ? { cloud: { deleted: purge.deleted, missing: purge.missing, failed: purge.failed } } : {}),
+    });
+
+    // Replacing an MOU both adds a document and destroys the one it replaced.
+    // Neither half is visible anywhere else once it has happened.
+    trail({
+      entityType: 'school',
+      entityId: school._id,
+      entityLabel: `School · ${school.name}`,
+      actor: req.user,
+      action: 'updated',
+      note: previousMou
+        ? `MOU replaced. ${purge ? purgeSummary(purge) : 'The previous file was left in place.'}`
+        : 'MOU uploaded.',
+      school,
+    });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }

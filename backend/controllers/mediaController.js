@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Media = require('../models/Media');
 const { purgeAssets, purgeSummary, purgeProblem } = require('../utils/cloudinary');
 const { decisionOf, trail } = require('../utils/approvalTrail');
+const { trackChanges } = require('../utils/changeSummary');
 const { ADMIN_ROLES } = require('../utils/roles');
 
 /**
@@ -68,6 +69,18 @@ exports.createMedia = async (req, res) => {
 
     const media = await Media.create(req.body);
     res.status(201).json({ success: true, data: media });
+
+    trail({
+      entityType: 'media',
+      entityId: media._id,
+      entityLabel: media.description || 'Gallery item',
+      subject: req.user,
+      actor: req.user,
+      action: 'created',
+      note: media.status === 'approved'
+        ? `Banner uploaded and published immediately (Admin upload). Hidden from ${(media.hiddenFor || []).length} person(s).`
+        : 'Banner uploaded; awaiting approval.',
+    });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
@@ -98,6 +111,14 @@ exports.updateMedia = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Nothing to update' });
     }
 
+    // Read first so the log can say what actually changed. findByIdAndUpdate
+    // returns only the new document, and "description edited" is a different
+    // fact from "audience narrowed by four people".
+    const previous = await Media.findById(req.params.id).select('description hiddenFor uploaderId');
+    if (!previous) {
+      return res.status(404).json({ success: false, error: 'Media not found' });
+    }
+
     const media = await Media.findByIdAndUpdate(req.params.id, update, {
       returnDocument: 'after',
       runValidators: true,
@@ -110,6 +131,22 @@ exports.updateMedia = async (req, res) => {
     }
 
     res.status(200).json({ success: true, data: media });
+
+    const changes = trackChanges()
+      .field('description', previous.description, media.description)
+      .count('hidden from', (previous.hiddenFor || []).map(String), (media.hiddenFor || []).map((u) => String(u._id || u)));
+
+    if (changes.changed) {
+      trail({
+        entityType: 'media',
+        entityId: media._id,
+        entityLabel: media.description || 'Gallery item',
+        subject: previous.uploaderId,
+        actor: req.user,
+        action: 'updated',
+        note: changes.summary(),
+      });
+    }
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }

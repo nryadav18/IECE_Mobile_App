@@ -168,8 +168,31 @@ exports.deleteHoliday = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not authorized to delete this holiday' });
     }
 
+    // Read for the log while the document is still here — after deleteOne()
+    // there is nothing left to name the date or the applicant.
+    const snapshot = {
+      _id: holiday._id,
+      date: holiday.date,
+      status: holiday.status,
+      appliedBy: holiday.appliedBy,
+      schoolId: holiday.schoolId,
+    };
+
     await holiday.deleteOne();
     res.status(200).json({ success: true, data: {} });
+
+    trail({
+      entityType: 'holiday',
+      entityId: snapshot._id,
+      entityLabel: `School holiday · ${snapshot.date}`,
+      subject: snapshot.appliedBy,
+      actor: req.user,
+      action: 'deleted',
+      note: isApplicant && !isAdmin
+        ? `Withdrawn by the applicant while still ${snapshot.status}.`
+        : `Deleted by the Admin (was ${snapshot.status}).`,
+      school: snapshot.schoolId,
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server error' });

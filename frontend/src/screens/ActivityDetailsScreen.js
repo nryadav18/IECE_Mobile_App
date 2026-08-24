@@ -13,6 +13,7 @@ import Avatar from '../components/Avatar';
 import ApprovedBy from '../components/ApprovedBy';
 import { Skeleton, SkeletonCircle, SkeletonDetail } from '../components/Skeleton';
 import DownloadButton from '../components/DownloadButton';
+import ActivityCover from '../components/ActivityCover';
 
 const { width } = Dimensions.get('window');
 
@@ -165,7 +166,7 @@ export default function ActivityDetailsScreen({ route, navigation }) {
           </View>
         )}
 
-        {activity.mediaUrls && activity.mediaUrls.length > 0 && (
+        {mediaCount > 0 ? (
           <View style={styles.carouselContainer}>
             <Carousel
               loop={false}
@@ -174,6 +175,15 @@ export default function ActivityDetailsScreen({ route, navigation }) {
               data={activity.mediaUrls}
               renderItem={renderMediaItem}
             />
+          </View>
+        ) : (
+          // No photos and no videos — either it was uploaded without any, or
+          // the Admin emptied it to free cloud storage. This used to collapse
+          // the whole section, so the screen opened straight on the title and
+          // read as half-loaded. The IECE mark is a deliberate stand-in: it
+          // says "there is nothing to show here", not "something went wrong".
+          <View style={styles.carouselContainer}>
+            <ActivityCover activity={activity} width={width} height={width * 0.75} radius={0} />
           </View>
         )}
 

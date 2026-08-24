@@ -1,4 +1,6 @@
 const Occasion = require('../models/Occasion');
+const { trail } = require('../utils/approvalTrail');
+const { trackChanges } = require('../utils/changeSummary');
 
 /**
  * Celebration-calendar overrides.
@@ -91,6 +93,11 @@ exports.upsertOccasion = async (req, res) => {
       update.recurring = { month: recurring.month, day: recurring.day };
     }
 
+    // Read first so an upsert can tell the log which of its two jobs it did.
+    // "Diwali created" and "Diwali edited" are different events and a single
+    // "saved" row would collapse them into one.
+    const previous = await Occasion.findOne({ key }).lean();
+
     const occasion = await Occasion.findOneAndUpdate(
       { key },
       { $set: update, $setOnInsert: { key, createdBy: req.user._id } },
@@ -98,6 +105,41 @@ exports.upsertOccasion = async (req, res) => {
     ).lean();
 
     res.json({ success: true, data: occasion });
+
+    if (!previous) {
+      trail({
+        entityType: 'occasion',
+        entityId: occasion._id,
+        entityLabel: `Celebration · ${occasion.name || occasion.key}`,
+        actor: req.user,
+        action: 'created',
+        note: `Override added for "${key}".`,
+      });
+    } else {
+      const changes = trackChanges()
+        .field('name', previous.name, occasion.name)
+        .field('wish', previous.wish, occasion.wish)
+        .field('subtitle', previous.subtitle, occasion.subtitle)
+        .field('person', previous.person, occasion.person)
+        .field('date', previous.date, occasion.date)
+        .field('scene', previous.scene, occasion.scene)
+        .field('emblem', previous.emblem, occasion.emblem)
+        .field('priority', previous.priority, occasion.priority)
+        .field('muted', !!previous.muted, !!occasion.muted)
+        .count('palette colours', previous.palette, occasion.palette)
+        .count('tags', previous.tags, occasion.tags);
+
+      if (changes.changed) {
+        trail({
+          entityType: 'occasion',
+          entityId: occasion._id,
+          entityLabel: `Celebration · ${occasion.name || occasion.key}`,
+          actor: req.user,
+          action: 'updated',
+          note: changes.summary(),
+        });
+      }
+    }
   } catch (err) {
     console.error('upsertOccasion:', err.message);
     res.status(500).json({ success: false, message: 'Could not save that occasion.' });
@@ -117,6 +159,15 @@ exports.deleteOccasion = async (req, res) => {
       return res.status(404).json({ success: false, message: 'No override exists for that occasion.' });
     }
     res.json({ success: true, message: 'Override removed.' });
+
+    trail({
+      entityType: 'occasion',
+      entityId: removed._id,
+      entityLabel: `Celebration · ${removed.name || removed.key}`,
+      actor: req.user,
+      action: 'deleted',
+      note: `Override removed — "${key}" is back to its bundled defaults.`,
+    });
   } catch (err) {
     console.error('deleteOccasion:', err.message);
     res.status(500).json({ success: false, message: 'Could not remove that override.' });

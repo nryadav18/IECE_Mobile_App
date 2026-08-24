@@ -1,8 +1,16 @@
 const mongoose = require('mongoose');
 
-// The kinds of thing that can be decided in this app. Kept as a flat list (not
-// a ref) because the log spans nine unrelated collections and a polymorphic ref
-// would buy nothing — nothing here ever needs to populate the target document.
+// The kinds of thing that can be decided OR CHANGED in this app. Kept as a flat
+// list (not a ref) because the log spans a dozen unrelated collections and a
+// polymorphic ref would buy nothing — nothing here ever needs to populate the
+// target document.
+//
+// The first nine are request-shaped: somebody asks, somebody decides. The rest
+// are record-shaped: the Admin creates, edits or removes them outright, with no
+// decision in between. Both belong here for the same reason — the log is the
+// answer to "who changed this and when", and a record that was quietly edited
+// is exactly as hard to reconstruct afterwards as a request that was quietly
+// approved.
 const APPROVAL_ENTITY_TYPES = [
   'leave',
   'substitution',
@@ -13,6 +21,12 @@ const APPROVAL_ENTITY_TYPES = [
   'visit_report',
   'media',
   'admin_account',
+  // Records the Admin maintains directly.
+  'user',
+  'school',
+  'team',
+  'meeting',
+  'occasion',
 ];
 
 const APPROVAL_ACTIONS = [
@@ -27,6 +41,13 @@ const APPROVAL_ACTIONS = [
   'deleted',
   // The item survives; its photos/videos were removed from cloud storage.
   'media_deleted',
+  // An edit. The `note` carries which fields moved and what they moved to —
+  // see utils/changeSummary.js. Secrets are recorded as "changed", never as
+  // their value.
+  'updated',
+  // A school is archived rather than destroyed, and can come back.
+  'archived',
+  'restored',
 ];
 
 /**

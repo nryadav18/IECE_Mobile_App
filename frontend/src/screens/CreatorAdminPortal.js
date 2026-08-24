@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../components/Avatar';
 import ApprovedBy from '../components/ApprovedBy';
+import ActivityCover from '../components/ActivityCover';
 import CustomAlert from '../components/CustomAlert';
 import CustomDropdown from '../components/CustomDropdown';
 import EditReportModal from '../components/EditReportModal';
@@ -737,8 +738,13 @@ export default function CreatorAdminPortal({ navigation, route }) {
                   {activitiesLoading ? <ActivityIndicator color={theme.colors.primary} /> : (
                     schoolActivities.length > 0 ? schoolActivities.map(act => (
                       <View key={act._id} style={styles.activityItem}>
-                        <Text style={{ color: theme.colors.textPrimary, fontWeight: 'bold' }}>{act.name}</Text>
-                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Trainer: {act.uploaderId?.name || 'N/A'}</Text>
+                        <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+                          <ActivityCover activity={act} size={48} radius={10} style={{ marginRight: 10 }} />
+                          <View style={{ flex: 1, justifyContent: 'center' }}>
+                            <Text style={{ color: theme.colors.textPrimary, fontWeight: 'bold' }}>{act.name}</Text>
+                            <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Trainer: {act.uploaderId?.name || 'N/A'}</Text>
+                          </View>
+                        </View>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
                           <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Date: {act.activityDate ? new Date(act.activityDate).toLocaleDateString() : 'N/A'}</Text>
                           <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: act.status === 'approved' ? '#4CAF5020' : act.status === 'rejected' ? '#FF444420' : '#FFC10720' }}>

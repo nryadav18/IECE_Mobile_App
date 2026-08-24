@@ -21,7 +21,6 @@ import SidebarMenu from '../components/SidebarMenu';
 import NotificationBell from '../components/NotificationBell';
 import CountBadge from '../components/CountBadge';
 import { useBadges } from '../context/BadgeContext';
-import { Image } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { useAlert } from '../context/AlertContext';
 import { isOffToday, HOLIDAY_APPROVED_COLOR, HOLIDAY_PENDING_COLOR } from '../utils/holiday';
@@ -32,6 +31,7 @@ import CalendarLegend from '../components/CalendarLegend';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import { SectionSkeleton } from '../components/Skeleton';
 import LazyTab from '../components/LazyTab';
+import ActivityCover from '../components/ActivityCover';
 import MonitoringDashboard from '../components/monitoring/MonitoringDashboard';
 import { useSectionTransition } from '../hooks/useSectionTransition';
 
@@ -738,13 +738,7 @@ export default function TeamLeaderPortal({ navigation, route }) {
            myActivities.map(evt => (
              <View key={evt._id} style={[styles.eventCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                <View style={{ flexDirection: 'row', marginBottom: 16 }}>
-                 {evt.mediaUrls && evt.mediaUrls.length > 0 ? (
-                   <Image source={{ uri: evt.mediaUrls[0] }} style={{ width: 80, height: 80, borderRadius: 12, resizeMode: 'cover', marginRight: 16 }} />
-                 ) : (
-                   <View style={{ width: 80, height: 80, borderRadius: 12, backgroundColor: theme.colors.border, marginRight: 16, justifyContent: 'center', alignItems: 'center' }}>
-                     <Ionicons name="image-outline" size={32} color={theme.colors.textSecondary} />
-                   </View>
-                 )}
+                 <ActivityCover activity={evt} size={80} style={{ marginRight: 16 }} />
                  <View style={{ flex: 1, justifyContent: 'center' }}>
                    <Text style={[styles.eventTitle, { color: theme.colors.textPrimary }]} numberOfLines={2}>{evt.name}</Text>
                    <Text style={[styles.eventDate, { color: theme.colors.textSecondary }]}>{new Date(evt.activityDate).toLocaleDateString()}</Text>

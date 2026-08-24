@@ -1,5 +1,5 @@
 import React, { useContext, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { MotiView } from 'moti';
 import { ThemeContext } from '../context/ThemeContext';
@@ -22,6 +22,7 @@ import AttendanceSection from '../components/AttendanceSection';
 import ApplyHolidaySection from '../components/ApplyHolidaySection';
 import CreateActivityForm from '../components/CreateActivityForm';
 import EditActivityModal from '../components/EditActivityModal';
+import ActivityCover from '../components/ActivityCover';
 import { useSectionTransition } from '../hooks/useSectionTransition';
 import { roleLabel } from '../utils/roles';
 
@@ -470,13 +471,7 @@ export default function HeadPortal({ navigation, route }) {
               myActivities.map((evt) => (
                 <View key={evt._id} style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
                   <View style={{ flexDirection: 'row', marginBottom: 16 }}>
-                    {evt.mediaUrls && evt.mediaUrls.length > 0 ? (
-                      <Image source={{ uri: evt.mediaUrls[0] }} style={{ width: 80, height: 80, borderRadius: 12, resizeMode: 'cover', marginRight: 16 }} />
-                    ) : (
-                      <View style={{ width: 80, height: 80, borderRadius: 12, backgroundColor: theme.colors.border, marginRight: 16, justifyContent: 'center', alignItems: 'center' }}>
-                        <Ionicons name="image-outline" size={32} color={theme.colors.textSecondary} />
-                      </View>
-                    )}
+                    <ActivityCover activity={evt} size={80} style={{ marginRight: 16 }} />
                     <View style={{ flex: 1, justifyContent: 'center' }}>
                       <Text style={{ color: theme.colors.textPrimary, fontSize: 16, fontWeight: '700' }} numberOfLines={2}>{evt.name}</Text>
                       <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginTop: 4 }}>
