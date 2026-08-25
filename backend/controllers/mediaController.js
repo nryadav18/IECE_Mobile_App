@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const Media = require('../models/Media');
-const { purgeAssets, purgeSummary, purgeProblem } = require('../utils/cloudinary');
+const { purgeAssets, purgeSummary, purgeProblem } = require('../utils/storage');
 const { decisionOf, trail } = require('../utils/approvalTrail');
 const { trackChanges } = require('../utils/changeSummary');
 const { ADMIN_ROLES } = require('../utils/roles');

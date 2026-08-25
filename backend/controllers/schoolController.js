@@ -1,5 +1,5 @@
 const School = require('../models/School');
-const { purgeAssets, purgeSummary } = require('../utils/cloudinary');
+const { purgeAssets, purgeSummary } = require('../utils/storage');
 const { trail } = require('../utils/approvalTrail');
 const User = require('../models/User');
 

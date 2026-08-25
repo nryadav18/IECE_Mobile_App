@@ -1,4 +1,4 @@
-const { purgeAssets } = require('./cloudinary');
+const { purgeAssets } = require('./storage');
 
 // ---------------------------------------------------------------------------
 // THE FACIAL REGISTRATION VIDEO IS A TEMPORARY ARTEFACT.

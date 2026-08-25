@@ -62,6 +62,14 @@ app.use(approverVisibility);
 const { monitoringInvalidate } = require('./middleware/monitoringInvalidate');
 app.use(monitoringInvalidate);
 
+// Facial registration videos live in a PRIVATE bucket and are stored as
+// references, not URLs. This turns a reference into a short-lived signed URL on
+// the way out, for the Admin only. Global for the same reason as the two above:
+// a route added later cannot forget to do it, and cannot leak a face capture to
+// somebody the endpoint itself would refuse.
+const { signedAssets } = require('./middleware/signedAssets');
+app.use(signedAssets);
+
 // Route files
 const authRoutes = require('./routes/authRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');

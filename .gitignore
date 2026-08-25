@@ -82,3 +82,7 @@ frontend/android/
 # copies only, and none of them belong in the repository.
 backend/Performance_Report_*.pdf
 backend/IECE_Monthly_Performance_*.pdf
+
+# Migration audit reports (contain asset URLs; regenerate with scripts/r2/00-audit.js)
+backend/scripts/r2/output/
+.env.bak.*

@@ -3,7 +3,7 @@ const School = require('../models/School');
 const Attendance = require('../models/Attendance');
 const axios = require('axios');
 const FormData = require('form-data');
-const cloudinary = require('cloudinary').v2;
+const { putFaceVideo } = require('../utils/storage');
 const { purgeFaceVideo, purgeLegacyFaceVideo } = require('../utils/faceVideo');
 const { notifyRole } = require('../utils/pushNotification');
 const { notify } = require('../utils/notify');
@@ -88,15 +88,16 @@ exports.registerFace = async (req, res) => {
     
     const embedding = mlResponse.data.embedding;
 
-    const b64 = Buffer.from(req.file.buffer).toString('base64');
-    const dataURI = "data:" + req.file.mimetype + ";base64," + b64;
-    
-    let result = { secure_url: null };
-    try {
-      result = await cloudinary.uploader.upload(dataURI, { folder: 'facial_registrations', resource_type: 'video' });
-    } catch (err) {
-      console.error('Cloudinary upload failed:', err);
-    }
+    // Under R2 this lands in the PRIVATE bucket and comes back as a reference
+    // (`r2:...`) rather than a URL, because a signed URL expires and must never
+    // be persisted. middleware/signedAssets.js signs it on the way out, for the
+    // Admin alone. Best-effort exactly as before: the embedding is already
+    // computed, and a storage hiccup must not stop somebody registering.
+    const storedRef = await putFaceVideo(req.file.buffer, req.file.mimetype, {
+      userId: req.user.id,
+      schoolId: null,
+    });
+    const result = { secure_url: storedRef };
 
     const user = await User.findById(req.user.id);
 
@@ -350,15 +351,13 @@ exports.registerFaceV2 = async (req, res) => {
       return res.status(400).json({ success: false, message: 'No face detected. Please keep your face clearly in the frame, blink 2–3 times, and try again.' });
     }
 
-    const b64 = Buffer.from(req.file.buffer).toString('base64');
-    const dataURI = "data:" + req.file.mimetype + ";base64," + b64;
-
-    let result = { secure_url: null };
-    try {
-      result = await cloudinary.uploader.upload(dataURI, { folder: 'facial_registrations_v2', resource_type: 'video' });
-    } catch (err) {
-      console.error('Cloudinary upload failed:', err);
-    }
+    // PRIVATE bucket under R2 — see the note in registerFace above. `schoolId` is
+    // null for an anonymous head, which is a real state, not a missing value.
+    const storedRef = await putFaceVideo(req.file.buffer, req.file.mimetype, {
+      userId: user._id,
+      schoolId: anonymous ? null : schoolId,
+    });
+    const result = { secure_url: storedRef };
 
     // For an anonymous head this is a note of where they happened to be, not an
     // anchor anything is measured against; it may legitimately be empty.

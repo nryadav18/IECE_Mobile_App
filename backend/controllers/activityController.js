@@ -6,7 +6,7 @@ const { notify } = require('../utils/notify');
 const { getApproverIdsFor, canApproveFor } = require('../utils/hierarchy');
 const { ROLE_LABELS } = require('../utils/roleLabels');
 const { decisionOf, trail } = require('../utils/approvalTrail');
-const { purgeAssets, purgeSummary, purgeProblem } = require('../utils/cloudinary');
+const { purgeAssets, purgeSummary, purgeProblem } = require('../utils/storage');
 const { trackChanges } = require('../utils/changeSummary');
 
 const roleLabel = (role) => ROLE_LABELS[role] || role;
