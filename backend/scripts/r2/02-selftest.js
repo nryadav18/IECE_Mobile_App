@@ -38,7 +38,7 @@ let pass = 0, fail = 0;
 const check = (name, ok, detail='') => { ok ? pass++ : fail++; console.log(`  ${ok?'PASS':'FAIL'}  ${name}${detail?'   '+detail:''}`); };
 
 (async () => {
-  console.log('\n  PHASE 2 END-TO-END  (driver: ' + storage.driver() + ')\n');
+  console.log('\n  PHASE 2 STORAGE SELF-TEST  (driver: ' + storage.driver() + ')\n');
 
   // ---------- a real photo, deliberately portrait + oversized + EXIF-rotated ----------
   const imgPath = tmp('e2e-photo.jpg');

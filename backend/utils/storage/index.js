@@ -62,16 +62,6 @@ const upload = driver() === 'r2' ? diskUpload : legacy.upload;
  * Putting one uploaded file where it belongs                          *
  * ------------------------------------------------------------------ */
 
-const videoContentType = (ext) => ({
-  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
-}[ext] || 'video/mp4');
-
-const docContentType = (ext) => ({
-  pdf: 'application/pdf',
-  doc: 'application/msword',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-}[ext] || 'application/octet-stream');
-
 /**
  * Store one uploaded file, plus everything derived from it.
  *
@@ -124,7 +114,7 @@ async function storeUploadedFile(file) {
       bucket: cfg.bucketPublic,
       key: info.key,
       filePath: file.path,
-      contentType: videoContentType(info.extension),
+      contentType: keys.contentTypeFor(info.extension),
     });
     written.push(info.key);
 
@@ -149,8 +139,8 @@ async function storeUploadedFile(file) {
       key: info.key,
       filePath: file.path,
       contentType: info.kind === 'doc'
-        ? docContentType(info.extension)
-        : (file.mimetype || 'application/octet-stream'),
+        ? keys.contentTypeFor(info.extension)
+        : (file.mimetype || keys.contentTypeFor(info.extension)),
     });
     written.push(info.key);
   }

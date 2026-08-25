@@ -1,7 +1,8 @@
 # Cloudinary → Cloudflare R2 Migration Runbook
 
-**Status:** Phases 0, 1 and 2 BUILT. Gates 0 and 1 clear. Phase 2 is written and self-tested
-but NOT yet enabled — `STORAGE_DRIVER` is still `cloudinary`.
+**Status:** Phases 0–5 are all BUILT. Gates 0 and 1 clear. Phase 2 self-tests 26/26 on the
+production VPS but is NOT yet enabled — `STORAGE_DRIVER` is still `cloudinary`. Phase 3 has
+copied 8 of 189 files as a proving run; Gate 4 correctly refuses to open until the rest follow.
 **App state:** live in production (mobile + web portal).
 **Guiding rule:** at no point in this plan is a file deleted from Cloudinary before an
 identical, byte-verified copy exists in R2 *and* the database has been pointed at it
@@ -451,6 +452,31 @@ loudly if Cloudinary starts returning the account-suspended signature that
 
 **The app is not touched in this phase. Cloudinary still serves every byte.**
 
+#### Phase 3 build results — proving run of 8 files
+
+59.3 MB copied in 20 seconds, every video with its poster, every image with two variants.
+An independent check re-downloaded all eight from `cdn.iece.org.in` and compared SHA-256
+against the ledger: **all identical**, correct `Content-Type` on every one, and every
+poster present at the exact URL an installed build guesses.
+
+**Two more bugs found by running it, both of which would have reached production:**
+
+1. **Two files would have been permanently unreachable.** Two leave-proof PDFs are named
+   `iece_mous/1787651280546-Priya%20Weeding%20invitation%20card-1` — with a *literal*
+   percent-two-zero in the name, because Cloudinary stored an already-encoded filename and
+   encoded it again for delivery (the stored URL reads `%2520`). Building the R2 URL by
+   concatenation gives `…Priya%20Weeding…`, which a client decodes back to
+   `…Priya Weeding…` — a *different key*. The object would have uploaded fine and then
+   404'd forever, and the delete path would never have found it either.
+   **Fixed:** `publicUrl` percent-encodes each path segment and `keyFromPublicUrl` is its
+   exact inverse; Phase 4 round-trips every stored URL as a hard check.
+
+2. **A real PDF would have stayed unopenable.** Those same two files carry no extension at
+   all, and Cloudinary serves them as `application/octet-stream` — despite their first
+   bytes reading `%PDF-1.5`. Copying that header across would have faithfully reproduced a
+   file the app cannot open. **Fixed:** content type is decided by extension first, then by
+   sniffing the actual bytes, and only then by what the source claimed.
+
 ### PHASE 4 — Verify
 
 `scripts/r2/04-verify.js` — must be **100% green**, no exceptions:
@@ -464,6 +490,11 @@ loudly if Cloudinary starts returning the account-suspended signature that
 7. `count(verified) === count(distinct referenced URLs)`.
 
 > **GATE 4** — one single unverified file stops the migration. Fix, re-run, then continue.
+
+Confirmed working: with 8 of 249 files copied, Gate 4 refused to open and named the
+241 referenced URLs that had no ledger row. It derives its own scope from MongoDB rather
+than trusting the ledger, precisely so a migration that silently skipped files cannot
+report a clean bill of health.
 
 ### PHASE 5 — Flip the URLs, one collection at a time
 
@@ -485,6 +516,12 @@ Rollback for any step: `node scripts/r2/05-flip.js --model=Media --rollback`, wh
 using the same mapping rows. Cloudinary is still live, so the reverted URLs work instantly.
 
 *Optional but cheap:* `mongodump` the `activities` and `users` collections before steps 5 and 6.
+
+Every update is **matched on the old value**, not on position: the write applies only if the
+field still holds exactly the URL the ledger recorded. So it cannot clobber something a user
+changed mid-migration, cannot corrupt an array whose order shifted, and running it twice does
+nothing the second time. `--list` shows every step and where it stands; `--dry-run` prints the
+exact pairs.
 
 > **GATE 5** — after each collection, open the app on a real phone and look at that feature.
 
@@ -545,13 +582,14 @@ backend/middleware/signedAssets.js   backend/scripts/r2/lib/r2client.js
                                      backend/scripts/r2/lib/urlFields.js
 ```
 
-**Still to write:**
-
 ```
 backend/models/AssetMigration.js     backend/scripts/r2/03-copy.js       Phase 3
-                                     backend/scripts/r2/04-verify.js     Phase 4
+backend/scripts/r2/lib/references.js backend/scripts/r2/04-verify.js     Phase 4
                                      backend/scripts/r2/05-flip.js       Phase 5
 ```
+
+Nothing is left to write. `npm run` shortcuts: `r2:audit`, `r2:verify`, `r2:selftest`,
+`r2:copy`, `r2:verify-copy`, `r2:flip`.
 
 Modified so far: `routes/uploadRoutes.js`, `controllers/attendanceController.js` (2 upload
 sites), `controllers/activityController.js`, `controllers/mediaController.js`,

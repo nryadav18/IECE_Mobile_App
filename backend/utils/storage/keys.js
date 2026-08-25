@@ -142,8 +142,84 @@ function posterKey(videoKey) {
 // for one by name instead of guessing.
 const VARIANT_WIDTHS = [480, 1080];
 
+// ---------------------------------------------------------------------------
+// ONE MAPPING FROM EXTENSION TO CONTENT-TYPE.
+//
+// Both the live upload path and the migration copy job have to set this header,
+// and they must agree exactly: a video migrated as `application/octet-stream`
+// does not play, and nothing in the app reports why. Two lists in two files is
+// how that kind of disagreement happens, so there is one list, here.
+// ---------------------------------------------------------------------------
+const CONTENT_TYPES = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
+  gif: 'image/gif', heic: 'image/heic', heif: 'image/heif', bmp: 'image/bmp',
+  tif: 'image/tiff', tiff: 'image/tiff', svg: 'image/svg+xml', avif: 'image/avif',
+  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime',
+  webm: 'video/webm', avi: 'video/x-msvideo', mkv: 'video/x-matroska',
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  txt: 'text/plain; charset=utf-8',
+};
+
+/**
+ * The Content-Type for a stored object, from its extension.
+ *
+ * Falls back to `application/octet-stream`, which is the honest answer for a
+ * format we do not recognise — but a caller migrating a known image or video
+ * should never reach it, so an unexpected octet-stream in the migration report
+ * is a signal, not noise.
+ */
+function contentTypeFor(extensionOrKey) {
+  const raw = String(extensionOrKey || '');
+  const ext = (raw.includes('.') ? raw.slice(raw.lastIndexOf('.') + 1) : raw).toLowerCase();
+  return CONTENT_TYPES[ext] || 'application/octet-stream';
+}
+
+/**
+ * Identify a file from its first bytes.
+ *
+ * Needed because Cloudinary public_ids do not always carry an extension. Two of
+ * the documents in this account are stored with no extension at all and are
+ * served as `application/octet-stream` — even though their first eight bytes
+ * read `%PDF-1.5`. Copying that header across would faithfully reproduce a file
+ * the app cannot open; sniffing gives it the type it actually is.
+ *
+ * Deliberately small: only the formats this app stores, only signatures that
+ * cannot collide.
+ */
+function sniffContentType(buffer) {
+  if (!buffer || buffer.length < 12) return null;
+  const hex = buffer.subarray(0, 12).toString('hex').toLowerCase();
+  const ascii = buffer.subarray(0, 12).toString('latin1');
+
+  if (ascii.startsWith('%PDF-')) return 'application/pdf';
+  if (hex.startsWith('ffd8ff')) return 'image/jpeg';
+  if (hex.startsWith('89504e470d0a1a0a')) return 'image/png';
+  if (ascii.startsWith('GIF87a') || ascii.startsWith('GIF89a')) return 'image/gif';
+  if (ascii.startsWith('RIFF') && buffer.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  // ISO base media: the box type sits at bytes 4-8.
+  if (buffer.subarray(4, 8).toString('latin1') === 'ftyp') {
+    const brand = buffer.subarray(8, 12).toString('latin1');
+    if (brand.startsWith('qt')) return 'video/quicktime';
+    if (brand.startsWith('avif') || brand.startsWith('mif1')) return 'image/avif';
+    if (brand.startsWith('heic') || brand.startsWith('heix') || brand.startsWith('hevc')) return 'image/heic';
+    return 'video/mp4';
+  }
+  if (hex.startsWith('1a45dfa3')) return 'video/webm';
+  // ZIP container — .docx and .xlsx both are, so this alone is not enough to
+  // tell them apart and the extension has to win when there is one.
+  if (hex.startsWith('504b0304')) return null;
+  return null;
+}
+
 module.exports = {
   classify,
+  contentTypeFor,
+  sniffContentType,
+  CONTENT_TYPES,
   buildKey,
   faceVideoKey,
   variantKey,

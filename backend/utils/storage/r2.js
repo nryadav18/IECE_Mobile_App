@@ -58,8 +58,32 @@ function s3() {
  * References and URLs                                                 *
  * ------------------------------------------------------------------ */
 
+// ---------------------------------------------------------------------------
+// A KEY IS NOT A URL PATH.
+//
+// The key is raw bytes; the URL path is percent-encoded. For every key this app
+// generates the two look identical, because new keys are sanitised down to
+// [A-Za-z0-9-_./]. Migrated keys are not — they are whatever Cloudinary's
+// public_id happened to be.
+//
+// Two real files in this account are named
+//   iece_mous/1787651280546-Priya%20Weeding%20invitation%20card-1
+// with a LITERAL percent-two-zero in the name (Cloudinary stored the URL-encoded
+// filename and then encoded it again for delivery, so the stored URL reads
+// `%2520`). Building a URL by concatenation would produce `...Priya%20Weeding...`,
+// which a client decodes back to `...Priya Weeding...` — a different key. The
+// object would upload successfully and then be permanently unreachable, and the
+// delete path would never find it either.
+//
+// So the URL is built by encoding each path segment, and keyFromPublicUrl
+// decodes it back. The two are exact inverses, and there is a round-trip check
+// over every migrated key in scripts/r2/04-verify.js.
+// ---------------------------------------------------------------------------
+
+const encodeKey = (key) => String(key).split('/').map(encodeURIComponent).join('/');
+
 /** `https://cdn.iece.org.in/iece_images/x.jpg` for a public key. */
-const publicUrl = (key) => `${config().publicBaseUrl}/${key}`;
+const publicUrl = (key) => `${config().publicBaseUrl}/${encodeKey(key)}`;
 
 /** `r2:iece-faces/facial_registrations_v2/x.mp4` for a private key. */
 const privateRef = (key) => `${PRIVATE_SCHEME}${config().bucketPrivate}/${key}`;
@@ -360,6 +384,7 @@ module.exports = {
   parsePrivateRef,
   isOurs,
   keyFromPublicUrl,
+  encodeKey,
   signPrivateRef,
   put,
   putFile,

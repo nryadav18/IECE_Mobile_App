@@ -13,7 +13,10 @@
     "test:report": "node scripts/testMonthlyReport.js",
     "r2:audit": "node scripts/r2/00-audit.js",
     "r2:verify": "node scripts/r2/01-verify.js",
-    "r2:selftest": "node scripts/r2/02-selftest.js"
+    "r2:selftest": "node scripts/r2/02-selftest.js",
+    "r2:copy": "node scripts/r2/03-copy.js",
+    "r2:verify-copy": "node scripts/r2/04-verify.js",
+    "r2:flip": "node scripts/r2/05-flip.js"
   },
   "keywords": [],
   "author": "",
