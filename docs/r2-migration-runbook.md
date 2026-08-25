@@ -1,9 +1,9 @@
 # Cloudinary → Cloudflare R2 Migration Runbook
 
-**Status:** Phases 0–4 COMPLETE. `STORAGE_DRIVER=r2` is LIVE on the VPS — new uploads go to
-R2 and one has already been confirmed in production. Phase 5 is IN PROGRESS: steps 1 and 4
-flipped and verified; **step 5 (181 activity files) is the remaining work.** Cloudinary still
-holds every original.
+**Status:** Phases 0–5 COMPLETE. **Zero live Cloudinary references remain in the database.**
+`STORAGE_DRIVER=r2` is live on the VPS. Only Phase 6 is left: seven days of watching, then
+purge and close the account. Cloudinary still holds every original until then, so every step
+remains reversible.
 **App state:** live in production (mobile + web portal).
 **Guiding rule:** at no point in this plan is a file deleted from Cloudinary before an
 identical, byte-verified copy exists in R2 *and* the database has been pointed at it
@@ -556,17 +556,33 @@ design). The real sequence is three steps:
 |---|---|---|---|
 | 1 | `Media.imageUrl` | 1 | **Flipped and verified** — serves from R2, SHA-256 matches |
 | 4 | `LeaveRequest.proofs[]` | 7 | **Flipped and verified** — all 7 byte-identical on R2 |
-| 5 | `Activity.mediaUrls[]` | 181 | Pending — the largest step |
+| 5 | `Activity.mediaUrls[]` | 181 | **Flipped and verified** — 181/181 byte-identical, 63/63 posters |
 
 Step 4 included the two double-encoded PDFs, which now serve correctly as `application/pdf`
 rather than Cloudinary's `application/octet-stream` — they will actually open in the app for
 the first time.
 
-**After step 5 the database contains no live Cloudinary references.** The 60 dangling face
-URLs remain as dead strings; they are already dead today, so closing the account changes
-nothing about them. Nulling them is optional housekeeping.
+**Done. `npm run r2:status` reports 0 Cloudinary and 191 R2 references** across all seven
+fields — 189 migrated plus 2 uploaded through the live app since the flag was set, which is
+Phase 2 confirming itself in production.
+
+The 60 stale face URLs were cleared with `npm run r2:clear-dangling`, each re-checked against
+Cloudinary immediately before writing and all 60 confirmed gone.
+
+**One thing found while enabling the frontend variants:** 29 of the 124 migrated images were
+narrower than 1080px, so the copy job had skipped their `_w1080` variant to save space. That
+made a resized URL a gamble the client cannot evaluate — a frontend asking for that width
+would have 404'd on 23% of images, and a missing variant renders as no image at all. Both the
+upload path and the copy job now write every width unconditionally, and
+`npm run r2:backfill-variants` filled the 29 gaps.
 
 ### PHASE 6 — Freeze, watch 7 days, then purge
+
+`npm run r2:purge-cloudinary` **enforces the wait itself.** It refuses to delete anything
+unless all four are true: no live Cloudinary reference remains anywhere in the database
+(checked against the collections, not the ledger); every ledger row is settled; the last flip
+was at least 7 days ago; and `--confirm` was typed. Dry run is the default. It is the only
+irreversible step in the whole migration, and it is the only script that behaves like it.
 
 1. Cloudinary is already receiving no writes (`STORAGE_DRIVER=r2` since Phase 2).
 2. Daily check: any document created after cutover containing `res.cloudinary.com` → must be **zero**.
@@ -629,8 +645,11 @@ backend/scripts/r2/lib/references.js backend/scripts/r2/04-verify.js     Phase 4
                                      backend/scripts/r2/05-flip.js       Phase 5
 ```
 
-Nothing is left to write. `npm run` shortcuts: `r2:audit`, `r2:verify`, `r2:selftest`,
-`r2:copy`, `r2:verify-copy`, `r2:flip`.
+Also built: `scripts/r2/06-purge-cloudinary.js` (Phase 6), `status.js`, `clear-dangling.js`,
+`backfill-variants.js`.
+
+`npm run` shortcuts: `r2:audit`, `r2:verify`, `r2:selftest`, `r2:copy`, `r2:verify-copy`,
+`r2:flip`, `r2:status`, `r2:clear-dangling`, `r2:backfill-variants`, `r2:purge-cloudinary`.
 
 Modified so far: `routes/uploadRoutes.js`, `controllers/attendanceController.js` (2 upload
 sites), `controllers/activityController.js`, `controllers/mediaController.js`,
