@@ -5,6 +5,8 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import ProofViewer from '../../components/ProofViewer';
+import { optimizedImageUrl } from '../../utils/media';
 import { ThemeContext } from '../../context/ThemeContext';
 import { useAlert } from '../../context/AlertContext';
 import { useBadges } from '../../context/BadgeContext';
@@ -21,7 +23,45 @@ import {
 } from '../../services/leave';
 
 const schoolsOf = (u) => (u?.schoolIds || []).map((s) => s?.name).filter(Boolean).join(', ') || '—';
+// Leave proofs are photographs. That is enforced on upload (see UPLOAD_SCOPES
+// in backend/utils/storage) against the file's actual bytes, so nothing new can
+// arrive here that is not an image.
+//
+// The non-image branch below is therefore about HISTORY, not about what the app
+// accepts: two already-approved requests carry a PDF from before the rule, and
+// those are evidence attached to decided records. They are shown as a document
+// that opens externally, which is honest about what they are. Removing the
+// branch would render them as a broken image — the one outcome this screen
+// exists to avoid.
 const isImageUrl = (url = '') => /\.(jpe?g|png|gif|webp|heic|bmp)(\?|$)/i.test(url);
+
+/**
+ * A proof thumbnail that always shows something.
+ *
+ * A bare <Image> whose URL fails renders as an empty box, and an empty box in a
+ * list of evidence reads as "there is nothing here" rather than "this did not
+ * load". The two are completely different facts to somebody deciding a leave
+ * request, so they are drawn differently.
+ */
+function ProofThumb({ url, theme }) {
+  const [failed, setFailed] = useState(false);
+  const box = { width: 44, height: 44, borderRadius: 6 };
+
+  if (failed) {
+    return (
+      <View style={[box, { backgroundColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }]}>
+        <Ionicons name="image-outline" size={20} color={theme.colors.textSecondary} />
+      </View>
+    );
+  }
+  return (
+    <Image
+      source={{ uri: optimizedImageUrl(url, 44) }}
+      style={box}
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 export default function LeaveApprovalScreen({ navigation, route }) {
   const { theme } = useContext(ThemeContext);
@@ -35,6 +75,8 @@ export default function LeaveApprovalScreen({ navigation, route }) {
   const [submitting, setSubmitting] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectNote, setRejectNote] = useState('');
+  // Which photo the full-screen viewer is showing; null when it is closed.
+  const [viewerIndex, setViewerIndex] = useState(null);
 
   /* ---------------- date editing (Admin) ----------------
    * The Admin may move a leave's window at any point it still means something:
@@ -167,7 +209,12 @@ export default function LeaveApprovalScreen({ navigation, route }) {
     }
   };
 
-  const openProof = (url) => Linking.openURL(url).catch(() => showAlert('Could not open', 'Unable to open this file.', 'error'));
+  // A photo opens in the app. A legacy document has nothing to render inline,
+  // so it still hands off to the system — and says so if that fails, rather
+  // than doing nothing.
+  const openDocument = (url) =>
+    Linking.openURL(url).catch(() =>
+      showAlert('Could not open', 'This document could not be opened on your device.', 'error'));
 
   if (loading) {
     return (
@@ -216,6 +263,10 @@ export default function LeaveApprovalScreen({ navigation, route }) {
   );
 
   const proofs = Array.isArray(request.proofs) ? request.proofs : [];
+  // Only the photos go to the viewer, and its indexes are into THIS list — not
+  // into `proofs` — or a request mixing a legacy document with photos would
+  // open the wrong one.
+  const photoUrls = proofs.filter(isImageUrl);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
@@ -293,25 +344,30 @@ export default function LeaveApprovalScreen({ navigation, route }) {
           {proofs.length === 0 ? (
             <Text style={{ color: theme.colors.textSecondary, fontSize: 13 }}>No proofs were attached.</Text>
           ) : (
-            proofs.map((url, i) => (
-              <TouchableOpacity
-                key={`${url}_${i}`}
-                onPress={() => openProof(url)}
-                style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background, borderRadius: 10, padding: 8, marginBottom: 8 }}
-              >
-                {isImageUrl(url) ? (
-                  <Image source={{ uri: url }} style={{ width: 44, height: 44, borderRadius: 6 }} />
-                ) : (
-                  <View style={{ width: 44, height: 44, borderRadius: 6, backgroundColor: theme.colors.primary + '18', alignItems: 'center', justifyContent: 'center' }}>
-                    <Ionicons name="document-text-outline" size={22} color={theme.colors.primary} />
-                  </View>
-                )}
-                <Text style={{ flex: 1, color: theme.colors.textPrimary, fontSize: 13, marginLeft: 10 }} numberOfLines={1}>
-                  {isImageUrl(url) ? `Photo ${i + 1}` : `Document ${i + 1}`}
-                </Text>
-                <Ionicons name="open-outline" size={18} color={theme.colors.primary} />
-              </TouchableOpacity>
-            ))
+            proofs.map((url, i) => {
+              const image = isImageUrl(url);
+              return (
+                <TouchableOpacity
+                  key={`${url}_${i}`}
+                  // Photos open the in-app viewer at this photo; the viewer is
+                  // given every photo so the approver can swipe between them.
+                  onPress={() => (image ? setViewerIndex(photoUrls.indexOf(url)) : openDocument(url))}
+                  style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background, borderRadius: 10, padding: 8, marginBottom: 8 }}
+                >
+                  {image ? (
+                    <ProofThumb url={url} theme={theme} />
+                  ) : (
+                    <View style={{ width: 44, height: 44, borderRadius: 6, backgroundColor: theme.colors.primary + '18', alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="document-text-outline" size={22} color={theme.colors.primary} />
+                    </View>
+                  )}
+                  <Text style={{ flex: 1, color: theme.colors.textPrimary, fontSize: 13, marginLeft: 10 }} numberOfLines={1}>
+                    {image ? `Photo ${i + 1}` : `Document ${i + 1}`}
+                  </Text>
+                  <Ionicons name={image ? 'expand-outline' : 'open-outline'} size={18} color={theme.colors.primary} />
+                </TouchableOpacity>
+              );
+            })
           )}
         </View>
 
@@ -327,6 +383,15 @@ export default function LeaveApprovalScreen({ navigation, route }) {
           </View>
         )}
       </ScrollView>
+
+      {/* Full-screen photo viewer. Kept outside the ScrollView so it covers the
+          action bar as well as the content. */}
+      <ProofViewer
+        visible={viewerIndex !== null}
+        urls={photoUrls}
+        initialIndex={viewerIndex ?? 0}
+        onClose={() => setViewerIndex(null)}
+      />
 
       {/* Action bar */}
       {!decided && (

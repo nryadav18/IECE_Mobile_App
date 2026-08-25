@@ -39,12 +39,59 @@ const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 300 * 1024 * 102
  * The multer instance used by POST /upload                            *
  * ------------------------------------------------------------------ */
 
+// ---------------------------------------------------------------------------
+// UPLOAD SCOPES.
+//
+// One route serves every kind of upload, but the kinds are not interchangeable.
+// A leave proof is looked at by an approver on a phone; a PDF there is a tap
+// out into a browser and, historically, an attachment nobody could see inline.
+// Activity media legitimately includes video. So the caller names what it is
+// uploading and the server holds it to that.
+//
+// The scope arrives as `?scope=...` on the query string RATHER than in the
+// body, deliberately: multer streams multipart fields and files in whatever
+// order the client wrote them, so a body field is not reliably parsed by the
+// time the first file needs to be judged. A query parameter is available from
+// the first byte.
+//
+// THE FILTER IS NOT THE ENFORCEMENT.
+//
+// `file.mimetype` is whatever the client wrote in the multipart header — it is
+// a claim, not a fact, and a modified client can put `image/jpeg` on a PDF. The
+// filter is there to reject the honest mistake cheaply, before anything touches
+// disk. The actual rule is enforced in finalizeUploads by looking at the bytes.
+// ---------------------------------------------------------------------------
+const UPLOAD_SCOPES = {
+  'leave-proof': {
+    accept: (mime) => /^image\//i.test(mime || ''),
+    acceptBytes: (sniffed) => /^image\//i.test(sniffed || ''),
+    message: 'Leave proofs must be photos. PDFs and documents are not accepted — '
+      + 'please attach a photo of the document instead.',
+  },
+};
+
+class UploadRejected extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'UploadRejected';
+    this.status = 400;
+  }
+}
+
+const scopeOf = (req) => UPLOAD_SCOPES[String(req.query?.scope || '').trim()] || null;
+
 const diskUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, os.tmpdir()),
     filename: (req, file, cb) => cb(null, `iece-up-${crypto.randomBytes(8).toString('hex')}`),
   }),
   limits: { fileSize: MAX_UPLOAD_BYTES },
+  fileFilter: (req, file, cb) => {
+    const scope = scopeOf(req);
+    if (!scope) return cb(null, true);
+    if (scope.accept(file.mimetype)) return cb(null, true);
+    cb(new UploadRejected(scope.message));
+  },
 });
 
 // Disk, not memory. A 200 MB activity video held as a Buffer is 200 MB of heap
@@ -180,6 +227,31 @@ async function finalizeUploads(req, res, next) {
   const tempPaths = files.map((f) => f.path);
   const writtenKeys = [];
   let failure = null;
+
+  // The bytes decide, not the header the client sent. A PDF renamed to .jpg
+  // with `image/jpeg` on it passes the multer filter and fails here, which is
+  // the point: this is the check that cannot be talked out of.
+  const scope = scopeOf(req);
+  if (scope) {
+    for (const file of files) {
+      let head;
+      try {
+        const fd = await fs.promises.open(file.path, 'r');
+        head = Buffer.alloc(32);
+        await fd.read(head, 0, 32, 0);
+        await fd.close();
+      } catch {
+        head = null;
+      }
+      const sniffed = head ? keys.sniffContentType(head) : null;
+      // A format we cannot identify is refused rather than assumed: silently
+      // storing something unrecognised is how a broken attachment gets in.
+      if (!sniffed || !scope.acceptBytes(sniffed)) {
+        for (const temp of tempPaths) await removeQuietly(temp);
+        return next(new UploadRejected(scope.message));
+      }
+    }
+  }
 
   try {
     for (const file of files) {
@@ -345,8 +417,39 @@ const deleteFile = async (url) => {
   return report.ok;
 };
 
+/**
+ * Turn an upload failure into something the person can act on.
+ *
+ * Mounted after the upload middleware on the /upload routes. Without it a
+ * rejected file surfaces as a generic 500, which tells a member of staff
+ * nothing about why their photo would not attach.
+ */
+function handleUploadErrors(err, req, res, next) {
+  if (!err) return next();
+
+  if (err instanceof UploadRejected) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    const mb = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024));
+    return res.status(413).json({
+      success: false,
+      error: `That file is too large. The limit is ${mb} MB.`,
+    });
+  }
+  if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+    return res.status(400).json({ success: false, error: 'Too many files in one upload.' });
+  }
+
+  console.error('[upload] failed:', err);
+  return res.status(500).json({ success: false, error: 'The file could not be uploaded. Please try again.' });
+}
+
 module.exports = {
   upload,
+  handleUploadErrors,
+  UPLOAD_SCOPES,
+  UploadRejected,
   finalizeUploads,
   putFaceVideo,
   purgeAssets,

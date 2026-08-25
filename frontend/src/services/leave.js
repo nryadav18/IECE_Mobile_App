@@ -50,7 +50,13 @@ export const rejectLeave = (id, note) =>
 export const cancelLeave = (id) =>
   api.post(`/leaves/${id}/cancel`).then((r) => r.data);
 
-// Upload proof files (photos / PDFs) picked on-device, returns their URLs.
+// Upload proof PHOTOS picked on-device, returns their URLs.
+//
+// `?scope=leave-proof` is not decoration: the server refuses anything that is
+// not an image on this scope, and it checks the actual file bytes rather than
+// the type we declare. Proofs are looked at by an approver on a phone, and a
+// document there is an attachment that cannot be shown inline.
+//
 // `files` is an array of { uri, name, mimeType }.
 export const uploadProofs = async (files = []) => {
   if (!files.length) return [];
@@ -62,7 +68,7 @@ export const uploadProofs = async (files = []) => {
       name: f.name || `proof_${i}`,
     });
   });
-  const res = await api.post('/upload/multiple', formData, {
+  const res = await api.post('/upload/multiple?scope=leave-proof', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
   return res.data?.urls || [];

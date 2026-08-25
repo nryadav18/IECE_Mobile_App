@@ -5,7 +5,6 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import * as DocumentPicker from 'expo-document-picker';
 import { ThemeContext } from '../context/ThemeContext';
 import { useAlert } from '../context/AlertContext';
 import { prettyDate, toYMD, dayCountInclusive } from '../utils/dates';
@@ -28,7 +27,7 @@ const earliestStart = () => {
 
 /**
  * Self-service "Apply Leave" form. Mandatory reason + date window (earliest is
- * the day after tomorrow), optional photo/PDF proofs. Calls onSubmitted() after
+ * the day after tomorrow), optional PHOTO proofs. Calls onSubmitted() after
  * a successful submission so the parent can refresh "My Requests".
  */
 export default function ApplyLeaveForm({ onSubmitted }) {
@@ -42,7 +41,7 @@ export default function ApplyLeaveForm({ onSubmitted }) {
   const [showFrom, setShowFrom] = useState(false);
   const [showTo, setShowTo] = useState(false);
   const [reason, setReason] = useState('');
-  const [proofs, setProofs] = useState([]); // [{ uri, name, mimeType, isImage }]
+  const [proofs, setProofs] = useState([]); // [{ uri, name, mimeType }] — photos only
   const [submitting, setSubmitting] = useState(false);
 
   const onPickFrom = (event, selected) => {
@@ -69,33 +68,10 @@ export default function ApplyLeaveForm({ onSubmitted }) {
         uri: a.uri,
         name: a.fileName || `photo_${Date.now()}_${i}.jpg`,
         mimeType: a.mimeType || 'image/jpeg',
-        isImage: true,
       }));
       setProofs((prev) => [...prev, ...picked]);
     } catch (e) {
       showAlert('Could not add photo', leaveError(e), 'error');
-    }
-  };
-
-  const addPdf = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: 'application/pdf',
-        multiple: true,
-        copyToCacheDirectory: true,
-      });
-      // Support both the newer { canceled, assets:[...] } and legacy { type, uri, name }.
-      if (result.canceled) return;
-      const assets = result.assets || (result.type === 'success' ? [result] : []);
-      const picked = assets.map((a, i) => ({
-        uri: a.uri,
-        name: a.name || `document_${Date.now()}_${i}.pdf`,
-        mimeType: a.mimeType || 'application/pdf',
-        isImage: false,
-      }));
-      setProofs((prev) => [...prev, ...picked]);
-    } catch (e) {
-      showAlert('Could not add file', leaveError(e), 'error');
     }
   };
 
@@ -199,23 +175,22 @@ export default function ApplyLeaveForm({ onSubmitted }) {
       />
 
       {/* Proofs (optional) */}
-      <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 6 }}>
+      <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 2 }}>
         Proofs <Text style={{ color: theme.colors.textSecondary, fontWeight: '400' }}>(if any)</Text>
       </Text>
-      <View style={{ flexDirection: 'row', gap: 12, marginBottom: proofs.length ? 12 : 20 }}>
+      {/* Photos only. Said here rather than left to be discovered at submit
+          time, because "why was my PDF rejected" is a worse experience than
+          knowing before you go looking for one. */}
+      <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5, marginBottom: 8 }}>
+        Photos only — if your proof is a document, attach a photo of it.
+      </Text>
+      <View style={{ marginBottom: proofs.length ? 12 : 20 }}>
         <TouchableOpacity
           onPress={addPhoto}
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingVertical: 12, borderStyle: 'dashed' }}
+          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingVertical: 12, borderStyle: 'dashed' }}
         >
           <Ionicons name="image-outline" size={18} color={theme.colors.primary} style={{ marginRight: 6 }} />
           <Text style={{ color: theme.colors.textPrimary, fontWeight: '600', fontSize: 13 }}>Add Photo</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={addPdf}
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, paddingVertical: 12, borderStyle: 'dashed' }}
-        >
-          <Ionicons name="document-attach-outline" size={18} color={theme.colors.primary} style={{ marginRight: 6 }} />
-          <Text style={{ color: theme.colors.textPrimary, fontWeight: '600', fontSize: 13 }}>Add PDF</Text>
         </TouchableOpacity>
       </View>
 
@@ -223,13 +198,7 @@ export default function ApplyLeaveForm({ onSubmitted }) {
         <View style={{ marginBottom: 20 }}>
           {proofs.map((p, i) => (
             <View key={`${p.uri}_${i}`} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 8, marginBottom: 8 }}>
-              {p.isImage ? (
-                <Image source={{ uri: p.uri }} style={{ width: 38, height: 38, borderRadius: 6 }} />
-              ) : (
-                <View style={{ width: 38, height: 38, borderRadius: 6, backgroundColor: theme.colors.primary + '18', alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="document-text-outline" size={20} color={theme.colors.primary} />
-                </View>
-              )}
+              <Image source={{ uri: p.uri }} style={{ width: 38, height: 38, borderRadius: 6 }} />
               <Text style={{ flex: 1, color: theme.colors.textPrimary, fontSize: 13, marginLeft: 10 }} numberOfLines={1}>{p.name}</Text>
               <TouchableOpacity onPress={() => removeProof(i)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <Ionicons name="close-circle" size={20} color="#F44336" />
