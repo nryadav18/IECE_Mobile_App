@@ -46,7 +46,7 @@ const AssetMigration = require('../../models/AssetMigration');
 const r2 = require('../../utils/storage/r2');
 const keys = require('../../utils/storage/keys');
 const { makePoster, tempPath, removeQuietly } = require('../../utils/storage/media');
-const { parseCloudinaryUrl } = require('../../utils/cloudinary');
+const { parseCloudinaryUrl } = require('./lib/cloudinary-legacy');
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');

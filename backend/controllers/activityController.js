@@ -245,8 +245,8 @@ exports.updateActivity = async (req, res) => {
 
     // Removing a photo in the edit screen has to remove it from the cloud too.
     // Until now the URL was simply dropped from the document and the file stayed
-    // in the Cloudinary account forever, unreferenced and unreachable — there was
-    // no longer anything anywhere that knew it existed.
+    // in cloud storage forever, unreferenced and unreachable — there was no
+    // longer anything anywhere that knew it existed.
     const keptMedia = new Set(activity.mediaUrls || []);
     const droppedMedia = previousMedia.filter((url) => !keptMedia.has(url));
     let mediaPurge = null;
@@ -261,7 +261,7 @@ exports.updateActivity = async (req, res) => {
     }
 
     // What moved, for the log. Photos are counted rather than listed: a row
-    // saying "photos/videos: 5 → 3" is readable, five Cloudinary URLs are not.
+    // saying "photos/videos: 5 → 3" is readable, five delivery URLs are not.
     const changes = trackChanges()
       .field('name', before.name, activity.name)
       .field('description', before.description, activity.description)
@@ -514,7 +514,7 @@ exports.deleteActivity = async (req, res) => {
     // The photos and videos go FIRST, and the document only goes if they did.
     //
     // Order matters and is not interchangeable: the document is the only record
-    // of which files belong to this activity. Delete it first and a Cloudinary
+    // of which files belong to this activity. Delete it first and a storage
     // failure leaves files nobody can ever name again. This way a failure is
     // recoverable — the activity is still there, and deleting it again retries
     // exactly the files that survived.
@@ -565,7 +565,7 @@ exports.deleteActivity = async (req, res) => {
 // @route   DELETE /api/activities/:id/media
 // @access  Private/Admin
 //
-// The Admin's housekeeping tool for the Cloudinary free tier: it empties an
+// The Admin's housekeeping tool for reclaiming storage: it empties an
 // activity of its media — in the cloud, not just in the database — while the
 // activity itself (name, description, date, school, organisers, approval and
 // who approved it) is left exactly as it was. The record of what happened

@@ -22,7 +22,6 @@
  * nothing from MongoDB, and leaves nothing behind.
  */
 
-process.env.STORAGE_DRIVER = 'r2';   // this script always tests the R2 path
 require('dotenv').config();
 const fs = require('fs'), os = require('os'), path = require('path');
 const sharp = require('sharp');
@@ -38,7 +37,7 @@ let pass = 0, fail = 0;
 const check = (name, ok, detail='') => { ok ? pass++ : fail++; console.log(`  ${ok?'PASS':'FAIL'}  ${name}${detail?'   '+detail:''}`); };
 
 (async () => {
-  console.log('\n  PHASE 2 STORAGE SELF-TEST  (driver: ' + storage.driver() + ')\n');
+  console.log(`\n  STORAGE SELF-TEST  (${r2.config().publicBaseUrl})\n`);
 
   // ---------- a real photo, deliberately portrait + oversized + EXIF-rotated ----------
   const imgPath = tmp('e2e-photo.jpg');
@@ -145,9 +144,16 @@ const check = (name, ok, detail='') => { ok ? pass++ : fail++; console.log(`  ${
     console.log('        why CLOUDFLARE_ZONE_ID + CLOUDFLARE_PURGE_TOKEN are required.');
   }
 
-  // --- mixed-cloud purge must not misroute ---
-  const mixed = await storage.purgeAssets(['https://res.cloudinary.com/dbesfbmwz/image/upload/v1/iece_images/definitely-not-real.jpg']);
-  check('cloudinary URL routed to cloudinary', mixed.requested === 1 && mixed.missing + mixed.deleted === 1, JSON.stringify({missing:mixed.missing, deleted:mixed.deleted, failed:mixed.failed}));
+  // --- a value we do not own must be REFUSED, never silently "deleted" ---
+  //
+  // `gone` is the list a caller uses to decide which URLs are safe to drop from
+  // the database. If a foreign value ever landed in it, the record would lose
+  // its only handle on a file that still exists somewhere. So the assertion is
+  // not that the delete failed — it is that the value stayed OUT of `gone`.
+  const foreign = await storage.purgeAssets(['https://res.cloudinary.com/dbesfbmwz/image/upload/v1/iece_images/not-ours.jpg']);
+  check('a value outside our buckets is refused, not silently accepted',
+    foreign.ok === false && foreign.failed === 1 && foreign.gone.length === 0,
+    JSON.stringify({ ok: foreign.ok, failed: foreign.failed, gone: foreign.gone.length }));
 
   console.log(`\n  ${pass} passed, ${fail} failed\n`);
   process.exit(fail ? 1 : 0);

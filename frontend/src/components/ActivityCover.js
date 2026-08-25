@@ -42,7 +42,12 @@ import { optimizedImageUrl } from '../utils/media';
 // white ink meant for dark backgrounds — invisible here.
 const IECE_LOGO = require('../../assets/IECE_Logo_Web.png');
 
-/** Cloudinary generates a poster frame for a video at the same id with .jpg. */
+/**
+ * A video's poster frame is stored at the same key with a .jpg extension.
+ *
+ * The backend guarantees it exists — see backend/utils/storage/keys.js. This
+ * derivation is a contract between the two, not a guess.
+ */
 const posterFor = (url) =>
   (typeof url === 'string' && url.endsWith('.mp4')) ? url.replace('.mp4', '.jpg') : url;
 
@@ -68,10 +73,10 @@ export const hasMedia = (activity) => (activity?.mediaUrls?.length || 0) > 0;
  *                            of a fixed size — for a card in a responsive column,
  *                            where a pixel width would break the column maths
  * @param {number}  aspectRatio  used with `fill`, default 16:9
- * @param {number}  sizeHint  logical width to request from Cloudinary in `fill`
- *                            mode (the real width is not known until layout)
+ * @param {number}  sizeHint  logical width to request in `fill` mode (the real
+ *                            width is not known until layout)
  * @param {number}  radius    corner radius, default 12
- * @param {boolean} optimize  ask Cloudinary for a screen-sized image, default true
+ * @param {boolean} optimize  use the stored screen-sized variant, default true
  */
 export default function ActivityCover({
   activity,
@@ -92,9 +97,9 @@ export default function ActivityCover({
     ? { width: '100%', aspectRatio, borderRadius: radius }
     : { width: w, height: h, borderRadius: radius };
 
-  // Cloudinary is asked for a bucket size, not an exact width, so an estimate is
-  // all `fill` needs — and the buckets round up, so a slightly low guess still
-  // delivers enough pixels.
+  // A bucket size is requested, not an exact width, so an estimate is all `fill`
+  // needs — and the buckets round up, so a slightly low guess still delivers
+  // enough pixels.
   const requestWidth = fill ? (sizeHint || 720) : w;
 
   const thumb = activityThumbnail(activity);

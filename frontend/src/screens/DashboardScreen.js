@@ -136,7 +136,7 @@ export default function DashboardScreen({ navigation, route }) {
     ? Math.max(isWide ? 28 : 20, Math.round((width - CONTENT_MAX_WIDTH) / 2))
     : isWide ? 28 : 20;
   // The width a card actually occupies now that they stack full-width instead
-  // of sitting in a 62%-wide sideways strip. Used only as the Cloudinary size
+  // of sitting in a 62%-wide sideways strip. Used only as the image size
   // hint, and the buckets round up, so being a little out costs nothing. On a
   // multi-column browser this over-estimates — deliberately: the saving that
   // matters is the phone's, and a desktop asking for a slightly larger image is
@@ -674,7 +674,7 @@ export default function DashboardScreen({ navigation, route }) {
                         },
                       ]}
                     >
-                      {/* Video posters, Cloudinary sizing and the IECE
+                      {/* Video posters, image sizing and the IECE
                           placeholder all live in ActivityCover, so the card
                           shows the same thing every other screen shows.
                           `fill` rather than a pixel width: inside a responsive

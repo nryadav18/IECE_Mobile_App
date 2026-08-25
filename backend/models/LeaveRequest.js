@@ -42,7 +42,7 @@ const leaveRequestSchema = new mongoose.Schema({
     type: Date,
     required: true
   },
-  // Optional supporting documents (Cloudinary URLs — photos and/or PDFs).
+  // Optional supporting documents (delivery URLs — photos and/or PDFs).
   proofs: {
     type: [String],
     default: []

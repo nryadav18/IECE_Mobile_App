@@ -16,7 +16,7 @@ const { ACTIVITY_TARGET, FIELDWORK_TARGET, gradeFor } = require('./score');
 // The report document.
 //
 // Built entirely in memory and returned as a Buffer — nothing is written to
-// disk and nothing is uploaded to Cloudinary. The buffer goes straight into the
+// disk and nothing is uploaded to cloud storage. The buffer goes straight into the
 // email as a base64 attachment and is garbage-collected the moment the send
 // completes, which is exactly what was asked for: the report exists only in the
 // recipient's inbox.

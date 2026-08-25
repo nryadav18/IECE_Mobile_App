@@ -123,7 +123,13 @@ export function RegistrationMap({ location }) {
   );
 }
 
-/** The captured face video (Cloudinary .mp4) via expo-video. */
+/**
+ * The captured face video via expo-video.
+ *
+ * The URL arrives already signed and short-lived: the recording lives in a
+ * private bucket and the server mints a link per response. Nothing here has to
+ * authenticate, and nothing should cache it.
+ */
 export function RegistrationVideo({ uri, style }) {
   const player = useVideoPlayer(uri, (p) => { p.loop = false; });
   return <VideoView player={player} style={style} allowsFullscreen allowsPictureInPicture contentFit="cover" />;

@@ -661,7 +661,7 @@ exports.updateUser = async (req, res) => {
     // registration away puts it here instead of just dropping it, because the
     // entry is the ONLY thing that knows the URL of the video it uploaded —
     // once it is gone from the array, that recording is unreachable and sits in
-    // the Cloudinary account for good. Purged in one sweep before the save.
+    // in cloud storage for good. Purged in one sweep before the save.
     const discardedRegs = [];
     const discard = (regs) => { discardedRegs.push(...regs); };
 

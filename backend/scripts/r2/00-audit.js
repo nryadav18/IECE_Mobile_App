@@ -40,7 +40,7 @@ const cloudinary = require('cloudinary').v2;
 const { cloudinaryConfig, r2Config, ConfigError } = require('./lib/env');
 const { connect, disconnect } = require('./lib/mongo');
 const { URL_FIELDS, readField, projectionFor, filterFor, label } = require('./lib/urlFields');
-const { parseCloudinaryUrl, isAccountBlocked } = require('../../utils/cloudinary');
+const { parseCloudinaryUrl, isAccountBlocked } = require('./lib/cloudinary-legacy');
 
 const OUT_DIR = path.join(__dirname, 'output');
 

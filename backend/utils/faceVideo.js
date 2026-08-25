@@ -40,8 +40,8 @@ const NOTHING_TO_DO = {
  *
  * `verified` / `unverified` are carried through deliberately: a face recording
  * is the most sensitive thing this app puts in the cloud, so "we asked
- * Cloudinary again and it is really gone" is worth telling apart from
- * "Cloudinary said ok and we could not check".
+ * storage again and it is really gone" is worth telling apart from
+ * "storage said ok and we could not check".
  */
 const summarize = (purge) => ({
   requested: purge.requested,
@@ -68,7 +68,7 @@ const summarize = (purge) => ({
 function faceVideoNote(cloud) {
   if (!cloud || cloud.requested === 0) return '';
   if (cloud.stillPresent) {
-    return 'Registration video is STILL in cloud storage — Cloudinary accepted the deletion but the file survived';
+    return 'Registration video is STILL in cloud storage — the delete was accepted but the file survived';
   }
   if (!cloud.ok) return 'Registration video could NOT be deleted from cloud storage';
   if (cloud.unverified) {

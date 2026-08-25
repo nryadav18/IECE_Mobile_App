@@ -4,7 +4,10 @@ exports.uploadFile = async (req, res) => {
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
     
-    // req.file contains the Cloudinary info from multer-storage-cloudinary
+    // `req.file.path` is the delivery URL, set by storage.finalizeUploads.
+    // The property name is historic and deliberately unchanged: it is what every
+    // installed app build reads, so the move between storage providers never
+    // required a client update.
     res.status(200).json({
       success: true,
       url: req.file.path,

@@ -154,7 +154,7 @@ function PlatformMap({ location }) {
 }
 
 // ---------------------------------------------------------------------------
-// Video Player (Cloudinary .mp4 via expo-video)
+// Video Player (signed .mp4 via expo-video)
 // ---------------------------------------------------------------------------
 function RegistrationVideoPlayer({ uri, style }) {
   const player = useVideoPlayer(uri, (p) => {

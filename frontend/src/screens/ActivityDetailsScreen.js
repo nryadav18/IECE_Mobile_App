@@ -51,7 +51,7 @@ export default function ActivityDetailsScreen({ route, navigation }) {
   };
 
   /**
-   * Delete this activity's photos and videos — from Cloudinary, not just from
+   * Delete this activity's photos and videos — from cloud storage, not just from
    * the record. The activity itself is untouched, which is the whole point:
    * the account stops paying to store the files while what happened, when,
    * where and who ran it all survive.

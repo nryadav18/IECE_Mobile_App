@@ -8,9 +8,10 @@ const { presignGetUrl } = require('./presign');
 // THE R2 DRIVER.
 //
 // Everything the running application does to cloud storage goes through here.
-// It deliberately mirrors the contract utils/cloudinary.js established, because
-// the callers — activityController, mediaController, schoolController,
-// faceVideo — were written against that contract and it is a good one:
+// The contract it honours predates R2 — the callers (activityController,
+// mediaController, schoolController, faceVideo) were written against it when
+// the app used a different provider entirely, and it survived the move because
+// it is a good one:
 //
 //   * a file that is gone and a file that was never there are BOTH success;
 //   * anything else is a failure and is reported as one, never swallowed;
@@ -211,9 +212,9 @@ async function putFile({ bucket, key, filePath, contentType, cacheControl }) {
 // HIT`. Anyone holding the link to a banner or an activity photo that had been
 // "deleted" could keep opening it.
 //
-// utils/cloudinary.js already carried this exact lesson: every destroy there
-// passes `invalidate: true`, with a comment explaining that without it "the file
-// is gone from storage but edge caches keep serving it for hours, which does not
+// This is a lesson the previous provider had already taught: its delete call
+// took an `invalidate` flag for exactly this reason — without it "the file is
+// gone from storage but edge caches keep serving it for hours, which does not
 // look deleted to anyone actually checking". R2 has no equivalent flag, so the
 // purge is an explicit API call, made here.
 //

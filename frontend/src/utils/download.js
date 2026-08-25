@@ -55,7 +55,7 @@ const MIME = {
   csv: 'text/csv', txt: 'text/plain', zip: 'application/zip',
 };
 
-/** Extension from a URL, ignoring query strings and Cloudinary transforms. */
+/** Extension from a URL, ignoring query strings and any size suffix. */
 export function extensionOf(url = '') {
   const clean = String(url).split('?')[0].split('#')[0];
   const last = clean.substring(clean.lastIndexOf('/') + 1);
@@ -67,8 +67,10 @@ export function extensionOf(url = '') {
 export function isImage(url) { return IMAGE_EXT.includes(extensionOf(url)); }
 export function isVideo(url) {
   const e = extensionOf(url);
-  // Cloudinary serves videos from a /video/ path even when the extension is odd.
-  return VIDEO_EXT.includes(e) || String(url).includes('/video/upload/');
+  // Extension alone. Every stored video keeps its real extension in the key —
+  // that is a hard requirement elsewhere too, because installed app builds
+  // derive a video's poster URL by swapping .mp4 for .jpg.
+  return VIDEO_EXT.includes(e);
 }
 export function isMedia(url) { return isImage(url) || isVideo(url); }
 
@@ -214,7 +216,7 @@ async function saveDocumentIOS(file, filename, mimeType) {
  * Download ANY file the app shows — image, video, PDF, document — and put it
  * somewhere the user can reach offline.
  *
- * @param {string} url        remote file URL (Cloudinary, S3, anything public)
+ * @param {string} url        remote file URL (the app's CDN, or anything public)
  * @param {object} [opts]
  * @param {string} [opts.filename]  preferred name; derived from the URL otherwise
  * @param {string} [opts.mimeType]  override the guessed MIME type

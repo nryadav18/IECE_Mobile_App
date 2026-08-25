@@ -279,7 +279,7 @@ const getEventTemplate = ({ title, intro, rows = [], accent = '#0D9488', badge =
  *        that is already base64. Attachments are passed inline to Brevo, so a
  *        generated file never has to be uploaded anywhere first — see
  *        utils/monthlyReport, which builds a PDF in memory and sends it without
- *        ever touching disk or Cloudinary.
+ *        ever touching disk or cloud storage.
  * @param {string} [options.senderName] - overrides the default "IECE Security".
  * @param {string} [options.toName]
  */

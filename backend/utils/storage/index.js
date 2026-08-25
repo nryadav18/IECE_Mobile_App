@@ -8,33 +8,27 @@ const r2 = require('./r2');
 const keys = require('./keys');
 const { processImage, makePoster, removeQuietly } = require('./media');
 
-// utils/cloudinary.js is not deleted and not deprecated — it becomes the legacy
-// driver. It still owns every Cloudinary URL in the database, and it will keep
-// owning them until Phase 5 has flipped the last one and Phase 6 has closed the
-// account. Its report formatters are reused verbatim so callers see identical
-// wording whichever cloud a file happened to live in.
-const legacy = require('../cloudinary');
+const { purgeSummary, purgeProblem } = require('./report');
 
 // ---------------------------------------------------------------------------
 // ONE DOOR TO CLOUD STORAGE.
 //
-// WHERE NEW FILES GO is a runtime switch: STORAGE_DRIVER=cloudinary | r2.
-// WHERE OLD FILES LIVE is not a switch at all — it is a property of each stored
-// value, and it is read from the value itself.
+// Everything the application puts into, or takes out of, the cloud goes through
+// here. There is one backend — Cloudflare R2 — and no runtime switch: the
+// migration is finished, every URL in the database points at R2, and a second
+// path kept "just in case" is a path nobody exercises and therefore nobody can
+// trust.
 //
-// That asymmetry is the whole design. During the migration the database holds
-// Cloudinary URLs and R2 URLs side by side, for weeks. Anything that decided
-// where to delete from by looking at a global flag would, the moment the flag
-// flipped, start aiming every deletion at the wrong cloud: reporting success
-// (S3 and Cloudinary both answer cheerfully for keys that do not exist) while
-// the real files quietly stayed behind. So deletion routes on the hostname of
-// the value in hand, and always will, even long after Cloudinary is gone.
+// Deletion still routes on the VALUE rather than on any global setting. That
+// was essential during the migration, when Cloudinary URLs and R2 URLs sat side
+// by side for weeks; it is kept because it is simply the correct shape.
+// `isOurs()` refuses anything it does not recognise instead of guessing, so a
+// stray URL from anywhere is reported rather than silently counted as deleted
+// from a bucket it was never in.
 //
-// The flag is also the rollback. Set it back to `cloudinary`, restart, and new
-// uploads go where they always did. Nothing else has to be undone.
+// The migration itself, and the last remaining Cloudinary code, live in
+// scripts/r2/. Nothing in the running application imports them.
 // ---------------------------------------------------------------------------
-
-const driver = () => (String(process.env.STORAGE_DRIVER || 'cloudinary').toLowerCase() === 'r2' ? 'r2' : 'cloudinary');
 
 // Generous, but not unbounded. There was no limit before, because Cloudinary
 // streamed straight past the server; now the file lands on this box first, and
@@ -56,7 +50,7 @@ const diskUpload = multer({
 // Disk, not memory. A 200 MB activity video held as a Buffer is 200 MB of heap
 // on a small VPS, per concurrent upload; and ffmpeg needs a seekable file on
 // disk to pull a poster frame out of anyway.
-const upload = driver() === 'r2' ? diskUpload : legacy.upload;
+const upload = diskUpload;
 
 /* ------------------------------------------------------------------ *
  * Putting one uploaded file where it belongs                          *
@@ -157,12 +151,8 @@ async function storeUploadedFile(file) {
  * two property names is what makes this change invisible to phones already
  * installed — there is no new API shape for anyone to upgrade to.
  *
- * A no-op while STORAGE_DRIVER is `cloudinary`, because multer-storage-cloudinary
- * has already done all of this.
  */
 async function finalizeUploads(req, res, next) {
-  if (driver() !== 'r2') return next();
-
   const files = req.files && req.files.length ? req.files
     : (req.file ? [req.file] : []);
   if (!files.length) return next();
@@ -224,20 +214,6 @@ async function finalizeUploads(req, res, next) {
  * attendance actually matches against — has already been computed by then.
  */
 async function putFaceVideo(buffer, mimetype, { userId, schoolId } = {}) {
-  if (driver() !== 'r2') {
-    try {
-      const b64 = Buffer.from(buffer).toString('base64');
-      const result = await legacy.cloudinary.uploader.upload(
-        `data:${mimetype};base64,${b64}`,
-        { folder: 'facial_registrations_v2', resource_type: 'video' }
-      );
-      return result.secure_url || null;
-    } catch (error) {
-      console.error('[storage] Cloudinary face video upload failed:', error.message);
-      return null;
-    }
-  }
-
   try {
     const cfg = r2.config();
     const key = keys.faceVideoKey(userId, schoolId);
@@ -273,24 +249,32 @@ const EMPTY_REPORT = {
 /**
  * Remove files from wherever they actually are.
  *
- * Returns exactly the report shape utils/cloudinary.purgeAssets always
- * returned, so activityController, mediaController, schoolController and
- * faceVideo.js keep working unchanged — including `gone`, which is the list of
- * URLs it is now safe to drop from the database. A value whose file could not
- * be removed is deliberately KEPT there, because it is the only handle anyone
- * will ever have on that file again.
+ * The report shape is a contract activityController, mediaController,
+ * schoolController and faceVideo.js were all written against, and it is a good
+ * one — `gone` is the list of values it is now safe to drop from the database,
+ * and a value whose file could NOT be removed is deliberately left out of it,
+ * because that value is the only handle anyone will ever have on that file
+ * again.
  */
 async function purgeAssets(urls = []) {
   const list = [...new Set((urls || []).filter(Boolean))];
   if (!list.length) return { ...EMPTY_REPORT };
 
   const mine = list.filter((u) => r2.isOurs(u));
-  const theirs = list.filter((u) => !r2.isOurs(u));
+  const foreign = list.filter((u) => !r2.isOurs(u));
 
-  const [r2Results, legacyReport] = await Promise.all([
-    Promise.all(mine.map((u) => r2.destroy(u))),
-    theirs.length ? legacy.purgeAssets(theirs) : Promise.resolve({ ...EMPTY_REPORT }),
-  ]);
+  if (foreign.length) {
+    // Not ours to delete. Reported rather than swallowed: now that the
+    // migration is over, the only way to reach here is a value from somewhere
+    // unexpected, and quietly counting it as gone would drop a record's last
+    // handle on a file that still exists.
+    console.warn(
+      `[storage] ${foreign.length} value(s) are not in our buckets and were left alone:`,
+      foreign.join('; ')
+    );
+  }
+
+  const r2Results = await Promise.all(mine.map((u) => r2.destroy(u)));
 
   // Evicting the edge is part of deleting, not an afterthought. An object
   // removed from the bucket is still served by cdn.iece.org.in from cache —
@@ -320,16 +304,16 @@ async function purgeAssets(urls = []) {
 
   const report = {
     requested: list.length,
-    deleted: r2Results.filter((r) => r.status === 'deleted').length + legacyReport.deleted,
-    missing: r2Results.filter((r) => r.status === 'missing').length + legacyReport.missing,
-    failed: r2Failures.length + legacyReport.failed,
-    verified: r2Results.filter((r) => r.ok && r.verified !== false).length + (legacyReport.verified || 0),
-    unverified: r2Results.filter((r) => r.ok && r.verified === false).length + (legacyReport.unverified || 0),
-    stillPresent: r2StillPresent.length + (legacyReport.stillPresent || 0),
-    gone: [...r2Gone, ...legacyReport.gone],
-    failures: [...r2Failures, ...legacyReport.failures],
-    blocked: !!r2Blocked || !!legacyReport.blocked,
-    blockedReason: (r2Blocked && r2Blocked.error) || legacyReport.blockedReason || null,
+    deleted: r2Results.filter((r) => r.status === 'deleted').length,
+    missing: r2Results.filter((r) => r.status === 'missing').length,
+    failed: r2Failures.length + foreign.length,
+    verified: r2Results.filter((r) => r.ok && r.verified !== false).length,
+    unverified: r2Results.filter((r) => r.ok && r.verified === false).length,
+    stillPresent: r2StillPresent.length,
+    gone: r2Gone,
+    failures: [...r2Failures, ...foreign.map((url) => ({ url, error: 'not in our storage' }))],
+    blocked: !!r2Blocked,
+    blockedReason: (r2Blocked && r2Blocked.error) || null,
     // Additive: nothing that reads this report today looks for these, but a
     // caller that wants to say "and it is out of the CDN too" now can.
     cdnPurged: cdn.ok,
@@ -346,15 +330,14 @@ const deleteFile = async (url) => {
 };
 
 module.exports = {
-  driver,
   upload,
   finalizeUploads,
   putFaceVideo,
   purgeAssets,
   deleteFile,
-  // Report wording is shared so a message never reveals which cloud it came from.
-  purgeSummary: legacy.purgeSummary,
-  purgeProblem: legacy.purgeProblem,
+  // Wording is deliberately provider-neutral — see ./report.js.
+  purgeSummary,
+  purgeProblem,
   // Private references
   signPrivateRef: r2.signPrivateRef,
   isPrivateRef: r2.isPrivateRef,

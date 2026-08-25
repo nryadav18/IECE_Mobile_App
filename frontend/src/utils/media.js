@@ -14,10 +14,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  *
  *  1. ASK FOR SMALLER IMAGES. A banner uploaded from a phone camera is a
  *     several-megabyte JPEG being downloaded to fill a strip a few hundred
- *     points tall. Cloudinary will resize and re-encode on its own CDN if the
- *     URL says so, so we ask for exactly the pixels the screen can show, in
- *     whatever modern format the device supports (`f_auto,q_auto`). This is
- *     typically an order of magnitude less to download.
+ *     points tall. Every stored image has screen-sized copies sitting beside it
+ *     on the CDN, so we ask for the one closest to the pixels this screen can
+ *     actually show. Typically an order of magnitude less to download.
  *
  *  2. REMEMBER WHAT WAS THERE. The banner list is written to disk, so the next
  *     launch can paint the carousel from the last known list on the first frame
@@ -31,27 +30,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  * already installed.
  */
 
-// Only Cloudinary IMAGE deliveries are rewritten. Video-derived thumbnails are
-// left exactly as they are: a transformation that fails would show nothing at
-// all, which is worse than showing something slowly.
-const IMAGE_UPLOAD_SEGMENT = '/image/upload/';
-
-// Round up to a handful of sizes rather than the exact device width, so devices
-// share CDN cache entries instead of each warming their own variant.
-const WIDTH_BUCKETS = [480, 720, 1080, 1440];
-
-const bucketFor = (logicalWidth) => {
-  const px = Math.round((logicalWidth || 400) * PixelRatio.get());
-  return WIDTH_BUCKETS.find((b) => b >= px) || WIDTH_BUCKETS[WIDTH_BUCKETS.length - 1];
-};
-
-/* ------------------------------------------------------------------ *
- * The same idea, for R2                                               *
- * ------------------------------------------------------------------ */
-
-// Media now lives on Cloudflare R2, which — unlike Cloudinary — cannot resize
-// anything on demand. R2 stores bytes and serves them back; there is no URL
-// syntax that produces a smaller copy.
+// Media lives on Cloudflare R2, which cannot resize anything on demand: it
+// stores bytes and serves them back, and there is no URL syntax that produces a
+// smaller copy.
 //
 // So the sizes are generated once, at upload, and stored beside the original:
 //
@@ -86,43 +67,22 @@ const r2VariantFor = (url, logicalWidth) => {
 /**
  * A URL rewritten to deliver only as many pixels as the screen can use.
  *
- * Handles both clouds. R2 gets a stored `_w480` / `_w1080` sibling; Cloudinary
- * gets an `f_auto,q_auto,w_N,c_limit` transformation. Anything else — another
+ * Substitutes the stored `_w480` / `_w1080` sibling. Anything else — another
  * host, a video, a PDF, or a URL that already names a size — is returned
  * untouched, because a rewrite that misses renders as nothing at all, which is
  * worse than showing something slowly.
  *
- * Neither path ever upscales or crops, so a banner keeps its framing.
+ * Never upscales and never crops, so a banner keeps its framing.
  */
 export function optimizedImageUrl(url, logicalWidth) {
   if (typeof url !== 'string') return url;
-
-  // R2 — the current home for all media.
-  if (url.startsWith(`${CDN_BASE}/`)) {
-    // Already a variant (`..._w480.jpg`); leave it alone.
-    if (/_w\d+\.(jpe?g|png|webp)$/i.test(url)) return url;
-    // Not an image we generated variants for — a video, a PDF, a GIF served
-    // whole to keep its animation. Untouched.
-    if (!R2_IMAGE_EXT.test(url)) return url;
-    return r2VariantFor(url, logicalWidth);
-  }
-
-  // Cloudinary — kept for as long as any device might still hold a cached URL
-  // from before the migration, and harmless afterwards.
-  if (!url.includes('res.cloudinary.com')) return url;
-
-  const at = url.indexOf(IMAGE_UPLOAD_SEGMENT);
-  if (at === -1) return url;
-
-  const head = url.slice(0, at + IMAGE_UPLOAD_SEGMENT.length);
-  const tail = url.slice(at + IMAGE_UPLOAD_SEGMENT.length);
-
-  // A transformation is already there (e.g. "w_400,c_fill/…"); leave it alone.
-  // A version segment ("v1712345678/") carries no underscore, so it does not
-  // match and a plain URL is still rewritten.
-  if (/^[a-z]{1,3}_[^/]*\//i.test(tail)) return url;
-
-  return `${head}f_auto,q_auto,w_${bucketFor(logicalWidth)},c_limit/${tail}`;
+  if (!url.startsWith(`${CDN_BASE}/`)) return url;
+  // Already a variant (`..._w480.jpg`); leave it alone.
+  if (/_w\d+\.(jpe?g|png|webp)$/i.test(url)) return url;
+  // Not an image we generated variants for — a video, a PDF, an animated GIF
+  // served whole to keep its animation. Untouched.
+  if (!R2_IMAGE_EXT.test(url)) return url;
+  return r2VariantFor(url, logicalWidth);
 }
 
 /**

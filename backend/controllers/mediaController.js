@@ -90,7 +90,7 @@ exports.createMedia = async (req, res) => {
  * Edit a banner already on the wall — its description and its audience.
  *
  * Only these two fields are editable. The image itself is not: replacing it
- * would leave the old Cloudinary asset orphaned and the approval that was given
+ * would leave the old stored file orphaned and the approval that was given
  * to a different picture still attached, so a new picture means a new banner.
  */
 exports.updateMedia = async (req, res) => {
@@ -197,7 +197,7 @@ exports.deleteMedia = async (req, res) => {
 
     // The image goes FIRST, and the banner row only goes if it did. Deleting
     // the row first would throw away the one reference to the file, leaving it
-    // in the Cloudinary account with nothing left that knows its name. The old
+    // in cloud storage with nothing left that knows its name. The old
     // code fired the deletion and ignored the answer, so a failure here was
     // completely silent.
     const purge = await purgeAssets([media.imageUrl]);

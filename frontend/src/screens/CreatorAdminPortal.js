@@ -491,7 +491,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
     if (activeTab !== 'Monitoring' && selectedSchool) setSelectedSchool(null);
   }, [activeTab]);
 
-  const uploadToCloudinary = async (fileUri, mimeType, name) => {
+  const uploadFile = async (fileUri, mimeType, name) => {
     try {
       const formData = new FormData();
       formData.append('file', {
@@ -534,7 +534,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
     }
 
     setIsUploadingBanner(true);
-    const url = await uploadToCloudinary(bannerImageAsset.uri, bannerImageAsset.mimeType || 'image/jpeg', bannerImageAsset.fileName || 'banner.jpg');
+    const url = await uploadFile(bannerImageAsset.uri, bannerImageAsset.mimeType || 'image/jpeg', bannerImageAsset.fileName || 'banner.jpg');
     if (url) {
       try {
         await api.post('/media', {
@@ -588,7 +588,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
       { text: 'Delete', type: 'primary', onPress: async () => {
           try {
             const res = await api.delete(`/media/${id}`);
-            // Deleting a banner now removes its image from Cloudinary too, and
+            // Deleting a banner now removes its image from cloud storage too, and
             // the server refuses to drop the row if that failed — so report
             // what it actually says instead of a blanket success.
             showAlert('Success', res.data?.message || 'Banner deleted successfully!', 'success');
@@ -606,7 +606,7 @@ export default function CreatorAdminPortal({ navigation, route }) {
     if (!result.canceled) {
       setIsUploadingMou(true);
       const asset = result.assets[0];
-      const url = await uploadToCloudinary(asset.uri, asset.mimeType || 'application/pdf', asset.name);
+      const url = await uploadFile(asset.uri, asset.mimeType || 'application/pdf', asset.name);
       if (url) {
         handleChange('mouPdfUrl')(url);
         showAlert('Success', 'MOU uploaded and attached!', 'success');
