@@ -1,4 +1,4 @@
-import React, { useContext, useState, useCallback } from 'react';
+import React, { useContext, useState, useCallback, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { MotiView } from 'moti';
@@ -71,8 +71,36 @@ export default function HeadPortal({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const sidebarRef = React.useRef(null);
 
-  const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Home');
+  // Monitoring is the landing tab.
+  //
+  // A team leader or head opening their portal is almost always there to see
+  // where their people are right now — who has checked in, who has not, which
+  // schools are covered. That is a live view, and it is the thing that goes
+  // stale fastest, so it is what the portal opens on. CreatorAdminPortal has
+  // worked this way for a while; this brings the leader and head portals into
+  // line with it.
+  //
+  // An explicit `initialTab` still wins, so a tapped notification opens the tab
+  // it names rather than this one.
+  const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Monitoring');
   const { tabLoading, selectTab } = useSectionTransition(activeTab, setActiveTab);
+
+  // Honor an `initialTab` passed via navigation (e.g. from a tapped attendance
+  // or school-holiday notification) even if the portal is already mounted.
+  // TeamLeaderPortal has always done this; this portal did not, so a head who
+  // already had it open stayed on whichever tab they were looking at and the
+  // notification appeared to do nothing.
+  //
+  // It is consumed once and then cleared: navigation params outlive the
+  // navigation that set them, so leaving it in place would make every later
+  // visit re-open whichever tab an old deep link asked for instead of the
+  // default one.
+  useEffect(() => {
+    if (route?.params?.initialTab) {
+      setActiveTab(route.params.initialTab);
+      navigation.setParams({ initialTab: undefined });
+    }
+  }, [route?.params?.initialTab]);
   // Both activity lists are fetched a page at a time. Each card can carry a
   // cover image, so loading every activity across every team just to draw the
   // first few was the single biggest download on this screen.

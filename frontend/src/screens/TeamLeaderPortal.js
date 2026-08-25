@@ -99,7 +99,18 @@ export default function TeamLeaderPortal({ navigation, route }) {
   const [selectedSchoolId, setSelectedSchoolId] = useState(null); // school chosen for attendance
   const [holidays, setHolidays] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Reports');
+  // Monitoring is the landing tab.
+  //
+  // A team leader or head opening their portal is almost always there to see
+  // where their people are right now — who has checked in, who has not, which
+  // schools are covered. That is a live view, and it is the thing that goes
+  // stale fastest, so it is what the portal opens on. CreatorAdminPortal has
+  // worked this way for a while; this brings the leader and head portals into
+  // line with it.
+  //
+  // An explicit `initialTab` still wins, so a tapped notification opens the tab
+  // it names rather than this one.
+  const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'Monitoring');
   const { tabLoading, selectTab } = useSectionTransition(activeTab, setActiveTab);
 
   // Honor an `initialTab` passed via navigation (e.g. from a tapped report
