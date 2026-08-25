@@ -176,18 +176,11 @@ async function main() {
 
   const line = '  ' + '─'.repeat(74);
 
-  if (blockers.length) {
-    console.log(`\n${line}`);
-    console.log('  REFUSING TO PURGE\n');
-    for (const b of blockers) console.log(`  ${b}`);
-    console.log(`\n  Nothing was deleted.`);
-    console.log(line + '\n');
-    await disconnect();
-    process.exit(1);
-  }
-
-  console.log('\n  All checks passed.\n');
-  console.log('  What the account still holds:\n');
+  // A blocked run still shows what is in the account. Refusing to answer "what
+  // would this delete?" because a date has not arrived yet is the wrong kind of
+  // strictness: the listing is read-only, and someone deciding whether to wait
+  // needs to see what they are waiting on.
+  console.log('\n  What the account still holds:\n');
   const found = await listAccount();
   let totalFiles = 0;
   let totalBytes = 0;
@@ -197,6 +190,18 @@ async function main() {
     totalBytes += f.bytes;
   }
   console.log(`  ${pad('TOTAL', 40)}${padL(totalFiles, 7)}   ${(totalBytes / 1048576).toFixed(1)} MB`);
+
+  if (blockers.length) {
+    console.log(`\n${line}`);
+    console.log('  REFUSING TO PURGE\n');
+    for (const b of blockers) console.log(`  ${b}`);
+    console.log('\n  Nothing was deleted.');
+    console.log(line + '\n');
+    await disconnect();
+    process.exit(1);
+  }
+
+  console.log('\n  All checks passed.');
 
   if (!CONFIRM) {
     console.log(`\n${line}`);
