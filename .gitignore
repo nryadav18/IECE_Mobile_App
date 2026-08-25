@@ -86,3 +86,6 @@ backend/IECE_Monthly_Performance_*.pdf
 # Migration audit reports (contain asset URLs; regenerate with scripts/r2/00-audit.js)
 backend/scripts/r2/output/
 .env.bak.*
+
+# Local production-env backups
+frontend/.env.bak.*
