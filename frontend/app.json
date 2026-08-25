@@ -2,7 +2,7 @@
   "expo": {
     "name": "IECE's CMS",
     "slug": "iece",
-    "version": "4.0.0",
+    "version": "8.0.0",
     "orientation": "portrait",
     "icon": "./assets/IECE_Logo.png",
     "userInterfaceStyle": "light",
