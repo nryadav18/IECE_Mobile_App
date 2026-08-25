@@ -1,36 +1,56 @@
 #!/usr/bin/env node
 /**
- * Fill in resized variants that were never written.
+ * Fill in resized image variants that were never written.
  *
  *   npm run r2:backfill-variants -- --dry-run
  *   npm run r2:backfill-variants
  *
- * The copy job originally skipped a variant when the source was already
- * narrower than the target width, on the reasoning that a "small" copy larger
- * than the original wastes storage. That reasoning is correct about bytes and
- * wrong about the thing that matters: it makes a resized URL a gamble the
- * client cannot evaluate. 29 of the 124 migrated images are narrower than
- * 1080px, so a frontend asking for `_w1080` would have 404'd on 23% of them,
- * and a 404 renders as no image at all.
+ * WHY THIS EXISTS
  *
- * Cloudinary never had this problem — any width in the URL always worked. This
- * restores that property: every image has every bucket width, so the client can
- * pick one and be certain.
+ * The upload path and the copy job originally skipped a variant when the source
+ * was already narrower than the target width, reasoning that a "small" copy
+ * larger than the original wastes storage. That reasoning is right about bytes
+ * and wrong about the thing that matters: it makes a resized URL a gamble the
+ * client cannot evaluate. 29 of the 124 migrated images were narrower than
+ * 1080px, so a frontend asking for `_w1080` would have 404'd on 23% of them —
+ * and a missing variant renders as no image at all, not as a slightly larger
+ * one.
  *
- * Reads the original back out of R2 rather than from Cloudinary, so it works
- * after the account is closed and cannot re-introduce a file that was purged.
+ * Cloudinary never had this problem: any width in the URL always worked. This
+ * restores that property, so `optimizedImageUrl` can pick a width and be
+ * certain.
+ *
+ * SCOPE COMES FROM THE DATABASE, NOT THE LEDGER
+ *
+ * An earlier version of this script walked `assetmigrations`, which meant it
+ * could only ever repair MIGRATED files — and silently missed every image
+ * uploaded natively through the app, because those were never on Cloudinary and
+ * so have no ledger row. That is exactly the population most likely to be
+ * affected: any server still running the old skip rule keeps producing them,
+ * and the ledger will never mention one. Walking the seven URL fields covers
+ * both, and covers anything added later without having to be told.
+ *
+ * Existence is asked of STORAGE, not of the ledger, for the same reason: the
+ * ledger records what the migration believes it did; the bucket is what is
+ * true.
+ *
+ * Originals are read back out of R2 rather than from Cloudinary, so this still
+ * works after the account is closed and can never re-introduce a purged file.
  */
 
 const sharp = require('sharp');
 const { r2Config, ConfigError } = require('./lib/env');
 const { connect, disconnect } = require('./lib/mongo');
+const { collectReferences } = require('./lib/references');
 const AssetMigration = require('../../models/AssetMigration');
 const r2 = require('../../utils/storage/r2');
 const keys = require('../../utils/storage/keys');
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
-const padL = (s, n) => String(s).padStart(n);
+
+const IMAGE_EXT = /\.(jpe?g|png|webp)$/i;
+const IS_VARIANT = /_w\d+\.(jpe?g|png|webp)$/i;
 
 async function main() {
   let cfg;
@@ -47,35 +67,40 @@ async function main() {
   console.log('\n  BACKFILL IMAGE VARIANTS');
   console.log(`  ${DRY_RUN ? 'Dry run — nothing will be written.' : 'Writing the missing widths.'}\n`);
 
-  await connect();
+  const connection = await connect();
+  const references = await collectReferences(connection.db);
 
-  const images = await AssetMigration.find({
-    resourceType: 'image',
-    status: { $in: ['flipped', 'verified'] },
-  }).lean();
+  // Every image the app can actually reach that lives in our public bucket.
+  const images = [...references.keys()].filter((url) =>
+    url.startsWith(`${cfg.publicBaseUrl}/`) && IMAGE_EXT.test(url) && !IS_VARIANT.test(url));
 
+  process.stdout.write(`  ${images.length} image(s) reachable from the database; checking widths`);
   const work = [];
-  for (const row of images) {
-    const have = new Set((row.derivatives || [])
-      .map((k) => (k.match(/_w(\d+)\./) || [])[1])
-      .filter(Boolean)
-      .map(Number));
-    const missing = keys.VARIANT_WIDTHS.filter((w) => !have.has(w));
-    if (missing.length) work.push({ row, missing });
+  let checked = 0;
+  for (const url of images) {
+    const key = r2.keyFromPublicUrl(url);
+    const missing = [];
+    for (const width of keys.VARIANT_WIDTHS) {
+      const variant = keys.variantKey(key, width);
+      if (!(await r2.head(cfg.bucketPublic, variant))) missing.push(width);
+    }
+    if (missing.length) work.push({ url, key, missing });
+    checked += 1;
+    if (checked % 25 === 0) process.stdout.write('.');
   }
+  console.log(`\n\n  ${work.length} image(s) missing at least one width.\n`);
 
-  console.log(`  ${images.length} image(s); ${work.length} missing at least one width.\n`);
   if (!work.length) {
-    console.log('  Nothing to do.\n');
+    console.log('  Every image has every bucket width. Nothing to do.\n');
     await disconnect();
     process.exit(0);
   }
 
   if (DRY_RUN) {
-    for (const { row, missing } of work.slice(0, 12)) {
-      console.log(`  ${row.key}\n      missing ${missing.map((w) => `_w${w}`).join(', ')}`);
+    for (const { key, missing } of work.slice(0, 15)) {
+      console.log(`  ${key}\n      missing ${missing.map((w) => `_w${w}`).join(', ')}`);
     }
-    if (work.length > 12) console.log(`\n  … and ${work.length - 12} more.`);
+    if (work.length > 15) console.log(`\n  … and ${work.length - 15} more.`);
     console.log('\n  Re-run without --dry-run to write them.\n');
     await disconnect();
     process.exit(0);
@@ -83,41 +108,50 @@ async function main() {
 
   let written = 0;
   let failed = 0;
-  for (const { row, missing } of work) {
+  for (const { url, key, missing } of work) {
     try {
-      const res = await fetch(row.newUrl);
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`original answered ${res.status}`);
       const original = Buffer.from(await res.arrayBuffer());
       const meta = await sharp(original).metadata();
-      const format = ['png', 'webp'].includes(meta.format) ? meta.format : 'jpeg';
-      // An animated GIF loses its animation to a still-image resize, so it is
-      // left with no variants at all and the original is served to everyone.
-      if (meta.format === 'gif' && meta.pages > 1) continue;
 
+      // An animated GIF loses its animation to a still-image resize, so it gets
+      // no variants at all and the original is served to everyone.
+      if (meta.format === 'gif' && meta.pages > 1) {
+        console.log(`  SKIP  ${key}  (animated GIF — served whole)`);
+        continue;
+      }
+
+      const format = ['png', 'webp'].includes(meta.format) ? meta.format : 'jpeg';
       const added = [];
       for (const width of missing) {
-        let p = sharp(original).rotate().resize({ width, fit: 'inside', withoutEnlargement: true });
-        p = format === 'png' ? p.png({ compressionLevel: 9 })
-          : format === 'webp' ? p.webp({ quality: 82 })
-            : p.jpeg({ quality: 82, mozjpeg: true });
-        const buffer = await p.toBuffer();
-        const vKey = keys.variantKey(row.key, width);
+        let pipeline = sharp(original).rotate()
+          .resize({ width, fit: 'inside', withoutEnlargement: true });
+        pipeline = format === 'png' ? pipeline.png({ compressionLevel: 9 })
+          : format === 'webp' ? pipeline.webp({ quality: 82 })
+            : pipeline.jpeg({ quality: 82, mozjpeg: true });
+
+        const buffer = await pipeline.toBuffer();
+        const variant = keys.variantKey(key, width);
         await r2.put({
-          bucket: row.bucket,
-          key: vKey,
+          bucket: cfg.bucketPublic,
+          key: variant,
           body: buffer,
           contentLength: buffer.length,
-          contentType: keys.contentTypeFor(vKey),
+          contentType: keys.contentTypeFor(variant),
         });
-        added.push(vKey);
+        added.push(variant);
         written += 1;
       }
-      await AssetMigration.updateOne({ _id: row._id },
-        { $addToSet: { derivatives: { $each: added } } });
-      console.log(`  OK    ${row.key}  +${added.length}`);
+
+      // Keep the ledger honest where a row exists. Natively-uploaded images have
+      // none and do not need one — this is a no-op for them, not an error.
+      await AssetMigration.updateOne({ key }, { $addToSet: { derivatives: { $each: added } } });
+
+      console.log(`  OK    ${key}  +${added.length}`);
     } catch (error) {
       failed += 1;
-      console.log(`  FAIL  ${row.key}\n        ${error.message}`);
+      console.log(`  FAIL  ${key}\n        ${error.message}`);
     }
   }
 
@@ -131,6 +165,7 @@ async function main() {
 
 main().catch(async (error) => {
   console.error(`\n  Failed:\n\n  ${error.message}\n`);
+  if (process.env.DEBUG) console.error(error);
   await disconnect();
   process.exit(1);
 });
