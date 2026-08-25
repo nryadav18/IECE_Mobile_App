@@ -2,6 +2,7 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const { sendWelcomeNotification, sendPushNotification } = require('../utils/pushNotification');
 const { isFirebaseAvailable } = require('../utils/firebase');
+const { findUserByEmail } = require('../utils/findUser');
 
 // Get token from model, create cookie and send response
 const sendTokenResponse = (user, statusCode, res) => {
@@ -43,6 +44,30 @@ exports.register = async (req, res) => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// SIGNING IN, AND SIGNING THE PREVIOUS DEVICE OUT.
+//
+// The policy is one device at a time: the newest login wins and the older
+// session is ended. That is enforced by `tokenVersion` — every issued token
+// carries the version it was minted at, middleware/auth.js rejects any token
+// whose version no longer matches, and logging in bumps it.
+//
+// THE BUG THIS REPLACES
+//
+// The increment used to be `user.tokenVersion += 1; await user.save()`, which
+// is a read-modify-write across two round trips on a document the rest of the
+// app is constantly touching — attendance, notifications, push tokens. If
+// anything else wrote to that user in between, mongoose's version check failed
+// the save with a VersionError, the outer catch turned it into a 400, and the
+// app showed "Login failed" to somebody whose password was perfectly correct.
+//
+// Worse, it failed exactly when it mattered most: two people using one account
+// is precisely the situation where a concurrent write is likely, so the
+// second person was told login failed instead of the first being signed out.
+//
+// `$inc` is a single atomic operation. It cannot conflict, it does not run
+// document validation or save hooks, and it needs no prior read.
+// ---------------------------------------------------------------------------
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -51,23 +76,49 @@ exports.login = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Please provide an email and password' });
     }
 
-    const user = await User.findOne({ email }).select('+password');
+    const { user, ambiguous } = await findUserByEmail(email, '+password');
+
+    if (ambiguous) {
+      // More than one account matches this address case-insensitively. Picking
+      // one would sign somebody into an account that is not theirs, silently.
+      console.error(`[login] AMBIGUOUS EMAIL "${String(email).trim()}" matches multiple accounts — refusing.`);
+      return res.status(409).json({
+        success: false,
+        error: 'More than one account uses this email address. Please contact your administrator.',
+      });
+    }
+
     if (!user) {
+      // The user is told the same thing either way — revealing which half was
+      // wrong is a gift to anyone guessing. The log records the difference so
+      // a real support question can be answered.
+      console.warn(`[login] no account for "${String(email).trim()}"`);
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
     const isMatch = await user.matchPassword(password);
     if (!isMatch) {
+      console.warn(`[login] wrong password for ${user.email}`);
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
-    // Increment tokenVersion to invalidate existing tokens on other devices
-    user.tokenVersion = (user.tokenVersion || 0) + 1;
-    await user.save({ validateBeforeSave: false });
+    // Atomic. Ends any session on another device, and cannot fail the way the
+    // old read-modify-write could.
+    const updated = await User.findByIdAndUpdate(
+      user._id,
+      { $inc: { tokenVersion: 1 } },
+      { new: true }
+    );
 
-    sendTokenResponse(user, 200, res);
+    if (!updated) {
+      // The account was removed between the password check and now.
+      return res.status(401).json({ success: false, error: 'Invalid credentials' });
+    }
+
+    sendTokenResponse(updated, 200, res);
   } catch (error) {
-    res.status(400).json({ success: false, error: error.message });
+    console.error('[login] unexpected failure:', error);
+    res.status(500).json({ success: false, error: 'Could not sign you in. Please try again.' });
   }
 };
 
@@ -204,43 +255,66 @@ exports.testPush = async (req, res) => {
 
 const { sendOtp, generateOtp } = require('../utils/email');
 
+// The OTP is written with an atomic $set rather than user.save(), for the same
+// reason login uses $inc: a full-document save on a record the rest of the app
+// writes to can fail a version check, and "OTP not sent" for an address that
+// plainly exists is exactly what that failure looks like from outside.
 exports.forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
-    const user = await User.findOne({ email });
+    const { user, ambiguous } = await findUserByEmail(email);
+
+    if (ambiguous) {
+      console.error(`[otp] AMBIGUOUS EMAIL "${String(email).trim()}" matches multiple accounts — refusing.`);
+      return res.status(409).json({
+        success: false,
+        error: 'More than one account uses this email address. Please contact your administrator.',
+      });
+    }
     if (!user) {
       return res.status(404).json({ success: false, error: 'There is no user with that email' });
     }
 
     const otp = generateOtp();
-    user.resetPasswordOtp = otp;
-    user.resetPasswordExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
-    await user.save({ validateBeforeSave: false });
+    await User.updateOne(
+      { _id: user._id },
+      { $set: { resetPasswordOtp: otp, resetPasswordExpire: new Date(Date.now() + 10 * 60 * 1000) } }
+    );
 
     const sent = await sendOtp(user.email, otp);
     if (!sent) {
-      user.resetPasswordOtp = undefined;
-      user.resetPasswordExpire = undefined;
-      await user.save({ validateBeforeSave: false });
-      return res.status(500).json({ success: false, error: 'Email could not be sent' });
+      // Do not leave a live OTP behind for a code nobody received.
+      await User.updateOne({ _id: user._id }, { $unset: { resetPasswordOtp: '', resetPasswordExpire: '' } });
+      console.error(`[otp] send FAILED for ${user.email} — see the email log above for the provider's reason.`);
+      return res.status(502).json({
+        success: false,
+        error: 'We could not send the email just now. Please try again in a moment.',
+      });
     }
 
+    console.log(`[otp] sent to ${user.email}`);
     res.status(200).json({ success: true, data: 'Email sent' });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('[otp] unexpected failure:', error);
+    res.status(500).json({ success: false, error: 'Could not send the code. Please try again.' });
   }
 };
 
 exports.verifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
-    const user = await User.findOne({
-      email,
-      resetPasswordOtp: otp,
-      resetPasswordExpire: { $gt: Date.now() }
-    }).select('+resetPasswordOtp +resetPasswordExpire');
+    // Resolve the account the same way login does, THEN check the code against
+    // it. Matching on the typed email inside the query would reintroduce the
+    // case-sensitivity bug at the last step of a password reset.
+    const { user: found } = await findUserByEmail(email, '+resetPasswordOtp +resetPasswordExpire');
 
-    if (!user) {
+    const valid = found
+      && found.resetPasswordOtp
+      && String(found.resetPasswordOtp) === String(otp).trim()
+      && found.resetPasswordExpire
+      && found.resetPasswordExpire.getTime() > Date.now();
+
+    if (!valid) {
       return res.status(400).json({ success: false, error: 'Invalid or expired OTP' });
     }
 
@@ -253,24 +327,43 @@ exports.verifyOtp = async (req, res) => {
 exports.resetPassword = async (req, res) => {
   try {
     const { email, otp, password } = req.body;
-    
-    const user = await User.findOne({
-      email,
-      resetPasswordOtp: otp,
-      resetPasswordExpire: { $gt: Date.now() }
-    }).select('+resetPasswordOtp +resetPasswordExpire');
 
-    if (!user) {
+    const { user } = await findUserByEmail(email, '+resetPasswordOtp +resetPasswordExpire');
+
+    const valid = user
+      && user.resetPasswordOtp
+      && String(user.resetPasswordOtp) === String(otp).trim()
+      && user.resetPasswordExpire
+      && user.resetPasswordExpire.getTime() > Date.now();
+
+    if (!valid) {
       return res.status(400).json({ success: false, error: 'Invalid or expired OTP' });
     }
 
+    // This save has to stay a save: the pre-save hook is what hashes the
+    // password, and bypassing it would store the password in clear text. The
+    // atomic $inc that login uses is therefore not available here — but a
+    // password reset is not a concurrent operation the way a login is, and the
+    // retry below covers the rare case.
     user.password = password;
     user.resetPasswordOtp = undefined;
     user.resetPasswordExpire = undefined;
-
-    // Increment tokenVersion on password reset to force logout on all other devices
     user.tokenVersion = (user.tokenVersion || 0) + 1;
-    await user.save();
+
+    try {
+      await user.save();
+    } catch (error) {
+      if (error.name !== 'VersionError') throw error;
+      // Something else wrote to this user mid-reset. Re-read and reapply once
+      // rather than telling the person their reset failed.
+      const fresh = await User.findById(user._id);
+      fresh.password = password;
+      fresh.resetPasswordOtp = undefined;
+      fresh.resetPasswordExpire = undefined;
+      fresh.tokenVersion = (fresh.tokenVersion || 0) + 1;
+      await fresh.save();
+      return sendTokenResponse(fresh, 200, res);
+    }
 
     sendTokenResponse(user, 200, res);
   } catch (error) {

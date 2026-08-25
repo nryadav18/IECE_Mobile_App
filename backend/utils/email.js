@@ -308,15 +308,57 @@ const sendEmail = async (to, subject, text, html, options = {}) => {
             }));
         }
 
-        const response = await brevo.transactionalEmails.sendTransacEmail(payload);
         const suffix = attachments.length ? ` with ${attachments.length} attachment(s)` : '';
-        console.log(`[Brevo] Email sent to ${to} from ${senderEmail}${suffix}`);
-        return true;
-    } catch (error) {
-        console.error('[Brevo] Error sending email:', error);
-        if (error.response) {
-             console.error(error.response.body);
+
+        // ------------------------------------------------------------------
+        // ONE FAILED SEND IS NOT THE SAME AS A FAILED ADDRESS.
+        //
+        // A single attempt was the reason "the OTP did not arrive" happened to
+        // addresses that plainly exist. Brevo, like any hosted API, produces
+        // transient failures — a 429 when several notifications go out at once,
+        // a 5xx during their deploys, a socket dropped mid-flight. None of those
+        // say anything about the recipient, and all of them used to end as a
+        // flat `false` and a password reset the person could not complete.
+        //
+        // A 4xx that is NOT 429 is different: a malformed address or a rejected
+        // sender will fail identically forever, so retrying only delays telling
+        // the truth.
+        // ------------------------------------------------------------------
+        const attempts = Number(process.env.EMAIL_SEND_ATTEMPTS || 3);
+        let lastError;
+
+        for (let attempt = 1; attempt <= attempts; attempt += 1) {
+            try {
+                await brevo.transactionalEmails.sendTransacEmail(payload);
+                if (attempt > 1) console.log(`[Brevo] Email to ${to} succeeded on attempt ${attempt}`);
+                else console.log(`[Brevo] Email sent to ${to} from ${senderEmail}${suffix}`);
+                return true;
+            } catch (error) {
+                lastError = error;
+                const status = error.status || error.response?.statusCode || error.response?.status || null;
+                const body = error.response?.body || error.response?.text || null;
+                const permanent = status && status >= 400 && status < 500 && status !== 429;
+
+                console.error(
+                    `[Brevo] send to ${to} attempt ${attempt}/${attempts} failed`
+                    + `${status ? ` (HTTP ${status})` : ''}: ${error.message}`
+                );
+                if (body) console.error('[Brevo] response body:', typeof body === 'string' ? body.slice(0, 500) : body);
+
+                if (permanent) {
+                    console.error(`[Brevo] HTTP ${status} is permanent — not retrying. `
+                        + 'Check the recipient address and that the sender is verified in Brevo.');
+                    return false;
+                }
+                if (attempt === attempts) break;
+                await new Promise((r) => setTimeout(r, 500 * attempt));
+            }
         }
+
+        console.error(`[Brevo] GAVE UP sending to ${to} after ${attempts} attempts.`, lastError?.message);
+        return false;
+    } catch (error) {
+        console.error('[Brevo] Error preparing email:', error);
         return false;
     }
 };

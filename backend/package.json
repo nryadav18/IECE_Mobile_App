@@ -20,7 +20,8 @@
     "r2:status": "node scripts/r2/status.js",
     "r2:clear-dangling": "node scripts/r2/clear-dangling.js",
     "r2:purge-cloudinary": "node scripts/r2/06-purge-cloudinary.js",
-    "r2:backfill-variants": "node scripts/r2/backfill-variants.js"
+    "r2:backfill-variants": "node scripts/r2/backfill-variants.js",
+    "ml:health": "node scripts/ml-health.js"
   },
   "keywords": [],
   "author": "",

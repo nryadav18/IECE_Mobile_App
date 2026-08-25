@@ -6,7 +6,7 @@ const multer = require('multer');
 
 const r2 = require('./r2');
 const keys = require('./keys');
-const { processImage, makePoster, removeQuietly } = require('./media');
+const { processImage, makePoster, variantsFromBuffer, removeQuietly } = require('./media');
 
 const { purgeSummary, purgeProblem } = require('./report');
 
@@ -126,6 +126,22 @@ async function storeUploadedFile(file) {
         contentLength: poster.length,
       });
       written.push(pKey);
+
+      // The poster needs the SAME widths as any other image. The client derives
+      // the poster URL from the video and then asks for a screen-sized version
+      // of it, exactly as it would for a photo — so a poster without variants
+      // is a 404 and a blank thumbnail.
+      for (const variant of await variantsFromBuffer(poster, 'jpeg')) {
+        const vKey = keys.variantKey(pKey, variant.width);
+        await r2.put({
+          bucket: cfg.bucketPublic,
+          key: vKey,
+          body: variant.buffer,
+          contentType: 'image/jpeg',
+          contentLength: variant.buffer.length,
+        });
+        written.push(vKey);
+      }
     }
   } else {
     await r2.putFile({

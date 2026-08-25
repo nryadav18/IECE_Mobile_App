@@ -104,8 +104,6 @@ async function processImage(sourcePath, { format, passthrough }) {
       base().resize({ width: MAX_EDGE, height: MAX_EDGE, fit: 'inside', withoutEnlargement: true })
     ).toBuffer();
 
-    const meta = await sharp(main).metadata();
-
     const variants = [];
     for (const width of require('./keys').VARIANT_WIDTHS) {
       // Every width is always written, even when the source is already narrower
@@ -205,4 +203,41 @@ async function makePoster(videoPath) {
   }
 }
 
-module.exports = { processImage, makePoster, tempPath, removeQuietly, MAX_EDGE };
+/**
+ * Resized copies of one already-decoded image, at every stored width.
+ *
+ * Separate from processImage because the source is not always a file on disk:
+ * a VIDEO POSTER is produced in memory by ffmpeg and has to be given the same
+ * widths as any other image. It is an image the client will ask for by URL, so
+ * it must obey the same rule as the rest — every width exists, always — or
+ * `optimizedImageUrl` is guessing again.
+ *
+ * That rule is not theoretical. Posters were the one image kind that never got
+ * variants, and the moment the app started requesting them the activity
+ * thumbnails went blank: the app derives a poster URL from the video, then asks
+ * for a screen-sized version of it, and got a 404.
+ *
+ * @param {Buffer} buffer  decoded image bytes
+ * @param {string} format  'jpeg' | 'png' | 'webp'
+ * @returns {Promise<Array<{width: number, buffer: Buffer}>>} empty on failure
+ */
+async function variantsFromBuffer(buffer, format = 'jpeg') {
+  const out = [];
+  try {
+    for (const width of require('./keys').VARIANT_WIDTHS) {
+      let pipeline = sharp(buffer).resize({ width, fit: 'inside', withoutEnlargement: true });
+      pipeline = format === 'png' ? pipeline.png({ compressionLevel: 9 })
+        : format === 'webp' ? pipeline.webp({ quality: WEBP_QUALITY })
+          : pipeline.jpeg({ quality: JPEG_QUALITY, mozjpeg: true });
+      out.push({ width, buffer: await pipeline.toBuffer() });
+    }
+  } catch (error) {
+    // Variants are an optimisation; the full-size image still works without
+    // them. The caller decides how loudly to complain.
+    console.warn(`[storage] could not build variants: ${error.message}`);
+    return [];
+  }
+  return out;
+}
+
+module.exports = { processImage, makePoster, variantsFromBuffer, tempPath, removeQuietly, MAX_EDGE };

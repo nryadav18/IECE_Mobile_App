@@ -1,9 +1,9 @@
 const User = require('../models/User');
 const School = require('../models/School');
 const Attendance = require('../models/Attendance');
-const axios = require('axios');
 const FormData = require('form-data');
 const { putFaceVideo } = require('../utils/storage');
+const { callMlService } = require('../utils/mlService');
 const { purgeFaceVideo, purgeLegacyFaceVideo } = require('../utils/faceVideo');
 const { notifyRole } = require('../utils/pushNotification');
 const { notify } = require('../utils/notify');
@@ -71,22 +71,29 @@ exports.registerFace = async (req, res) => {
     }
 
     // Call ML service to extract embedding and check liveness
-    const formData = new FormData();
-    formData.append('file', req.file.buffer, { filename: 'video.mp4', contentType: 'video/mp4' });
-    
-    let mlResponse;
+        // A fresh FormData per attempt. A form-data instance is a stream and can
+    // only be sent once, so a retry that reused it would post an EMPTY body —
+    // which the service rejects as 'no file', indistinguishable from a bad
+    // video. Every attempt therefore builds its own.
+    const buildForm = () => {
+      const fd = new FormData();
+      fd.append('file', req.file.buffer, { filename: 'video.mp4', contentType: 'video/mp4' });
+      return fd;
+    };
+
+    let mlData;
     try {
-      mlResponse = await axios.post(`${process.env.ML_SERVICE_API}/extract`, formData, {
-        headers: {
-          ...formData.getHeaders()
-        }
-      });
+      mlData = await callMlService('extract', buildForm);
     } catch (error) {
-      const msg = error.response?.data?.detail || 'Error communicating with ML service';
-      return res.status(400).json({ success: false, message: msg });
+      // 503 for a service that could not answer, 400 for one that did and
+      // said no. The client can then tell 'try again in a moment' apart from
+      // 'your video was not usable', and so can whoever reads the logs.
+      return res.status(error.retryable ? 503 : 400).json({
+        success: false, message: error.message, code: error.code,
+      });
     }
     
-    const embedding = mlResponse.data.embedding;
+    const embedding = mlData.embedding;
 
     // Under R2 this lands in the PRIVATE bucket and comes back as a reference
     // (`r2:...`) rather than a URL, because a signed URL expires and must never
@@ -180,23 +187,26 @@ exports.verifyFace = async (req, res) => {
     }
 
     // 2. Face Verification
-    const formData = new FormData();
-    formData.append('file', req.file.buffer, { filename: 'video.mp4', contentType: 'video/mp4' });
-    formData.append('target_embedding', user.faceEmbedding.join(','));
-    
-    let mlResponse;
+        const buildForm = () => {
+      const fd = new FormData();
+      fd.append('file', req.file.buffer, { filename: 'video.mp4', contentType: 'video/mp4' });
+      fd.append('target_embedding', user.faceEmbedding.join(','));
+      return fd;
+    };
+
+    let mlData;
     try {
-      mlResponse = await axios.post(`${process.env.ML_SERVICE_API}/verify`, formData, {
-        headers: {
-          ...formData.getHeaders()
-        }
-      });
+      mlData = await callMlService('verify', buildForm);
     } catch (error) {
-      const msg = error.response?.data?.detail || 'Error communicating with ML service';
-      return res.status(400).json({ success: false, message: msg });
+      // 503 for a service that could not answer, 400 for one that did and
+      // said no. The client can then tell 'try again in a moment' apart from
+      // 'your video was not usable', and so can whoever reads the logs.
+      return res.status(error.retryable ? 503 : 400).json({
+        success: false, message: error.message, code: error.code,
+      });
     }
     
-    if (!mlResponse.data.match) {
+    if (!mlData.match) {
       return res.status(400).json({ success: false, message: 'Face verification failed. Not a match.' });
     }
 
@@ -328,22 +338,25 @@ exports.registerFaceV2 = async (req, res) => {
       }
     }
 
-    const formData = new FormData();
-    formData.append('file', req.file.buffer, { filename: 'video.mp4', contentType: 'video/mp4' });
+        const buildForm = () => {
+      const fd = new FormData();
+      fd.append('file', req.file.buffer, { filename: 'video.mp4', contentType: 'video/mp4' });
+      return fd;
+    };
 
-    let mlResponse;
+    let mlData;
     try {
-      mlResponse = await axios.post(`${process.env.ML_SERVICE_API}/extract-v2`, formData, {
-        headers: {
-          ...formData.getHeaders()
-        }
-      });
+      mlData = await callMlService('extract-v2', buildForm);
     } catch (error) {
-      const msg = error.response?.data?.detail || 'Error communicating with ML service';
-      return res.status(400).json({ success: false, message: msg });
+      // 503 for a service that could not answer, 400 for one that did and
+      // said no. The client can then tell 'try again in a moment' apart from
+      // 'your video was not usable', and so can whoever reads the logs.
+      return res.status(error.retryable ? 503 : 400).json({
+        success: false, message: error.message, code: error.code,
+      });
     }
 
-    const embedding = mlResponse.data.embedding;
+    const embedding = mlData.embedding;
 
     // Reject when the ML service could not find a valid face / blink in the
     // video. Without a usable embedding we must NOT save anything as pending.
@@ -580,23 +593,26 @@ exports.verifyFaceV2 = async (req, res) => {
     }
 
     // 2. Face verification against this school's embedding.
-    const formData = new FormData();
-    formData.append('file', req.file.buffer, { filename: 'video.mp4', contentType: 'video/mp4' });
-    formData.append('target_embedding', (reg.faceEmbedding || []).join(','));
+        const buildForm = () => {
+      const fd = new FormData();
+      fd.append('file', req.file.buffer, { filename: 'video.mp4', contentType: 'video/mp4' });
+      fd.append('target_embedding', (reg.faceEmbedding || []).join(','));
+      return fd;
+    };
 
-    let mlResponse;
+    let mlData;
     try {
-      mlResponse = await axios.post(`${process.env.ML_SERVICE_API}/verify-v2`, formData, {
-        headers: {
-          ...formData.getHeaders()
-        }
-      });
+      mlData = await callMlService('verify-v2', buildForm);
     } catch (error) {
-      const msg = error.response?.data?.detail || 'Error communicating with ML service';
-      return res.status(400).json({ success: false, message: msg });
+      // 503 for a service that could not answer, 400 for one that did and
+      // said no. The client can then tell 'try again in a moment' apart from
+      // 'your video was not usable', and so can whoever reads the logs.
+      return res.status(error.retryable ? 503 : 400).json({
+        success: false, message: error.message, code: error.code,
+      });
     }
 
-    if (!mlResponse.data.match) {
+    if (!mlData.match) {
       return res.status(400).json({ success: false, message: 'Face verification failed. Not a match.' });
     }
 

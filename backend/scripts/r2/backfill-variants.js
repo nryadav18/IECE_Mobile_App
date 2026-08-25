@@ -20,6 +20,15 @@
  * restores that property, so `optimizedImageUrl` can pick a width and be
  * certain.
  *
+ * A VIDEO POSTER IS AN IMAGE.
+ *
+ * The database stores a video's `.mp4` URL, never its poster — the client
+ * derives the poster itself by swapping the extension. So a scan that only
+ * looked at stored URLs would never see a poster, and posters were exactly the
+ * image kind that had no variants. The moment the app began requesting screen
+ * sized images, every activity thumbnail backed by a video went blank. This
+ * script therefore derives each video's poster and checks that too.
+ *
  * SCOPE COMES FROM THE DATABASE, NOT THE LEDGER
  *
  * An earlier version of this script walked `assetmigrations`, which meant it
@@ -51,6 +60,7 @@ const DRY_RUN = args.includes('--dry-run');
 
 const IMAGE_EXT = /\.(jpe?g|png|webp)$/i;
 const IS_VARIANT = /_w\d+\.(jpe?g|png|webp)$/i;
+const VIDEO_EXT = /\.(mp4|mov|m4v|webm)$/i;
 
 async function main() {
   let cfg;
@@ -70,15 +80,37 @@ async function main() {
   const connection = await connect();
   const references = await collectReferences(connection.db);
 
-  // Every image the app can actually reach that lives in our public bucket.
-  const images = [...references.keys()].filter((url) =>
-    url.startsWith(`${cfg.publicBaseUrl}/`) && IMAGE_EXT.test(url) && !IS_VARIANT.test(url));
+  const ours = (url) => url.startsWith(`${cfg.publicBaseUrl}/`);
 
-  process.stdout.write(`  ${images.length} image(s) reachable from the database; checking widths`);
+  // Images stored directly.
+  const direct = [...references.keys()].filter((url) =>
+    ours(url) && IMAGE_EXT.test(url) && !IS_VARIANT.test(url));
+
+  // Plus the poster behind every video — never stored in the database, always
+  // constructed by the client.
+  const posters = [...references.keys()]
+    .filter((url) => ours(url) && VIDEO_EXT.test(url))
+    .map((url) => url.replace(VIDEO_EXT, '.jpg'));
+
+  const images = [...new Set([...direct, ...posters])];
+
+  process.stdout.write(`  ${direct.length} stored image(s) + ${posters.length} video poster(s) = ${images.length}; checking widths`);
   const work = [];
   let checked = 0;
+  const noPoster = [];
   for (const url of images) {
     const key = r2.keyFromPublicUrl(url);
+
+    // A derived poster URL is a guess until proven: if poster generation failed
+    // for that video, there is nothing to make variants of. Recorded and
+    // reported rather than treated as an error — a missing poster is a
+    // different problem, and scripts/r2/04-verify.js is where it is caught.
+    if (!(await r2.head(cfg.bucketPublic, key))) {
+      noPoster.push(key);
+      checked += 1;
+      continue;
+    }
+
     const missing = [];
     for (const width of keys.VARIANT_WIDTHS) {
       const variant = keys.variantKey(key, width);
@@ -87,6 +119,11 @@ async function main() {
     if (missing.length) work.push({ url, key, missing });
     checked += 1;
     if (checked % 25 === 0) process.stdout.write('.');
+  }
+  if (noPoster.length) {
+    console.log(`\n\n  ${noPoster.length} derived poster(s) do not exist — nothing to resize:`);
+    noPoster.slice(0, 5).forEach((k) => console.log(`    ${k}`));
+    console.log('  Run scripts/r2/04-verify.js; a missing poster is a hard failure there.');
   }
   console.log(`\n\n  ${work.length} image(s) missing at least one width.\n`);
 
