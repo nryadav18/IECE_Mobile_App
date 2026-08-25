@@ -45,15 +45,71 @@ const bucketFor = (logicalWidth) => {
   return WIDTH_BUCKETS.find((b) => b >= px) || WIDTH_BUCKETS[WIDTH_BUCKETS.length - 1];
 };
 
+/* ------------------------------------------------------------------ *
+ * The same idea, for R2                                               *
+ * ------------------------------------------------------------------ */
+
+// Media now lives on Cloudflare R2, which — unlike Cloudinary — cannot resize
+// anything on demand. R2 stores bytes and serves them back; there is no URL
+// syntax that produces a smaller copy.
+//
+// So the sizes are generated once, at upload, and stored beside the original:
+//
+//   iece_images/1712-photo.jpg          the original, capped at 1600px
+//   iece_images/1712-photo_w480.jpg
+//   iece_images/1712-photo_w1080.jpg
+//
+// EVERY image has EVERY width, deliberately, even when the source was already
+// smaller than the target. A client cannot tell from a URL whether a particular
+// variant was worth generating, so "sometimes it exists" is the same as
+// "unusable" — and a missing variant renders as no image at all, not as a
+// slightly larger one.
+//
+// The host is configurable so this keeps working if the CDN domain ever moves.
+const CDN_BASE = (process.env.EXPO_PUBLIC_CDN_URL || 'https://cdn.iece.org.in').replace(/\/+$/, '');
+
+// Must match VARIANT_WIDTHS in backend/utils/storage/keys.js. Anything wider
+// than the largest gets the original, which is capped at 1600px anyway.
+const R2_WIDTHS = [480, 1080];
+
+const R2_IMAGE_EXT = /\.(jpe?g|png|webp)$/i;
+
+const r2VariantFor = (url, logicalWidth) => {
+  const px = Math.round((logicalWidth || 400) * PixelRatio.get());
+  const width = R2_WIDTHS.find((w) => w >= px);
+  // Wider than the largest stored variant: the original is the right answer,
+  // and it is already capped, so this is not a full-size camera photo.
+  if (!width) return url;
+  return url.replace(R2_IMAGE_EXT, (ext) => `_w${width}${ext}`);
+};
+
 /**
- * A Cloudinary URL rewritten to deliver only as many pixels as the screen can
- * use. Anything that is not a plain Cloudinary image URL — a non-Cloudinary
- * host, or a URL that already carries a transformation — is returned untouched.
+ * A URL rewritten to deliver only as many pixels as the screen can use.
  *
- * `c_limit` never upscales and never crops, so a banner keeps its framing.
+ * Handles both clouds. R2 gets a stored `_w480` / `_w1080` sibling; Cloudinary
+ * gets an `f_auto,q_auto,w_N,c_limit` transformation. Anything else — another
+ * host, a video, a PDF, or a URL that already names a size — is returned
+ * untouched, because a rewrite that misses renders as nothing at all, which is
+ * worse than showing something slowly.
+ *
+ * Neither path ever upscales or crops, so a banner keeps its framing.
  */
 export function optimizedImageUrl(url, logicalWidth) {
-  if (typeof url !== 'string' || !url.includes('res.cloudinary.com')) return url;
+  if (typeof url !== 'string') return url;
+
+  // R2 — the current home for all media.
+  if (url.startsWith(`${CDN_BASE}/`)) {
+    // Already a variant (`..._w480.jpg`); leave it alone.
+    if (/_w\d+\.(jpe?g|png|webp)$/i.test(url)) return url;
+    // Not an image we generated variants for — a video, a PDF, a GIF served
+    // whole to keep its animation. Untouched.
+    if (!R2_IMAGE_EXT.test(url)) return url;
+    return r2VariantFor(url, logicalWidth);
+  }
+
+  // Cloudinary — kept for as long as any device might still hold a cached URL
+  // from before the migration, and harmless afterwards.
+  if (!url.includes('res.cloudinary.com')) return url;
 
   const at = url.indexOf(IMAGE_UPLOAD_SEGMENT);
   if (at === -1) return url;

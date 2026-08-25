@@ -108,9 +108,13 @@ async function processImage(sourcePath, { format, passthrough }) {
 
     const variants = [];
     for (const width of require('./keys').VARIANT_WIDTHS) {
-      // No point storing a "small" variant that is larger than the original —
-      // it would cost storage to serve the same pixels.
-      if (meta.width && meta.width <= width) continue;
+      // Every width is always written, even when the source is already narrower
+      // than the target. `withoutEnlargement` means such a "variant" is really
+      // just a re-encode of the original, so it costs a few kilobytes — and in
+      // exchange the client can ask for any bucket width and be certain it
+      // exists. Skipping them to save space is what makes a resized URL a
+      // gamble: 23% of the migrated images turned out to be narrower than 1080,
+      // and a frontend that requested that width would have 404'd on every one.
       const buffer = await encode(
         base().resize({ width, fit: 'inside', withoutEnlargement: true })
       ).toBuffer();

@@ -16,7 +16,11 @@
     "r2:selftest": "node scripts/r2/02-selftest.js",
     "r2:copy": "node scripts/r2/03-copy.js",
     "r2:verify-copy": "node scripts/r2/04-verify.js",
-    "r2:flip": "node scripts/r2/05-flip.js"
+    "r2:flip": "node scripts/r2/05-flip.js",
+    "r2:status": "node scripts/r2/status.js",
+    "r2:clear-dangling": "node scripts/r2/clear-dangling.js",
+    "r2:purge-cloudinary": "node scripts/r2/06-purge-cloudinary.js",
+    "r2:backfill-variants": "node scripts/r2/backfill-variants.js"
   },
   "keywords": [],
   "author": "",

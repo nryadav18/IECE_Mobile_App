@@ -150,7 +150,8 @@ async function makeVariants(file, key) {
     if (meta.format === 'gif' && meta.pages > 1) return out;
 
     for (const width of keys.VARIANT_WIDTHS) {
-      if (meta.width && meta.width <= width) continue;
+      // Always written — see the note in utils/storage/media.js. A client that
+      // has to guess whether a width exists cannot use any of them.
       let p = sharp(file).rotate().resize({ width, fit: 'inside', withoutEnlargement: true });
       p = format === 'png' ? p.png({ compressionLevel: 9 })
         : format === 'webp' ? p.webp({ quality: 82 })

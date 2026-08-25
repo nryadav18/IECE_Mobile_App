@@ -1,8 +1,9 @@
 # Cloudinary → Cloudflare R2 Migration Runbook
 
-**Status:** Phases 0–5 are all BUILT. Gates 0 and 1 clear. Phase 2 self-tests 26/26 on the
-production VPS but is NOT yet enabled — `STORAGE_DRIVER` is still `cloudinary`. Phase 3 has
-copied 8 of 189 files as a proving run; Gate 4 correctly refuses to open until the rest follow.
+**Status:** Phases 0–4 COMPLETE. `STORAGE_DRIVER=r2` is LIVE on the VPS — new uploads go to
+R2 and one has already been confirmed in production. Phase 5 is IN PROGRESS: steps 1 and 4
+flipped and verified; **step 5 (181 activity files) is the remaining work.** Cloudinary still
+holds every original.
 **App state:** live in production (mobile + web portal).
 **Guiding rule:** at no point in this plan is a file deleted from Cloudinary before an
 identical, byte-verified copy exists in R2 *and* the database has been pointed at it
@@ -452,7 +453,13 @@ loudly if Cloudinary starts returning the account-suspended signature that
 
 **The app is not touched in this phase. Cloudinary still serves every byte.**
 
-#### Phase 3 build results — proving run of 8 files
+#### Phase 3 result — COMPLETE
+
+**189 files, 884.7 MB, copied in 211 seconds. Zero failures.** The counts reconcile exactly
+with the Phase 0 audit: 189 migrated, 60 already-missing (the deliberately-deleted face
+recordings), nothing unaccounted for.
+
+#### The proving run that preceded it — 8 files
 
 59.3 MB copied in 20 seconds, every video with its poster, every image with two variants.
 An independent check re-downloaded all eight from `cdn.iece.org.in` and compared SHA-256
@@ -491,9 +498,23 @@ poster present at the exact URL an installed build guesses.
 
 > **GATE 4** — one single unverified file stops the migration. Fix, re-run, then continue.
 
-Confirmed working: with 8 of 249 files copied, Gate 4 refused to open and named the
-241 referenced URLs that had no ledger row. It derives its own scope from MongoDB rather
-than trusting the ledger, precisely so a migration that silently skipped files cannot
+#### Phase 4 result — GATE 4 CLEAR
+
+Run at `--sample=100`, so this is not a spot check:
+
+| Check | Result |
+|---|---|
+| Referenced URLs vs ledger rows | **249 / 249** — nothing skipped |
+| Objects present in R2, correct size | **189 / 189** |
+| **Byte-for-byte SHA-256, every file** | **189 / 189 identical (884.7 MB)** |
+| **Videos with a poster at the guessed key** | **63 / 63** |
+| Images with resized variants | 124 / 124 |
+| URL round-trip exact | 189 / 189 |
+| Failed | **0** |
+
+The gate was also confirmed to bite: with only 8 of 249 files copied it refused to open and
+named the 241 referenced URLs that had no ledger row. It derives its own scope from MongoDB
+rather than trusting the ledger, precisely so a migration that silently skipped files cannot
 report a clean bill of health.
 
 ### PHASE 5 — Flip the URLs, one collection at a time
@@ -524,6 +545,26 @@ nothing the second time. `--list` shows every step and where it stands; `--dry-r
 exact pairs.
 
 > **GATE 5** — after each collection, open the app on a real phone and look at that feature.
+
+#### Phase 5 progress
+
+Four of the seven steps have nothing to do — `School.mouPdfUrl`, `User.timetablePdfUrl` and
+both face-video fields hold no migratable URLs (the face recordings are all dangling by
+design). The real sequence is three steps:
+
+| Step | Field | Files | State |
+|---|---|---|---|
+| 1 | `Media.imageUrl` | 1 | **Flipped and verified** — serves from R2, SHA-256 matches |
+| 4 | `LeaveRequest.proofs[]` | 7 | **Flipped and verified** — all 7 byte-identical on R2 |
+| 5 | `Activity.mediaUrls[]` | 181 | Pending — the largest step |
+
+Step 4 included the two double-encoded PDFs, which now serve correctly as `application/pdf`
+rather than Cloudinary's `application/octet-stream` — they will actually open in the app for
+the first time.
+
+**After step 5 the database contains no live Cloudinary references.** The 60 dangling face
+URLs remain as dead strings; they are already dead today, so closing the account changes
+nothing about them. Nulling them is optional housekeeping.
 
 ### PHASE 6 — Freeze, watch 7 days, then purge
 
